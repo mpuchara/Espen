@@ -566,7 +566,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.1.5 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.1.6 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();

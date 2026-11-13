@@ -110,3 +110,9 @@ replace("main/application.cc",
 replace("main/application.cc",
         '        protocol_->CloseAudioChannel();\n    }\n\n    // Update the status bar immediately to show the network state',
         '        if (protocol_) protocol_->CloseAudioChannel();\n    }\n\n    // Update the status bar immediately to show the network state')
+
+# Retry indefinitely with capped delay; the old log referenced the removed
+# MAX_RETRY limit. Keep the attempt number without a nonexistent maximum.
+replace("main/application.cc",
+        'ESP_LOGW(TAG, "Check new version failed, retry in %d seconds (%d/%d)", retry_delay,\n                     retry_count, MAX_RETRY);',
+        'ESP_LOGW(TAG, "Xiaozhi activation request failed; retry in %d seconds (attempt %d)", retry_delay,\n                     retry_count);')
