@@ -159,3 +159,71 @@ replace("main/ota.cc",
 replace("main/ota.cc",
         '    if (*status_code == 202) {\n        return ESP_ERR_TIMEOUT;',
         '    if (*status_code == 202) {\n        ESP_LOGI(TAG, "Espen pairing: server waiting for console binding (HTTP 202)");\n        return ESP_ERR_TIMEOUT;')
+
+# Pairing identity must be the actual C6 STA MAC, not the P4 base MAC.
+# Upstream ignores esp_wifi_get_mac's return value; avoid sending stack garbage.
+replace("main/system_info.cc",
+        '    uint8_t mac[6];\n#if CONFIG_XIAOZHI_NETWORK_ETHERNET',
+        '    uint8_t mac[6] = {};\n#if CONFIG_XIAOZHI_NETWORK_ETHERNET')
+replace("main/system_info.cc",
+        '    esp_wifi_get_mac(WIFI_IF_STA, mac);',
+        '    auto err = esp_wifi_get_mac(WIFI_IF_STA, mac);\n'
+        '    if (err != ESP_OK) {\n'
+        '        ESP_LOGW(TAG, "C6 station MAC unavailable: %s", esp_err_to_name(err));\n'
+        '        return "";\n'
+        '    }\n'
+        '    bool all_zero = true, all_ff = true;\n'
+        '    for (auto v : mac) { all_zero &= v == 0; all_ff &= v == 0xff; }\n'
+        '    if (all_zero || all_ff || (mac[0] & 1)) return "";')
+replace("main/ota.h",
+        '    bool HasActivationCode() { return has_activation_code_; }',
+        '    bool HasActivationCode() { return has_activation_code_; }\n'
+        '    bool HasTestCredentials() const { return has_test_credentials_; }')
+replace("main/ota.h",
+        '    std::string activation_message_;',
+        '    std::string device_id_;\n    bool has_test_credentials_ = false;\n    std::string activation_message_;')
+replace("main/ota.cc",
+        '    http->SetHeader("Device-Id", SystemInfo::GetMacAddress().c_str());',
+        '    http->SetHeader("Device-Id", device_id_.c_str());')
+replace("main/ota.cc",
+        '    std::string url = GetCheckVersionUrl();\n    if (url.length() < 10) {',
+        '    device_id_ = SystemInfo::GetMacAddress();\n'
+        '    extern void EspenCloudDeviceId(const char* id);\n'
+        '    EspenCloudDeviceId(device_id_.c_str());\n'
+        '    if (device_id_.empty()) {\n'
+        '        ESP_LOGW(TAG, "Espen pairing: valid C6 MAC not available; retry later");\n'
+        '        return std::unexpected(NetworkError::InvalidArgument());\n'
+        '    }\n'
+        '    ESP_LOGI(TAG, "Espen pairing: Device-ID=%s; activation version=%d", device_id_.c_str(), has_serial_number_ ? 2 : 1);\n'
+        '    std::string url = GetCheckVersionUrl();\n    if (url.length() < 10) {')
+# Identify the developer/test response described by Xiaozhi issue #1785.
+# Do not print or expose the returned credentials.
+replace("main/ota.cc",
+        '    has_mqtt_config_ = false;\n    cJSON *mqtt = cJSON_GetObjectItem(root, "mqtt");',
+        '    has_test_credentials_ = false;\n'
+        '    has_mqtt_config_ = false;\n    cJSON *mqtt = cJSON_GetObjectItem(root, "mqtt");')
+replace("main/ota.cc",
+        '    if (cJSON_IsObject(mqtt)) {\n        Settings settings("mqtt", true);',
+        '    if (cJSON_IsObject(mqtt)) {\n'
+        '        auto client = cJSON_GetObjectItem(mqtt, "client_id");\n'
+        '        if (cJSON_IsString(client) && strncmp(client->valuestring, "GID_test@@@", 11) == 0) has_test_credentials_ = true;\n'
+        '        Settings settings("mqtt", true);')
+replace("main/ota.cc",
+        '    if (cJSON_IsObject(websocket)) {\n        Settings settings("websocket", true);',
+        '    if (cJSON_IsObject(websocket)) {\n'
+        '        auto token = cJSON_GetObjectItem(websocket, "token");\n'
+        '        if (cJSON_IsString(token) && strcmp(token->valuestring, "test-token") == 0) has_test_credentials_ = true;\n'
+        '        Settings settings("websocket", true);')
+replace("main/ota.cc",
+        '    ESP_LOGI(TAG, "Espen pairing: HTTP 200; code=%d challenge=%d mqtt=%d websocket=%d",\n        has_activation_code_, has_activation_challenge_, has_mqtt_config_, has_websocket_config_);',
+        '    ESP_LOGI(TAG, "Espen pairing: HTTP 200; code=%d challenge=%d mqtt=%d websocket=%d test=%d",\n'
+        '        has_activation_code_, has_activation_challenge_, has_mqtt_config_, has_websocket_config_, has_test_credentials_);')
+replace("main/application.cc",
+        '            EspenCloudInfo("Urządzenie aktywne; konfiguruję rozmowę", "");',
+        '            if (ota_->HasTestCredentials()) {\n'
+        '                EspenCloudInfo("Xiaozhi zwrócił konto testowe, bez kodu. Wsparcie Xiaozhi: odwiązanie Device-ID. Ponawiam co 30 s.", "");\n'
+        '                ESP_LOGW(TAG, "Espen pairing: test credentials without activation; see xiaozhi-esp32 issue #1785");\n'
+        '                vTaskDelay(pdMS_TO_TICKS(30000));\n'
+        '                continue;\n'
+        '            }\n'
+        '            EspenCloudInfo("Serwer nie wymaga kodu; konfiguruję rozmowę", "");')

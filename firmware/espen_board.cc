@@ -40,6 +40,15 @@ static constexpr const char* TAG = "EspenBoard";
 static std::mutex cloud_mutex;
 static std::string cloud_status = "Oczekuje na Wi-Fi";
 static std::string cloud_code;
+static std::string cloud_device_id;
+void EspenCloudDeviceId(const char* id) {
+    std::lock_guard<std::mutex> guard(cloud_mutex);
+    cloud_device_id = id ? id : "";
+}
+static std::string CloudDeviceId() {
+    std::lock_guard<std::mutex> guard(cloud_mutex);
+    return cloud_device_id;
+}
 void EspenCloudInfo(const char* status, const char* code) {
     std::lock_guard<std::mutex> guard(cloud_mutex);
     cloud_status = status ? status : "";
@@ -157,6 +166,7 @@ class EspenDisplay : public LcdDisplay {
     lv_obj_t* cloud_ = nullptr;
     lv_obj_t* cloud_state_ = nullptr;
     lv_obj_t* cloud_code_ = nullptr;
+    lv_obj_t* cloud_device_ = nullptr;
     lv_obj_t* cloud_url_ = nullptr;
     lv_obj_t* cloud_keyboard_ = nullptr;
     lv_timer_t* cloud_timer_ = nullptr;
@@ -169,6 +179,8 @@ class EspenDisplay : public LcdDisplay {
         if (!WifiManager::GetInstance().IsConnected()) state = "Brak Wi-Fi";
         lv_label_set_text(cloud_state_, state.c_str());
         lv_label_set_text(cloud_code_, code.empty() ? "Brak kodu" : code.c_str());
+        auto id = CloudDeviceId();
+        lv_label_set_text_fmt(cloud_device_, "Device-ID (C6): %s", id.empty() ? "oczekiwanie..." : id.c_str());
     }
 
     void TickCloud() {
@@ -212,9 +224,10 @@ class EspenDisplay : public LcdDisplay {
             lv_obj_set_width(hint, lv_pct(100));
             lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
             lv_label_set_text(hint, "Zaloguj się na xiaozhi.me. W konsoli wybierz agenta i Add Device, następnie wpisz kod. Jeśli brak kodu, sprawdź stan powyżej.");
-            auto* device = lv_label_create(cloud_);
-            auto mac = WifiManager::GetInstance().GetMacAddress();
-            lv_label_set_text_fmt(device, "MAC Wi-Fi: %s", mac.c_str());
+            cloud_device_ = lv_label_create(cloud_);
+            lv_obj_set_width(cloud_device_, lv_pct(100));
+            lv_label_set_long_mode(cloud_device_, LV_LABEL_LONG_WRAP);
+            lv_label_set_text(cloud_device_, "Device-ID (C6): oczekiwanie...");
             MakeButton(cloud_, "Ponów parowanie (restart)", [](lv_event_t*) {
                 Application::GetInstance().Schedule([]() { esp_restart(); });
             }, this, 350);
@@ -609,7 +622,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.1.7 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.1.8 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();
