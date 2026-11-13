@@ -116,3 +116,46 @@ replace("main/application.cc",
 replace("main/application.cc",
         'ESP_LOGW(TAG, "Check new version failed, retry in %d seconds (%d/%d)", retry_delay,\n                     retry_count, MAX_RETRY);',
         'ESP_LOGW(TAG, "Xiaozhi activation request failed; retry in %d seconds (attempt %d)", retry_delay,\n                     retry_count);')
+
+# Activation troubleshooting: distinguish a real server response from a
+# transport error and do not enter chat without any server protocol config.
+replace("main/application.cc",
+        '            char buffer[320];\n            int alert_message_length =',
+        '            std::string cloud_error = std::string("Xiaozhi: ") + error_message;\n'
+        '            EspenCloudInfo(cloud_error.c_str(), "");\n'
+        '            char buffer[320];\n            int alert_message_length =')
+replace("main/application.cc",
+        '            EspenCloudInfo("Serwer potwierdził aktywację; konfiguruję rozmowę", "");',
+        '            if (!ota_->HasMqttConfig() && !ota_->HasWebsocketConfig()) {\n'
+        '                EspenCloudInfo("Serwer nie zwrócił kodu ani konfiguracji rozmowy. Sprawdź adres i logi USB.", "");\n'
+        '                ESP_LOGW(TAG, "Xiaozhi: no activation and no protocol config; retry");\n'
+        '                vTaskDelay(pdMS_TO_TICKS(5000));\n'
+        '                continue;\n'
+        '            }\n'
+        '            EspenCloudInfo("Urządzenie aktywne; konfiguruję rozmowę", "");')
+replace("main/application.cc",
+        '        if (ota_->HasActivationCode()) {\n            ShowActivationCode(ota_->GetActivationCode(), ota_->GetActivationMessage());\n        }',
+        '        if (ota_->HasActivationCode()) {\n'
+        '            ShowActivationCode(ota_->GetActivationCode(), ota_->GetActivationMessage());\n'
+        '        } else {\n'
+        '            EspenCloudInfo("Serwer wymaga aktywacji, ale nie zwrócił kodu. Sprawdź logi USB.", "");\n'
+        '        }')
+replace("main/ota.cc",
+        '    has_activation_code_ = false;\n    has_activation_challenge_ = false;',
+        '    has_activation_code_ = false;\n    has_activation_challenge_ = false;\n'
+        '    activation_code_.clear();\n    activation_message_.clear();')
+replace("main/ota.cc",
+        '    if (cJSON_IsString(code)) {\n            activation_code_ = code->valuestring;\n            has_activation_code_ = true;\n        }',
+        '    if (cJSON_IsString(code) && code->valuestring[0]) {\n'
+        '            activation_code_ = code->valuestring;\n            has_activation_code_ = true;\n'
+        '        } else if (cJSON_IsNumber(code) && code->valuedouble >= 0 && code->valuedouble <= 999999 && code->valuedouble == code->valueint) {\n'
+        '            char digits[7];\n            snprintf(digits, sizeof(digits), "%06d", code->valueint);\n'
+        '            activation_code_ = digits;\n            has_activation_code_ = true;\n        }')
+replace("main/ota.cc",
+        '    cJSON_Delete(root);\n    return {};',
+        '    ESP_LOGI(TAG, "Espen pairing: HTTP 200; code=%d challenge=%d mqtt=%d websocket=%d",\n'
+        '        has_activation_code_, has_activation_challenge_, has_mqtt_config_, has_websocket_config_);\n'
+        '    cJSON_Delete(root);\n    return {};')
+replace("main/ota.cc",
+        '    if (*status_code == 202) {\n        return ESP_ERR_TIMEOUT;',
+        '    if (*status_code == 202) {\n        ESP_LOGI(TAG, "Espen pairing: server waiting for console binding (HTTP 202)");\n        return ESP_ERR_TIMEOUT;')

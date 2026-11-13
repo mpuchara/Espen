@@ -160,6 +160,7 @@ class EspenDisplay : public LcdDisplay {
     lv_obj_t* cloud_url_ = nullptr;
     lv_obj_t* cloud_keyboard_ = nullptr;
     lv_timer_t* cloud_timer_ = nullptr;
+    std::string last_auto_code_;
 
     void RefreshCloud() {
         if (!cloud_ || lv_obj_has_flag(cloud_, LV_OBJ_FLAG_HIDDEN)) return;
@@ -167,7 +168,20 @@ class EspenDisplay : public LcdDisplay {
         CloudSnapshot(state, code);
         if (!WifiManager::GetInstance().IsConnected()) state = "Brak Wi-Fi";
         lv_label_set_text(cloud_state_, state.c_str());
-        lv_label_set_text_fmt(cloud_code_, "Kod: %s", code.empty() ? "—" : code.c_str());
+        lv_label_set_text(cloud_code_, code.empty() ? "Brak kodu" : code.c_str());
+    }
+
+    void TickCloud() {
+        std::string state, code;
+        CloudSnapshot(state, code);
+        // Show a real, newly received code automatically, unless the user
+        // is editing Wi-Fi. Never invent a code when the server has none.
+        if (!code.empty() && code != last_auto_code_ &&
+            (!settings_ || lv_obj_has_flag(settings_, LV_OBJ_FLAG_HIDDEN))) {
+            last_auto_code_ = code;
+            if (!cloud_ || lv_obj_has_flag(cloud_, LV_OBJ_FLAG_HIDDEN)) OpenCloud();
+        }
+        RefreshCloud();
     }
 
     void OpenCloud() {
@@ -189,10 +203,21 @@ class EspenDisplay : public LcdDisplay {
             lv_label_set_long_mode(cloud_state_, LV_LABEL_LONG_WRAP);
             cloud_code_ = lv_label_create(cloud_);
             lv_obj_set_style_text_color(cloud_code_, lv_color_hex(0x78E1CB), 0);
+#if LV_FONT_MONTSERRAT_32
+            lv_obj_set_style_text_font(cloud_code_, &lv_font_montserrat_32, 0);
+#endif
+            lv_obj_set_width(cloud_code_, lv_pct(100));
+            lv_obj_set_style_text_align(cloud_code_, LV_TEXT_ALIGN_CENTER, 0);
             auto* hint = lv_label_create(cloud_);
             lv_obj_set_width(hint, lv_pct(100));
             lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
-            lv_label_set_text(hint, "xiaozhi.me → Console → agent Ala → Add Device. Wpisz kod z ekranu. Agent i model są ustawiane w chmurze.");
+            lv_label_set_text(hint, "Zaloguj się na xiaozhi.me. W konsoli wybierz agenta i Add Device, następnie wpisz kod. Jeśli brak kodu, sprawdź stan powyżej.");
+            auto* device = lv_label_create(cloud_);
+            auto mac = WifiManager::GetInstance().GetMacAddress();
+            lv_label_set_text_fmt(device, "MAC Wi-Fi: %s", mac.c_str());
+            MakeButton(cloud_, "Ponów parowanie (restart)", [](lv_event_t*) {
+                Application::GetInstance().Schedule([]() { esp_restart(); });
+            }, this, 350);
             auto* caption = lv_label_create(cloud_);
             lv_label_set_text(caption, "Adres serwera aktywacji (HTTPS):");
             cloud_url_ = lv_textarea_create(cloud_);
@@ -240,19 +265,31 @@ class EspenDisplay : public LcdDisplay {
                 lv_textarea_set_text(self->cloud_url_, CONFIG_OTA_URL);
             }, this, 350);
             cloud_keyboard_ = lv_keyboard_create(cloud_);
-            lv_obj_set_size(cloud_keyboard_, lv_pct(100), 250);
+            lv_obj_set_size(cloud_keyboard_, lv_pct(100), 220);
+            lv_obj_add_flag(cloud_keyboard_, LV_OBJ_FLAG_HIDDEN);
             lv_keyboard_set_mode(cloud_keyboard_, LV_KEYBOARD_MODE_TEXT_LOWER);
             lv_obj_add_event_cb(cloud_url_, [](lv_event_t* e) {
                 auto* self = static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                lv_obj_clear_flag(self->cloud_keyboard_, LV_OBJ_FLAG_HIDDEN);
                 lv_keyboard_set_textarea(self->cloud_keyboard_, self->cloud_url_);
+                lv_obj_scroll_to_view_recursive(self->cloud_keyboard_, LV_ANIM_OFF);
             }, LV_EVENT_CLICKED, this);
-            cloud_timer_ = lv_timer_create([](lv_timer_t* timer) {
-                static_cast<EspenDisplay*>(lv_timer_get_user_data(timer))->RefreshCloud();
-            }, 1000, this);
+            lv_obj_add_event_cb(cloud_keyboard_, [](lv_event_t* e) {
+                auto* self = static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                lv_keyboard_set_textarea(self->cloud_keyboard_, nullptr);
+                lv_obj_add_flag(self->cloud_keyboard_, LV_OBJ_FLAG_HIDDEN);
+            }, LV_EVENT_READY, this);
+            lv_obj_add_event_cb(cloud_keyboard_, [](lv_event_t* e) {
+                auto* self = static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                lv_keyboard_set_textarea(self->cloud_keyboard_, nullptr);
+                lv_obj_add_flag(self->cloud_keyboard_, LV_OBJ_FLAG_HIDDEN);
+            }, LV_EVENT_CANCEL, this);
         }
         Settings wifi("wifi", false);
         auto url = wifi.GetString("ota_url", CONFIG_OTA_URL);
         lv_textarea_set_text(cloud_url_, url.empty() ? CONFIG_OTA_URL : url.c_str());
+        lv_obj_add_flag(cloud_keyboard_, LV_OBJ_FLAG_HIDDEN);
+        lv_keyboard_set_textarea(cloud_keyboard_, nullptr);
         lv_obj_clear_flag(cloud_, LV_OBJ_FLAG_HIDDEN);
         lv_obj_move_foreground(cloud_);
         RefreshCloud();
@@ -434,12 +471,18 @@ public:
             lv_obj_set_style_border_width(footer, 0, 0);
             lv_obj_set_style_radius(footer, 0, 0);
             if (!container_) lv_obj_align(footer, LV_ALIGN_BOTTOM_MID, 0, 0);
-            MakeButton(footer, "Mów / Zakończ", [](lv_event_t*) {
+            MakeButton(footer, "Mów / Stop", [](lv_event_t*) {
                 ConversationClick();
-            }, this, 250);
+            }, this, 156);
+            MakeButton(footer, "Xiaozhi", [](lv_event_t* e) {
+                static_cast<EspenDisplay*>(lv_event_get_user_data(e))->OpenCloud();
+            }, this, 136);
             MakeButton(footer, "Ustawienia", [](lv_event_t* e) {
                 static_cast<EspenDisplay*>(lv_event_get_user_data(e))->OpenSettings();
-            }, this, 190);
+            }, this, 150);
+            cloud_timer_ = lv_timer_create([](lv_timer_t* timer) {
+                static_cast<EspenDisplay*>(lv_timer_get_user_data(timer))->TickCloud();
+            }, 1000, this);
             button_added_ = true;
         }
         lvgl_port_unlock();
@@ -566,7 +609,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.1.6 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.1.7 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();
