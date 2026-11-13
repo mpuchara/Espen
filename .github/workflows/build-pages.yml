@@ -28,6 +28,16 @@ jobs:
             dist/espen.bin
             dist/espen.bin.sha256
           if-no-files-found: error
+      - name: Upload debug symbols and effective configuration
+        uses: actions/upload-artifact@v4
+        with:
+          name: espen-debug-symbols
+          path: |
+            upstream/build/xiaozhi.elf
+            upstream/build/xiaozhi.map
+            upstream/sdkconfig
+            upstream/dependencies.lock
+          if-no-files-found: error
       - name: Upload Pages
         uses: actions/upload-pages-artifact@v3
         with:
