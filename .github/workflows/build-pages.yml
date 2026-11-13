@@ -1,0 +1,51 @@
+name: Espen firmware and installer
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: espen-pages
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: espressif/idf:v6.1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build pinned Xiaozhi port
+        shell: bash
+        run: |
+          source "$IDF_PATH/export.sh"
+          bash scripts/build.sh
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: espen-guition-p4
+          path: |
+            dist/espen.bin
+            dist/espen.bin.sha256
+          if-no-files-found: error
+      - name: Upload Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+      contents: read
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

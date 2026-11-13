@@ -1,0 +1,36 @@
+{
+  "manufacturer": "guition",
+  "type": "espen-guition-jc4880p443",
+  "target": "esp32p4",
+  "builds": [
+    {
+      "name": "espen-guition-jc4880p443",
+      "sdkconfig_append": [
+        "CONFIG_BOARD_TYPE_ESP32_P4_FUNCTION_EV_BOARD=y",
+        "CONFIG_SLAVE_IDF_TARGET_ESP32C6=y",
+        "CONFIG_ESP_HOSTED_P4_DEV_BOARD_FUNC_BOARD=y",
+        "CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE=y",
+        "CONFIG_ESP_HOSTED_SDIO_4_BIT_BUS=y",
+        "CONFIG_SPI_FLASH_SUPPORT_GD_CHIP=y",
+        "CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y",
+        "CONFIG_ESP32P4_REV_MIN_100=y",
+        "CONFIG_ESPTOOLPY_FLASHMODE_DIO=y",
+        "CONFIG_ESPTOOLPY_FLASHMODE_QIO=n",
+        "CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y",
+        "CONFIG_SPIRAM_SPEED_200M=n",
+        "CONFIG_SPIRAM_SPEED_80M=y",
+        "CONFIG_SPIRAM_XIP_FROM_PSRAM=n",
+        "CONFIG_USE_WECHAT_MESSAGE_STYLE=y",
+        "CONFIG_USE_DEFAULT_MESSAGE_STYLE=n",
+        "CONFIG_WAKE_WORD_DISABLED=y",
+        "CONFIG_USE_AFE_WAKE_WORD=n",
+        "CONFIG_USE_DEVICE_AEC=n",
+        "CONFIG_USE_SERVER_AEC=n",
+        "CONFIG_LANGUAGE_PL_PL=y",
+        "CONFIG_USE_HOTSPOT_WIFI_PROVISIONING=y",
+        "CONFIG_USE_ESP_BLUFI_WIFI_PROVISIONING=n",
+        "CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y"
+      ]
+    }
+  ]
+}

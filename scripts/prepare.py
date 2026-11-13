@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+"""Apply the small Espen overlay to a clean, pinned Xiaozhi checkout."""
+import shutil
+import sys
+from pathlib import Path
+
+root = Path(__file__).resolve().parents[1]
+up = Path(sys.argv[1]).resolve()
+board = up / "main/boards/espressif/esp32-p4-function-ev-board"
+for src, dst in [("config.h","config.h"),("config.json","config.json"),
+                 ("espen_board.cc","esp32-p4-function-ev-board.cc"),
+                 ("board_p4_st7701_init.h","board_p4_st7701_init.h")]:
+    shutil.copyfile(root / "firmware" / src, board / dst)
+
+def replace(path, old, new):
+    p = up / path
+    data = p.read_text()
+    if data.count(old) != 1:
+        raise RuntimeError(f"Unexpected upstream source: {path}: {old[:80]}")
+    p.write_text(data.replace(old, new, 1))
+
+# Retain server activation and protocol credentials, but never auto-flash an
+# upstream image onto our custom hardware.
+replace("main/application.cc", "if (ota_->HasNewVersion()) {",
+        "if (false && ota_->HasNewVersion()) { // Espen: USB updates only")
+# Readout only during actual audio acquisition; no raw audio retained/logged.
+replace("main/audio/codecs/es8311_audio_codec.cc", "#include <esp_log.h>",
+        "#include <esp_log.h>\n#include <esp_timer.h>\n#include <cmath>")
+replace("main/audio/codecs/es8311_audio_codec.cc",
+        "ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_read(dev_, (void*)dest, samples * sizeof(int16_t)));",
+        """const auto err = esp_codec_dev_read(dev_, (void*)dest, samples * sizeof(int16_t));
+        if (err != ESP_CODEC_DEV_OK) {
+            ESP_LOGW("EspenMic", "read failed: %d", err);
+            return 0;
+        }
+        static int64_t last = 0;
+        static int64_t sum_sq = 0;
+        static int count = 0;
+        static int peak = 0;
+        for (int i = 0; i < samples; ++i) {
+            const int v = dest[i];
+            const int a = v < 0 ? -v : v;
+            if (a > peak) peak = a;
+            sum_sq += static_cast<int64_t>(v) * v;
+        }
+        count += samples;
+        const int64_t now = esp_timer_get_time();
+        if (now - last >= 1000000 && count > 0) {
+            ESP_LOGI("EspenMic", "peak=%d rms=%d samples=%d", peak,
+                static_cast<int>(std::sqrt(static_cast<double>(sum_sq) / count)), count);
+            last = now; peak = 0; sum_sq = 0; count = 0;
+        }""")
+# Bigger readable UI font for this panel; preserve upstream language assets.
+replace("main/CMakeLists.txt",
+        'elseif(CONFIG_BOARD_TYPE_ESP32_P4_FUNCTION_EV_BOARD)\n    set(BOARD_DIR "espressif/esp32-p4-function-ev-board")',
+        'elseif(CONFIG_BOARD_TYPE_ESP32_P4_FUNCTION_EV_BOARD)\n    set(BOARD_DIR "espressif/esp32-p4-function-ev-board")\n    set(BUILTIN_TEXT_FONT font_noto_sans_basic_20_4)\n    set(BUILTIN_ICON_FONT font_material_symbols_20_4)')
