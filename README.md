@@ -1,6 +1,6 @@
 # Espen — polski asystent głosowy na ESP32-P4
 
-Pierwszy port [Xiaozhi ESP32](https://github.com/78/xiaozhi-esp32) v2.5.2 dla GUITION JC4880P443C_I_W(_Y), z ekranem ST7701S 480×800, GT911, mikrofonem ES8311 i Wi-Fi przez ESP32-C6. Niezależny od Home-Buddy. Wersja 0.1.2 jest eksperymentalna; wymaga testu na sprzęcie.
+Pierwszy port [Xiaozhi ESP32](https://github.com/78/xiaozhi-esp32) v2.5.2 dla GUITION JC4880P443C_I_W(_Y), z ekranem ST7701S 480×800, GT911, mikrofonem ES8311 i Wi-Fi przez ESP32-C6. Niezależny od Home-Buddy. Wersja 0.1.3 jest eksperymentalna; wymaga testu na sprzęcie.
 
 ## Instalacja
 [Instalator Espen](https://mpuchara.github.io/Espen/) — Chrome/Edge na komputerze, kabel USB z danymi. Wybierz Install i port **P4**, nie C6. Jeśli potrzebne, przytrzymaj BOOT podczas resetu i ponów połączenie. Pierwsza instalacja zastępuje poprzedni firmware i może skasować konfigurację; wykonaj kopię. Instalator obsługuje tylko wariant P4 rev1 (16 MB flash) tej konkretnej płytki, nie inne P4.
@@ -29,3 +29,6 @@ GitHub Actions buduje firmware i publikuje stronę tylko po udanym buildzie. W S
 
 ## Źródła i licencje
 Xiaozhi (MIT) — autorzy upstream, pin commit 49b4380b3faa0ceadd28a3e78aaf0f311c46c57e. Sekwencja ST7701S pochodzi z ultramcu/guition-jc4880p4-bsp (MIT) przez Home-Buddy, z zachowanym nagłówkiem. Pinout i panel sprawdzone w projekcie Home-Buddy; nowy port audio i interakcja wymagają walidacji. Patrz THIRD_PARTY_NOTICES.md.
+
+## Diagnostyka czarnego ekranu (0.1.3)
+Po włączeniu powinny pojawić się czerwony, zielony i niebieski pas przez około 700 ms, następnie UI. Test jest wykonywany przed inicjalizacją Wi-Fi i audio. Jeżeli nie pojawia się obraz lub urządzenie restartuje się, w instalatorze otwórz **Logi USB**, wybierz port P4 i naciśnij RESET (nie BOOT). Skopiuj log od startu. Szukamy linii EspenBoard, błędów PSRAM, bootloadera, panic i komunikatów LCD. W tej wersji używamy dwóch natywnych framebufferów DPI i pełnego renderowania LVGL bez generycznego sterownika MipiLcdDisplay. Działa w pionie. To port sprawdzonego podejścia Home-Buddy, nie zweryfikowany jeszcze na fizycznym urządzeniu w Espen.

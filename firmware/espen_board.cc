@@ -19,6 +19,10 @@
 #endif
 #include <esp_log.h>
 #include <esp_system.h>
+#include <esp_cache.h>
+#include <esp_heap_caps.h>
+#include <esp_attr.h>
+#include <freertos/semphr.h>
 #include <nvs.h>
 #include <ssid_manager.h>
 #include <wifi_manager.h>
@@ -71,7 +75,60 @@ static void ImportStagedWifi() {
     for (size_t i = 0; i < sizeof(password); ++i) wipe[i] = 0;
 }
 
-class EspenDisplay : public MipiLcdDisplay {
+// Native 480x800 framebuffers, independent of the generic Xiaozhi DSI flush.
+// The panel continuously scans the front buffer; LVGL renders a full frame
+// into separate PSRAM, then we copy to the back buffer and swap at frame end.
+class EspenDisplay : public LcdDisplay {
+    static constexpr size_t kFrameBytes = DISPLAY_WIDTH * DISPLAY_HEIGHT * sizeof(uint16_t);
+    uint16_t* frames_[2] = {};
+    void* render_ = nullptr;
+    SemaphoreHandle_t frame_done_ = nullptr;
+    int back_ = 1;
+    bool first_frame_ = true;
+    bool swap_failed_ = false;
+
+    static bool IRAM_ATTR FrameDone(esp_lcd_panel_handle_t,
+                                    esp_lcd_dpi_panel_event_data_t*, void* context) {
+        BaseType_t wake = pdFALSE;
+        xSemaphoreGiveFromISR(static_cast<SemaphoreHandle_t>(context), &wake);
+        return wake == pdTRUE;
+    }
+
+    void Flush(lv_display_t* disp, const lv_area_t* area, uint8_t* pixels) {
+        // Full render mode always supplies a full native RGB565 frame.
+        if (swap_failed_ || area->x1 != 0 || area->y1 != 0 ||
+            area->x2 != DISPLAY_WIDTH - 1 || area->y2 != DISPLAY_HEIGHT - 1) {
+            ESP_LOGE(TAG, "DPI flush invalid or previous swap failed");
+            lv_display_flush_ready(disp);
+            return;
+        }
+        memcpy(frames_[back_], pixels, kFrameBytes);
+        auto err = esp_cache_msync(frames_[back_], kFrameBytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+        if (err == ESP_OK) {
+            // Drain stale completion before asking the driver to scan the new FB.
+            xSemaphoreTake(frame_done_, 0);
+            err = esp_lcd_panel_draw_bitmap(panel_, 0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT, frames_[back_]);
+        }
+        if (err == ESP_OK && xSemaphoreTake(frame_done_, pdMS_TO_TICKS(150)) == pdTRUE) {
+            // If DMA finished just before the pointer changed, wait another
+            // completion to guarantee that the previous front is no longer used.
+            if (xSemaphoreTake(frame_done_, pdMS_TO_TICKS(150)) == pdTRUE) {
+                back_ ^= 1;
+                if (first_frame_) {
+                    first_frame_ = false;
+                    ESP_LOGI(TAG, "LCD: first full LVGL frame presented");
+                }
+            } else {
+                swap_failed_ = true;
+                ESP_LOGE(TAG, "LCD: second frame completion timeout");
+            }
+        } else {
+            swap_failed_ = true;
+            ESP_LOGE(TAG, "LCD: present failed (%s) or frame completion timeout", esp_err_to_name(err));
+        }
+        lv_display_flush_ready(disp);
+    }
+
     lv_obj_t* settings_ = nullptr;
     lv_obj_t* ssid_ = nullptr;
     lv_obj_t* password_ = nullptr;
@@ -202,9 +259,39 @@ class EspenDisplay : public MipiLcdDisplay {
     bool button_added_ = false;
 public:
     EspenDisplay(esp_lcd_panel_io_handle_t io, esp_lcd_panel_handle_t panel)
-        : MipiLcdDisplay(io, panel, DISPLAY_WIDTH, DISPLAY_HEIGHT, 0, 0, false, false, false) {}
+        : LcdDisplay(io, panel, DISPLAY_WIDTH, DISPLAY_HEIGHT) {
+        ESP_LOGI(TAG, "LCD: initialize native full-frame LVGL");
+        void* f0 = nullptr;
+        void* f1 = nullptr;
+        ESP_ERROR_CHECK(esp_lcd_dpi_panel_get_frame_buffer(panel, 2, &f0, &f1));
+        frames_[0] = static_cast<uint16_t*>(f0);
+        frames_[1] = static_cast<uint16_t*>(f1);
+        // The boot pattern is already in FB0; FB1 is the first target.
+        frame_done_ = xSemaphoreCreateBinary();
+        ESP_ERROR_CHECK(frame_done_ ? ESP_OK : ESP_ERR_NO_MEM);
+        esp_lcd_dpi_panel_event_callbacks_t callbacks = {};
+        callbacks.on_frame_buf_complete = FrameDone;
+        ESP_ERROR_CHECK(esp_lcd_dpi_panel_register_event_callbacks(panel, &callbacks, frame_done_));
+        render_ = heap_caps_aligned_alloc(64, kFrameBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        ESP_ERROR_CHECK(render_ ? ESP_OK : ESP_ERR_NO_MEM);
+        lv_init();
+        lvgl_port_cfg_t port_cfg = ESP_LVGL_PORT_INIT_CONFIG();
+        ESP_ERROR_CHECK(lvgl_port_init(&port_cfg));
+        ESP_ERROR_CHECK(lvgl_port_lock(1000) ? ESP_OK : ESP_ERR_TIMEOUT);
+        display_ = lv_display_create(DISPLAY_WIDTH, DISPLAY_HEIGHT);
+        ESP_ERROR_CHECK(display_ ? ESP_OK : ESP_ERR_NO_MEM);
+        lv_display_set_color_format(display_, LV_COLOR_FORMAT_RGB565);
+        lv_display_set_buffers(display_, render_, nullptr, kFrameBytes, LV_DISPLAY_RENDER_MODE_FULL);
+        lv_display_set_user_data(display_, this);
+        lv_display_set_flush_cb(display_, [](lv_display_t* disp, const lv_area_t* area, uint8_t* pixels) {
+            static_cast<EspenDisplay*>(lv_display_get_user_data(disp))->Flush(disp, area, pixels);
+        });
+        lv_display_set_default(display_);
+        lvgl_port_unlock();
+        ESP_LOGI(TAG, "LCD: native LVGL display registered");
+    }
     void SetupUI() override {
-        MipiLcdDisplay::SetupUI();
+        LcdDisplay::SetupUI();
         if (button_added_) return;
         if (!lvgl_port_lock(1000)) return;
         if (auto* screen = lv_screen_active()) {
@@ -262,6 +349,7 @@ class EspenBoard : public WifiBoard {
         esp_lcd_dsi_bus_config_t dsi_cfg = {};
         dsi_cfg.bus_id = 0;
         dsi_cfg.num_data_lanes = 2;
+        dsi_cfg.phy_clk_src = MIPI_DSI_PHY_CLK_SRC_DEFAULT;
         dsi_cfg.lane_bit_rate_mbps = 500;
         ESP_ERROR_CHECK(esp_lcd_new_dsi_bus(&dsi_cfg, &dsi_));
         esp_lcd_dbi_io_config_t io_cfg = {};
@@ -276,7 +364,7 @@ class EspenBoard : public WifiBoard {
         dpi.dpi_clock_freq_mhz = 34;
         dpi.in_color_format = LCD_COLOR_FMT_RGB565;
         dpi.out_color_format = LCD_COLOR_FMT_RGB565;
-        dpi.num_fbs = 1;
+        dpi.num_fbs = 2;
         dpi.video_timing.h_size = DISPLAY_WIDTH;
         dpi.video_timing.v_size = DISPLAY_HEIGHT;
         dpi.video_timing.hsync_pulse_width = 12;
@@ -287,7 +375,7 @@ class EspenBoard : public WifiBoard {
         dpi.video_timing.vsync_front_porch = 166;
         esp_lcd_panel_handle_t panel = nullptr;
         ESP_ERROR_CHECK(esp_lcd_new_panel_dpi(dsi_, &dpi, &panel));
-        ESP_ERROR_CHECK(esp_lcd_dpi_panel_enable_dma2d(panel));
+        ESP_LOGI(TAG, "LCD: DPI allocated (2 FBs)");
         ESP_ERROR_CHECK(gpio_set_direction(DISPLAY_RESET_PIN, GPIO_MODE_OUTPUT));
         ESP_ERROR_CHECK(gpio_set_level(DISPLAY_RESET_PIN, 0));
         vTaskDelay(pdMS_TO_TICKS(20));
@@ -298,8 +386,27 @@ class EspenBoard : public WifiBoard {
             if (cmd.delay_ms) vTaskDelay(pdMS_TO_TICKS(cmd.delay_ms));
         }
         ESP_ERROR_CHECK(esp_lcd_panel_init(panel));
+        // First prove panel/DSI/backlight without LVGL or audio. A brief
+        // RGB stripe pattern is deliberately visible before the chat UI.
+        void* f0 = nullptr;
+        void* f1 = nullptr;
+        ESP_ERROR_CHECK(esp_lcd_dpi_panel_get_frame_buffer(panel, 2, &f0, &f1));
+        auto* pixels = static_cast<uint16_t*>(f0);
+        for (int y = 0; y < DISPLAY_HEIGHT; ++y) {
+            const uint16_t color = y < DISPLAY_HEIGHT / 3 ? 0xF800 :
+                                   y < DISPLAY_HEIGHT * 2 / 3 ? 0x07E0 : 0x001F;
+            for (int x = 0; x < DISPLAY_WIDTH; ++x) pixels[y * DISPLAY_WIDTH + x] = color;
+        }
+        constexpr size_t bytes = DISPLAY_WIDTH * DISPLAY_HEIGHT * sizeof(uint16_t);
+        memset(f1, 0, bytes);
+        ESP_ERROR_CHECK(esp_cache_msync(f0, bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M));
+        ESP_ERROR_CHECK(esp_cache_msync(f1, bytes, ESP_CACHE_MSYNC_FLAG_DIR_C2M));
+        ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel, 0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT, f0));
+        ESP_ERROR_CHECK(gpio_set_level(DISPLAY_BACKLIGHT_PIN, 1));
+        ESP_LOGI(TAG, "LCD: RGB boot pattern visible; GPIO23 high");
+        vTaskDelay(pdMS_TO_TICKS(700));
         display_ = new EspenDisplay(io, panel);
-        ESP_LOGI(TAG, "ST7701S initialized");
+        ESP_LOGI(TAG, "LCD: ST7701S initialized");
     }
     void InitTouch() {
         esp_lcd_touch_config_t cfg = {};
@@ -313,7 +420,11 @@ class EspenBoard : public WifiBoard {
         // GT911 may strap either of two addresses.
         if (i2c_master_probe(bus_, 0x5D, 100) != ESP_OK &&
             i2c_master_probe(bus_, 0x14, 100) == ESP_OK) io_cfg.dev_addr = 0x14;
-        ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c(bus_, &io_cfg, &touch_io_));
+        const auto io_err = esp_lcd_new_panel_io_i2c(bus_, &io_cfg, &touch_io_);
+        if (io_err != ESP_OK) {
+            ESP_LOGE(TAG, "GT911 IO failed: %s", esp_err_to_name(io_err));
+            return;
+        }
         const auto err = esp_lcd_touch_new_i2c_gt911(touch_io_, &cfg, &touch_);
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "GT911 init failed: %s; BOOT remains available", esp_err_to_name(err));
@@ -326,8 +437,11 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        InitI2c();
+        ESP_LOGI(TAG, "Espen 0.1.3 boot: reset reason=%d", esp_reset_reason());
+        // Bring up the panel before peripherals so a later touch/codec fault
+        // cannot hide the initial diagnostic pattern.
         InitPanel();
+        InitI2c();
         InitTouch();
         boot_.OnClick([this]() {
             if (Application::GetInstance().GetDeviceState() == kDeviceStateStarting) {
@@ -346,6 +460,8 @@ public:
     AudioCodec* GetAudioCodec() override {
         // NC intentionally keeps the external amp off; upstream decoder still
         // consumes server audio, so its state machine and text events work.
+        static const bool logged = []() { ESP_LOGI(TAG, "Audio: ES8311 built-in mic, DIN GPIO48"); return true; }();
+        (void)logged;
         static Es8311AudioCodec codec(bus_, AUDIO_CODEC_I2C_PORT,
             AUDIO_INPUT_SAMPLE_RATE, AUDIO_OUTPUT_SAMPLE_RATE,
             AUDIO_I2S_GPIO_MCLK, AUDIO_I2S_GPIO_BCLK, AUDIO_I2S_GPIO_WS,
@@ -359,7 +475,7 @@ public:
     }
     Display* GetDisplay() override { return display_; }
     Backlight* GetBacklight() override {
-        static PwmBacklight backlight(DISPLAY_BACKLIGHT_PIN, false);
+        static PwmBacklight backlight(DISPLAY_BACKLIGHT_PIN, false, 5000);
         return &backlight;
     }
 };
