@@ -27,10 +27,29 @@
 #include <ssid_manager.h>
 #include <wifi_manager.h>
 #include <cstring>
+#include <mutex>
+#include <string>
+#include "settings.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
 static constexpr const char* TAG = "EspenBoard";
+
+// Activation info is shared by the Xiaozhi worker and the LVGL task.
+// Never store activation codes or cloud credentials in logs/NVS here.
+static std::mutex cloud_mutex;
+static std::string cloud_status = "Oczekuje na Wi-Fi";
+static std::string cloud_code;
+void EspenCloudInfo(const char* status, const char* code) {
+    std::lock_guard<std::mutex> guard(cloud_mutex);
+    cloud_status = status ? status : "";
+    cloud_code = code ? code : "";
+}
+static void CloudSnapshot(std::string& status, std::string& code) {
+    std::lock_guard<std::mutex> guard(cloud_mutex);
+    status = cloud_status;
+    code = cloud_code;
+}
 
 static void ConversationClick() {
     auto& app = Application::GetInstance();
@@ -135,6 +154,110 @@ class EspenDisplay : public LcdDisplay {
     lv_obj_t* settings_status_ = nullptr;
     lv_obj_t* keyboard_ = nullptr;
     bool saving_ = false;
+    lv_obj_t* cloud_ = nullptr;
+    lv_obj_t* cloud_state_ = nullptr;
+    lv_obj_t* cloud_code_ = nullptr;
+    lv_obj_t* cloud_url_ = nullptr;
+    lv_obj_t* cloud_keyboard_ = nullptr;
+    lv_timer_t* cloud_timer_ = nullptr;
+
+    void RefreshCloud() {
+        if (!cloud_ || lv_obj_has_flag(cloud_, LV_OBJ_FLAG_HIDDEN)) return;
+        std::string state, code;
+        CloudSnapshot(state, code);
+        if (!WifiManager::GetInstance().IsConnected()) state = "Brak Wi-Fi";
+        lv_label_set_text(cloud_state_, state.c_str());
+        lv_label_set_text_fmt(cloud_code_, "Kod: %s", code.empty() ? "—" : code.c_str());
+    }
+
+    void OpenCloud() {
+        if (!cloud_) {
+            cloud_ = lv_obj_create(lv_layer_top());
+            lv_obj_set_size(cloud_, DISPLAY_WIDTH, DISPLAY_HEIGHT);
+            lv_obj_center(cloud_);
+            lv_obj_set_style_bg_color(cloud_, lv_color_hex(0x102030), 0);
+            lv_obj_set_style_bg_opa(cloud_, LV_OPA_COVER, 0);
+            lv_obj_set_style_text_color(cloud_, lv_color_white(), 0);
+            lv_obj_set_style_radius(cloud_, 0, 0);
+            lv_obj_set_style_pad_all(cloud_, 12, 0);
+            lv_obj_set_style_pad_row(cloud_, 7, 0);
+            lv_obj_set_flex_flow(cloud_, LV_FLEX_FLOW_COLUMN);
+            auto* title = lv_label_create(cloud_);
+            lv_label_set_text(title, "ESPEN / Xiaozhi");
+            cloud_state_ = lv_label_create(cloud_);
+            lv_obj_set_width(cloud_state_, lv_pct(100));
+            lv_label_set_long_mode(cloud_state_, LV_LABEL_LONG_WRAP);
+            cloud_code_ = lv_label_create(cloud_);
+            lv_obj_set_style_text_color(cloud_code_, lv_color_hex(0x78E1CB), 0);
+            auto* hint = lv_label_create(cloud_);
+            lv_obj_set_width(hint, lv_pct(100));
+            lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+            lv_label_set_text(hint, "xiaozhi.me → Console → agent Ala → Add Device. Wpisz kod z ekranu. Agent i model są ustawiane w chmurze.");
+            auto* caption = lv_label_create(cloud_);
+            lv_label_set_text(caption, "Adres serwera aktywacji (HTTPS):");
+            cloud_url_ = lv_textarea_create(cloud_);
+            lv_obj_set_width(cloud_url_, lv_pct(100));
+            lv_textarea_set_one_line(cloud_url_, true);
+            lv_textarea_set_max_length(cloud_url_, 240);
+            auto* row = lv_obj_create(cloud_);
+            lv_obj_set_size(row, lv_pct(100), 62);
+            lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+            lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_border_width(row, 0, 0);
+            lv_obj_set_style_pad_all(row, 0, 0);
+            MakeButton(row, "Zapisz / restart", [](lv_event_t* e) {
+                auto* self = static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                std::string url = lv_textarea_get_text(self->cloud_url_);
+                if (url.empty()) url = CONFIG_OTA_URL;
+                if (url.rfind("https://", 0) != 0 || url.size() <= 8 ||
+                    url.find_first_of(" \r\n\t") != std::string::npos) {
+                    lv_label_set_text(self->cloud_state_, "Wymagany poprawny adres HTTPS");
+                    return;
+                }
+                // Commit before restarting, and invalidate old protocol config
+                // only if the user explicitly changes the server.
+                {
+                    Settings wifi("wifi", true);
+                    auto old = wifi.GetString("ota_url", CONFIG_OTA_URL);
+                    if (old != url) {
+                        wifi.SetString("ota_url", url);
+                        Settings mqtt("mqtt", true);
+                        Settings ws("websocket", true);
+                        mqtt.EraseAll();
+                        ws.EraseAll();
+                    }
+                }
+                Application::GetInstance().Schedule([]() { esp_restart(); });
+            }, this, 235);
+            MakeButton(row, "Wróć", [](lv_event_t* e) {
+                auto* self = static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                lv_keyboard_set_textarea(self->cloud_keyboard_, nullptr);
+                lv_obj_add_flag(self->cloud_, LV_OBJ_FLAG_HIDDEN);
+                self->OpenSettings();
+            }, this, 145);
+            MakeButton(cloud_, "Domyślny serwer Xiaozhi", [](lv_event_t* e) {
+                auto* self = static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                lv_textarea_set_text(self->cloud_url_, CONFIG_OTA_URL);
+            }, this, 350);
+            cloud_keyboard_ = lv_keyboard_create(cloud_);
+            lv_obj_set_size(cloud_keyboard_, lv_pct(100), 250);
+            lv_keyboard_set_mode(cloud_keyboard_, LV_KEYBOARD_MODE_TEXT_LOWER);
+            lv_obj_add_event_cb(cloud_url_, [](lv_event_t* e) {
+                auto* self = static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                lv_keyboard_set_textarea(self->cloud_keyboard_, self->cloud_url_);
+            }, LV_EVENT_CLICKED, this);
+            cloud_timer_ = lv_timer_create([](lv_timer_t* timer) {
+                static_cast<EspenDisplay*>(lv_timer_get_user_data(timer))->RefreshCloud();
+            }, 1000, this);
+        }
+        Settings wifi("wifi", false);
+        auto url = wifi.GetString("ota_url", CONFIG_OTA_URL);
+        lv_textarea_set_text(cloud_url_, url.empty() ? CONFIG_OTA_URL : url.c_str());
+        lv_obj_clear_flag(cloud_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(cloud_);
+        RefreshCloud();
+    }
+
 
     static lv_obj_t* MakeButton(lv_obj_t* parent, const char* label,
                                 lv_event_cb_t cb, void* data, int width = 200) {
@@ -230,8 +353,13 @@ class EspenDisplay : public LcdDisplay {
                     if (!board.IsInWifiConfigMode()) board.EnterWifiConfigMode();
                 });
             }, this, 340);
+            MakeButton(settings_, "Xiaozhi / parowanie", [](lv_event_t* e) {
+                auto* self = static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                self->CloseSettings();
+                self->OpenCloud();
+            }, this, 340);
             keyboard_ = lv_keyboard_create(settings_);
-            lv_obj_set_size(keyboard_, lv_pct(100), 260);
+            lv_obj_set_size(keyboard_, lv_pct(100), 235);
             lv_keyboard_set_mode(keyboard_, LV_KEYBOARD_MODE_TEXT_LOWER);
             for (auto* field : {ssid_, password_}) {
                 lv_obj_add_event_cb(field, [](lv_event_t* e) {
@@ -244,7 +372,8 @@ class EspenDisplay : public LcdDisplay {
         auto& wifi = WifiManager::GetInstance();
         if (wifi.IsConnected()) {
             auto name = wifi.GetSsid();
-            lv_label_set_text_fmt(settings_status_, "Połączono: %s", name.c_str());
+            auto ip = wifi.GetIpAddress();
+            lv_label_set_text_fmt(settings_status_, "Połączono: %s\nIP: %s | RSSI: %d dBm", name.c_str(), ip.c_str(), wifi.GetRssi());
             lv_textarea_set_text(ssid_, name.c_str());
         } else {
             lv_label_set_text(settings_status_, "Brak połączenia z Wi-Fi");
@@ -437,7 +566,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.1.4 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.1.5 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();
@@ -471,7 +600,12 @@ public:
     }
     void StartNetwork() override {
         ImportStagedWifi();
+        EspenCloudInfo("Łączenie z siecią Wi-Fi", "");
         WifiBoard::StartNetwork();
+    }
+    // Mains-powered assistant: don't put the C6 in modem sleep between turns.
+    void SetPowerSaveLevel(PowerSaveLevel) override {
+        WifiBoard::SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
     }
     Display* GetDisplay() override { return display_; }
     Backlight* GetBacklight() override {

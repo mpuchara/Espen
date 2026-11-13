@@ -68,3 +68,45 @@ replace("main/boards/common/wifi_board.cc", "config.show_ota_config = true;",
 
 # Xiaozhi disables the keyboard to save flash; Espen's local setup requires it.
 replace("sdkconfig.defaults", "CONFIG_LV_USE_KEYBOARD=n", "CONFIG_LV_USE_KEYBOARD=y")
+
+# Make activation visible even without a speaker; keep real server code
+# available in Settings and distinguish Wi-Fi from cloud activation.
+replace("main/application.cc",
+        "void Application::ShowActivationCode(const std::string& code, const std::string& message) {",
+        """extern void EspenCloudInfo(const char* status, const char* code);
+void Application::ShowActivationCode(const std::string& code, const std::string& message) {
+    EspenCloudInfo("Wprowadź kod w konsoli Xiaozhi", code.c_str());""")
+replace("main/application.cc",
+        'Alert(Lang::Strings::ACTIVATION, message.c_str(), "link", Lang::Sounds::OGG_ACTIVATION);',
+        'std::string visible = "Kod aktywacji: " + code + "\\n" + message;\n'
+        '    Alert(Lang::Strings::ACTIVATION, visible.c_str(), "link", {});')
+# Forward declaration must precede CheckNewVersion; declaration above is
+# harmless but keep a separate declaration at the top of this method.
+replace("main/application.cc",
+        "void Application::CheckNewVersion() {\n    const int MAX_RETRY = 10;\n    int retry_count = 0;\n    int retry_delay = 10;  // Initial retry delay in seconds",
+        """extern void EspenCloudInfo(const char* status, const char* code);
+void Application::CheckNewVersion() {
+    int retry_count = 0;
+    int retry_delay = 2;
+    EspenCloudInfo("Łączenie z serwerem Xiaozhi", "");""")
+replace("main/application.cc",
+        '            if (retry_count >= MAX_RETRY) {\n                ESP_LOGE(TAG, "Too many retries, exit version check");\n                return;\n            }',
+        '            EspenCloudInfo("Błąd połączenia z Xiaozhi. Ponawiam...", "");')
+replace("main/application.cc", "            retry_delay *= 2;  // Double the retry delay",
+        "            retry_delay = std::min(retry_delay * 2, 15);")
+replace("main/application.cc",
+        "        retry_delay = 10;  // Reset retry delay",
+        "        retry_delay = 2;  // Reset retry delay")
+replace("main/application.cc",
+        "        if (!ota_->HasActivationCode() && !ota_->HasActivationChallenge()) {",
+        '        if (!ota_->HasActivationCode() && !ota_->HasActivationChallenge()) {\n'
+        '            EspenCloudInfo("Serwer potwierdził aktywację; konfiguruję rozmowę", "");')
+replace("main/application.cc",
+        "    protocol_->OnConnected([this]() { DismissAlert(); });",
+        '    protocol_->OnConnected([this]() {\n'
+        '        EspenCloudInfo("Połączono z usługą Xiaozhi", "");\n'
+        '        DismissAlert();\n    });')
+# Wi-Fi loss during protocol setup must not dereference a null protocol.
+replace("main/application.cc",
+        '        protocol_->CloseAudioChannel();\n    }\n\n    // Update the status bar immediately to show the network state',
+        '        if (protocol_) protocol_->CloseAudioChannel();\n    }\n\n    // Update the status bar immediately to show the network state')
