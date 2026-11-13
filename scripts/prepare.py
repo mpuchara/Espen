@@ -6,9 +6,10 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
 up = Path(sys.argv[1]).resolve()
-board = up / "main/boards/espressif/esp32-p4-function-ev-board"
+board = up / "main/boards/guition/espen-guition-jc4880p443"
+board.mkdir(parents=True, exist_ok=True)
 for src, dst in [("config.h","config.h"),("config.json","config.json"),
-                 ("espen_board.cc","esp32-p4-function-ev-board.cc"),
+                 ("espen_board.cc","espen_board.cc"),
                  ("board_p4_st7701_init.h","board_p4_st7701_init.h")]:
     shutil.copyfile(root / "firmware" / src, board / dst)
 
@@ -29,7 +30,7 @@ replace("main/audio/codecs/es8311_audio_codec.cc", "#include <esp_log.h>",
 replace("main/audio/codecs/es8311_audio_codec.cc",
         "ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_read(dev_, (void*)dest, samples * sizeof(int16_t)));",
         """const auto err = esp_codec_dev_read(dev_, (void*)dest, samples * sizeof(int16_t));
-        if (err != ESP_CODEC_DEV_OK) {
+        if (err != ESP_OK) {
             ESP_LOGW("EspenMic", "read failed: %d", err);
             return 0;
         }
@@ -50,7 +51,17 @@ replace("main/audio/codecs/es8311_audio_codec.cc",
                 static_cast<int>(std::sqrt(static_cast<double>(sum_sq) / count)), count);
             last = now; peak = 0; sum_sq = 0; count = 0;
         }""")
-# Bigger readable UI font for this panel; preserve upstream language assets.
+# A separate board directory and Kconfig choice keep upstream board identities intact.
+replace("main/Kconfig.projbuild",
+        '    config BOARD_TYPE_ESP32_P4_FUNCTION_EV_BOARD\n',
+        '    config BOARD_TYPE_ESPEN_GUITION_P4\n        bool "Espen GUITION JC4880P443"\n        depends on IDF_TARGET_ESP32P4\n    config BOARD_TYPE_ESP32_P4_FUNCTION_EV_BOARD\n')
 replace("main/CMakeLists.txt",
-        'elseif(CONFIG_BOARD_TYPE_ESP32_P4_FUNCTION_EV_BOARD)\n    set(BOARD_DIR "espressif/esp32-p4-function-ev-board")',
-        'elseif(CONFIG_BOARD_TYPE_ESP32_P4_FUNCTION_EV_BOARD)\n    set(BOARD_DIR "espressif/esp32-p4-function-ev-board")\n    set(BUILTIN_TEXT_FONT font_noto_sans_basic_20_4)\n    set(BUILTIN_ICON_FONT font_material_symbols_20_4)')
+        'elseif(CONFIG_BOARD_TYPE_ESP32_P4_FUNCTION_EV_BOARD)',
+        'elseif(CONFIG_BOARD_TYPE_ESPEN_GUITION_P4)\n    set(BOARD_DIR "guition/espen-guition-jc4880p443")\n    set(BUILTIN_TEXT_FONT font_noto_sans_basic_20_4)\n    set(BUILTIN_ICON_FONT font_material_symbols_20_4)\nelseif(CONFIG_BOARD_TYPE_ESP32_P4_FUNCTION_EV_BOARD)')
+
+# The Wi-Fi configuration portal remains an alternative to the on-device form.
+# Hide OTA configuration: custom board firmware is updated only via USB.
+replace("main/boards/common/wifi_board.cc", 'config.ssid_prefix = "Xiaozhi";',
+        'config.ssid_prefix = "Espen";')
+replace("main/boards/common/wifi_board.cc", "config.show_ota_config = true;",
+        "config.show_ota_config = false;")

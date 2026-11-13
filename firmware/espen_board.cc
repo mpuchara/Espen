@@ -14,6 +14,11 @@
 #include <esp_ldo_regulator.h>
 #include <esp_lvgl_port.h>
 #include <esp_log.h>
+#include <esp_system.h>
+#include <nvs.h>
+#include <ssid_manager.h>
+#include <wifi_manager.h>
+#include <cstring>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
@@ -29,7 +34,167 @@ static void ConversationClick() {
     }
 }
 
+// Stage credentials in a private device-local NVS namespace. At next boot,
+ // consume them before the upstream Wi-Fi manager starts any station scans.
+static esp_err_t StageWifi(const char* ssid, const char* password) {
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open("espen_wifi", NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+    if ((err = nvs_set_str(handle, "ssid", ssid)) == ESP_OK &&
+        (err = nvs_set_str(handle, "password", password)) == ESP_OK)
+        err = nvs_commit(handle);
+    nvs_close(handle);
+    return err;
+}
+
+static void ImportStagedWifi() {
+    nvs_handle_t handle;
+    if (nvs_open("espen_wifi", NVS_READWRITE, &handle) != ESP_OK) return;
+    char ssid[33] = {};
+    char password[65] = {};
+    size_t ssid_len = sizeof(ssid), password_len = sizeof(password);
+    if (nvs_get_str(handle, "ssid", ssid, &ssid_len) == ESP_OK &&
+        nvs_get_str(handle, "password", password, &password_len) == ESP_OK &&
+        ssid[0]) {
+        SsidManager::GetInstance().AddSsid(ssid, password);
+        nvs_erase_key(handle, "ssid");
+        nvs_erase_key(handle, "password");
+        nvs_commit(handle);
+    }
+    nvs_close(handle);
+    // Do not retain or print passwords in memory beyond provisioning.
+    volatile char* wipe = password;
+    for (size_t i = 0; i < sizeof(password); ++i) wipe[i] = 0;
+}
+
 class EspenDisplay : public MipiLcdDisplay {
+    lv_obj_t* settings_ = nullptr;
+    lv_obj_t* ssid_ = nullptr;
+    lv_obj_t* password_ = nullptr;
+    lv_obj_t* settings_status_ = nullptr;
+    lv_obj_t* keyboard_ = nullptr;
+    bool saving_ = false;
+
+    static lv_obj_t* MakeButton(lv_obj_t* parent, const char* label,
+                                lv_event_cb_t cb, void* data, int width = 200) {
+        auto* button = lv_button_create(parent);
+        lv_obj_set_size(button, width, 50);
+        lv_obj_set_style_radius(button, 12, 0);
+        lv_obj_set_style_bg_color(button, lv_color_hex(0x176C92), 0);
+        auto* text = lv_label_create(button);
+        lv_label_set_text(text, label);
+        lv_obj_set_style_text_color(text, lv_color_white(), 0);
+        lv_obj_center(text);
+        lv_obj_add_event_cb(button, cb, LV_EVENT_CLICKED, data);
+        return button;
+    }
+    void CloseSettings() {
+        if (!settings_ || saving_) return;
+        lv_textarea_set_text(password_, "");
+        lv_keyboard_set_textarea(keyboard_, nullptr);
+        lv_obj_add_flag(settings_, LV_OBJ_FLAG_HIDDEN);
+    }
+    void SaveWifi() {
+        if (saving_) return;
+        const char* ssid = lv_textarea_get_text(ssid_);
+        const char* password = lv_textarea_get_text(password_);
+        const size_t sn = strlen(ssid), pn = strlen(password);
+        if (sn == 0 || sn > 32 || (pn != 0 && (pn < 8 || pn > 63))) {
+            lv_label_set_text(settings_status_, "SSID: 1–32 bajty. Hasło: 8–63 znaki.");
+            return;
+        }
+        if (StageWifi(ssid, password) != ESP_OK) {
+            lv_label_set_text(settings_status_, "Błąd zapisu. Spróbuj ponownie.");
+            return;
+        }
+        saving_ = true;
+        lv_textarea_set_text(password_, "");
+        lv_keyboard_set_textarea(keyboard_, nullptr);
+        lv_label_set_text(settings_status_, "Zapisano. Ponowne uruchomienie...");
+        // Reboot outside the LVGL callback. The upstream station will connect
+        // with the new saved credentials and retain previous networks.
+        Application::GetInstance().Schedule([]() { esp_restart(); });
+    }
+    void OpenSettings() {
+        if (!settings_) {
+            settings_ = lv_obj_create(lv_layer_top());
+            lv_obj_set_size(settings_, DISPLAY_WIDTH, DISPLAY_HEIGHT);
+            lv_obj_center(settings_);
+            lv_obj_set_style_bg_color(settings_, lv_color_hex(0x102030), 0);
+            lv_obj_set_style_bg_opa(settings_, LV_OPA_COVER, 0);
+            lv_obj_set_style_text_color(settings_, lv_color_white(), 0);
+            lv_obj_set_style_radius(settings_, 0, 0);
+            lv_obj_set_style_pad_all(settings_, 14, 0);
+            lv_obj_set_style_pad_row(settings_, 8, 0);
+            lv_obj_set_flex_flow(settings_, LV_FLEX_FLOW_COLUMN);
+            auto* title = lv_label_create(settings_);
+            lv_label_set_text(title, "ESPEN / Ustawienia Wi-Fi");
+            settings_status_ = lv_label_create(settings_);
+            lv_obj_set_width(settings_status_, lv_pct(100));
+            lv_label_set_long_mode(settings_status_, LV_LABEL_LONG_WRAP);
+            auto* hint = lv_label_create(settings_);
+            lv_obj_set_width(hint, lv_pct(100));
+            lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+            lv_label_set_text(hint, "ESP32-C6: sieć 2,4 GHz. Wpisz nazwę sieci i hasło.");
+            ssid_ = lv_textarea_create(settings_);
+            lv_obj_set_width(ssid_, lv_pct(100));
+            lv_textarea_set_one_line(ssid_, true);
+            lv_textarea_set_max_length(ssid_, 32);
+            lv_textarea_set_placeholder_text(ssid_, "Nazwa sieci (SSID)");
+            password_ = lv_textarea_create(settings_);
+            lv_obj_set_width(password_, lv_pct(100));
+            lv_textarea_set_one_line(password_, true);
+            lv_textarea_set_max_length(password_, 63);
+            lv_textarea_set_password_mode(password_, true);
+            lv_textarea_set_password_show_time(password_, 0);
+            lv_textarea_set_placeholder_text(password_, "Hasło Wi-Fi");
+            auto* row = lv_obj_create(settings_);
+            lv_obj_set_size(row, lv_pct(100), 66);
+            lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+            lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_border_width(row, 0, 0);
+            lv_obj_set_style_pad_all(row, 0, 0);
+            lv_obj_set_style_pad_column(row, 8, 0);
+            MakeButton(row, "Zapisz i połącz", [](lv_event_t* e) {
+                static_cast<EspenDisplay*>(lv_event_get_user_data(e))->SaveWifi();
+            }, this, 220);
+            MakeButton(row, "Wróć", [](lv_event_t* e) {
+                static_cast<EspenDisplay*>(lv_event_get_user_data(e))->CloseSettings();
+            }, this, 160);
+            MakeButton(settings_, "Konfiguruj przez telefon", [](lv_event_t* e) {
+                auto* self = static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                self->CloseSettings();
+                Application::GetInstance().Schedule([]() {
+                    auto& board = static_cast<WifiBoard&>(Board::GetInstance());
+                    if (!board.IsInWifiConfigMode()) board.EnterWifiConfigMode();
+                });
+            }, this, 340);
+            keyboard_ = lv_keyboard_create(settings_);
+            lv_obj_set_size(keyboard_, lv_pct(100), 260);
+            lv_keyboard_set_mode(keyboard_, LV_KEYBOARD_MODE_TEXT_LOWER);
+            for (auto* field : {ssid_, password_}) {
+                lv_obj_add_event_cb(field, [](lv_event_t* e) {
+                    auto* self = static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                    lv_keyboard_set_textarea(self->keyboard_,
+                        static_cast<lv_obj_t*>(lv_event_get_target(e)));
+                }, LV_EVENT_CLICKED, this);
+            }
+        }
+        auto& wifi = WifiManager::GetInstance();
+        if (wifi.IsConnected()) {
+            auto name = wifi.GetSsid();
+            lv_label_set_text_fmt(settings_status_, "Połączono: %s", name.c_str());
+            lv_textarea_set_text(ssid_, name.c_str());
+        } else {
+            lv_label_set_text(settings_status_, "Brak połączenia z Wi-Fi");
+            lv_textarea_set_text(ssid_, "");
+        }
+        lv_textarea_set_text(password_, "");
+        lv_keyboard_set_textarea(keyboard_, ssid_);
+        lv_obj_clear_flag(settings_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(settings_);
+    }
+
     bool button_added_ = false;
 public:
     EspenDisplay(esp_lcd_panel_io_handle_t io, esp_lcd_panel_handle_t panel)
@@ -39,18 +204,22 @@ public:
         if (button_added_) return;
         if (!lvgl_port_lock(1000)) return;
         if (auto* screen = lv_screen_active()) {
-            auto* button = lv_button_create(screen);
-            lv_obj_add_flag(button, LV_OBJ_FLAG_FLOATING);
-            lv_obj_set_size(button, 220, 58);
-            lv_obj_align(button, LV_ALIGN_BOTTOM_MID, 0, -12);
-            lv_obj_set_style_radius(button, 20, 0);
-            lv_obj_set_style_bg_color(button, lv_color_hex(0x176C92), 0);
-            auto* text = lv_label_create(button);
-            lv_label_set_text(text, "Mów / Zakończ");
-            lv_obj_set_style_text_color(text, lv_color_white(), 0);
-            lv_obj_center(text);
-            lv_obj_add_event_cb(button, [](lv_event_t*) { ConversationClick(); }, LV_EVENT_CLICKED, nullptr);
-            if (content_) lv_obj_set_style_pad_bottom(content_, 82, 0);
+            // Put controls in a flex footer, not over the conversation.
+            auto* footer = lv_obj_create(container_ ? container_ : screen);
+            lv_obj_set_size(footer, DISPLAY_WIDTH, 70);
+            lv_obj_set_flex_flow(footer, LV_FLEX_FLOW_ROW);
+            lv_obj_set_flex_align(footer, LV_FLEX_ALIGN_SPACE_EVENLY,
+                                  LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+            lv_obj_set_style_pad_all(footer, 4, 0);
+            lv_obj_set_style_border_width(footer, 0, 0);
+            lv_obj_set_style_radius(footer, 0, 0);
+            if (!container_) lv_obj_align(footer, LV_ALIGN_BOTTOM_MID, 0, 0);
+            MakeButton(footer, "Mów / Zakończ", [](lv_event_t*) {
+                ConversationClick();
+            }, this, 250);
+            MakeButton(footer, "Ustawienia", [](lv_event_t* e) {
+                static_cast<EspenDisplay*>(lv_event_get_user_data(e))->OpenSettings();
+            }, this, 190);
             button_added_ = true;
         }
         lvgl_port_unlock();
@@ -163,6 +332,11 @@ public:
                 ConversationClick();
             }
         });
+        boot_.OnLongPress([this]() {
+            Application::GetInstance().Schedule([this]() {
+                if (!IsInWifiConfigMode()) EnterWifiConfigMode();
+            });
+        });
         GetBacklight()->RestoreBrightness();
     }
     AudioCodec* GetAudioCodec() override {
@@ -174,6 +348,10 @@ public:
             AUDIO_I2S_GPIO_DOUT, AUDIO_I2S_GPIO_DIN, GPIO_NUM_NC,
             ES8311_CODEC_DEFAULT_ADDR, true, false);
         return &codec;
+    }
+    void StartNetwork() override {
+        ImportStagedWifi();
+        WifiBoard::StartNetwork();
     }
     Display* GetDisplay() override { return display_; }
     Backlight* GetBacklight() override {

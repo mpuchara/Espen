@@ -1,11 +1,11 @@
 # Espen — polski asystent głosowy na ESP32-P4
 
-Pierwszy port [Xiaozhi ESP32](https://github.com/78/xiaozhi-esp32) v2.5.2 dla GUITION JC4880P443C_I_W(_Y), z ekranem ST7701S 480×800, GT911, mikrofonem ES8311 i Wi-Fi przez ESP32-C6. Niezależny od Home-Buddy. Wersja 0.1.0 jest eksperymentalna; wymaga testu na sprzęcie.
+Pierwszy port [Xiaozhi ESP32](https://github.com/78/xiaozhi-esp32) v2.5.2 dla GUITION JC4880P443C_I_W(_Y), z ekranem ST7701S 480×800, GT911, mikrofonem ES8311 i Wi-Fi przez ESP32-C6. Niezależny od Home-Buddy. Wersja 0.1.1 jest eksperymentalna; wymaga testu na sprzęcie.
 
 ## Instalacja
 [Instalator Espen](https://mpuchara.github.io/Espen/) — Chrome/Edge na komputerze, kabel USB z danymi. Wybierz Install i port **P4**, nie C6. Jeśli potrzebne, przytrzymaj BOOT podczas resetu i ponów połączenie. Pierwsza instalacja zastępuje poprzedni firmware i może skasować konfigurację; wykonaj kopię. Instalator obsługuje tylko wariant P4 rev1 (16 MB flash) tej konkretnej płytki, nie inne P4.
 
-Po starcie połącz się z siecią konfiguracyjną Xiaozhi i wprowadź Wi-Fi. Na ekranie pojawi się kod aktywacji. W [Xiaozhi Console](https://xiaozhi.me/console/agents) wybierz agenta Ala → Devices/Add Device i wpisz kod. Nie wpisuj haseł ani kodów do GitHuba. Nie trzeba zakładać kolejnego agenta.
+Po starcie wybierz **Ustawienia → Wi-Fi** na ekranie, wpisz SSID i hasło, naciśnij **Zapisz i połącz**. Płytka uruchomi się ponownie. Możesz też wybrać **Konfiguruj przez telefon** i połączyć się z hotspotem Espen-XXXX (portal http://192.168.4.1). ESP32-C6 obsługuje wyłącznie 2,4 GHz; sieć o nazwie 5G zadziała tylko jeśli ma również pasmo 2,4 GHz. Dane Wi-Fi są przechowywane wyłącznie w NVS urządzenia, a nie w kodzie lub instalatorze. Można zapisać kilka sieci. Dłuższe przytrzymanie BOOT otwiera tryb konfiguracji Wi-Fi. Na ekranie pojawi się kod aktywacji. W [Xiaozhi Console](https://xiaozhi.me/console/agents) wybierz agenta Ala → Devices/Add Device i wpisz kod. Nie wpisuj haseł ani kodów do GitHuba. Nie trzeba zakładać kolejnego agenta.
 
 Dotknij **Mów / Zakończ** lub naciśnij BOOT, aby rozpocząć wypowiedź, ponownie aby ją zakończyć. Po odpowiedzi można rozpocząć następną. Ekran pokazuje transkrypcję oraz odpowiedzi przesyłane przez serwer. W pierwszej wersji mikrofon nie jest aktywowany słowem budzącym. Wzmacniacz pozostaje wyłączony; obsługa audio upstream jest zachowana na przyszłość. Kamera i karta SD nie są inicjalizowane.
 
