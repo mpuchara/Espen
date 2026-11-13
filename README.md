@@ -1,6 +1,6 @@
 # Espen — polski asystent głosowy na ESP32-P4
 
-Pierwszy port [Xiaozhi ESP32](https://github.com/78/xiaozhi-esp32) v2.5.2 dla GUITION JC4880P443C_I_W(_Y), z ekranem ST7701S 480×800, GT911, mikrofonem ES8311 i Wi-Fi przez ESP32-C6. Niezależny od Home-Buddy. Wersja 0.1.1 jest eksperymentalna; wymaga testu na sprzęcie.
+Pierwszy port [Xiaozhi ESP32](https://github.com/78/xiaozhi-esp32) v2.5.2 dla GUITION JC4880P443C_I_W(_Y), z ekranem ST7701S 480×800, GT911, mikrofonem ES8311 i Wi-Fi przez ESP32-C6. Niezależny od Home-Buddy. Wersja 0.1.2 jest eksperymentalna; wymaga testu na sprzęcie.
 
 ## Instalacja
 [Instalator Espen](https://mpuchara.github.io/Espen/) — Chrome/Edge na komputerze, kabel USB z danymi. Wybierz Install i port **P4**, nie C6. Jeśli potrzebne, przytrzymaj BOOT podczas resetu i ponów połączenie. Pierwsza instalacja zastępuje poprzedni firmware i może skasować konfigurację; wykonaj kopię. Instalator obsługuje tylko wariant P4 rev1 (16 MB flash) tej konkretnej płytki, nie inne P4.

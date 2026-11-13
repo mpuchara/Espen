@@ -13,6 +13,10 @@
 #include <esp_lcd_touch_gt911.h>
 #include <esp_ldo_regulator.h>
 #include <esp_lvgl_port.h>
+#include <lvgl.h>
+#if !LV_USE_KEYBOARD || !LV_USE_BUTTONMATRIX || !LV_USE_TEXTAREA
+#error "Espen Wi-Fi settings require LVGL keyboard, buttonmatrix and textarea widgets"
+#endif
 #include <esp_log.h>
 #include <esp_system.h>
 #include <nvs.h>

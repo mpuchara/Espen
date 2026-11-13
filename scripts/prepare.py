@@ -65,3 +65,6 @@ replace("main/boards/common/wifi_board.cc", 'config.ssid_prefix = "Xiaozhi";',
         'config.ssid_prefix = "Espen";')
 replace("main/boards/common/wifi_board.cc", "config.show_ota_config = true;",
         "config.show_ota_config = false;")
+
+# Xiaozhi disables the keyboard to save flash; Espen's local setup requires it.
+replace("sdkconfig.defaults", "CONFIG_LV_USE_KEYBOARD=n", "CONFIG_LV_USE_KEYBOARD=y")
