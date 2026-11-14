@@ -42,6 +42,7 @@ for setting in \
   CONFIG_ESP_HOSTED_MEMPOOL_PREFER_SPIRAM=y \
   CONFIG_ESP_HOSTED_SDIO_CLOCK_FREQ_KHZ=10000 \
   CONFIG_ESP_HOSTED_SDIO_RESET_DELAY_MS=2500 \
+  CONFIG_ESP_HOSTED_PKT_STATS=y \
   CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE=10 \
   CONFIG_ESP_HOSTED_SDIO_TX_Q_SIZE=10; do
   grep -Fx "$setting" sdkconfig || { echo "Missing required setting: $setting"; exit 1; }

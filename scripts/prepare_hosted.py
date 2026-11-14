@@ -25,7 +25,7 @@ edit(up / "main/idf_component.yml",
 # including small SDIO register buffers. Use internal DMA staging at the
 # SDMMC boundary, keeping the large upper-level pools in PSRAM.
 port = hosted / "host/port/esp/freertos/src/port_esp_hosted_host_sdio.c"
-edit(port, '#include "esp_log.h"', '#include "esp_log.h"\n#include "esp_attr.h"\n#include <string.h>')
+edit(port, '#include "esp_log.h"', '#include "esp_log.h"\n#include "esp_attr.h"\n#include "esp_heap_caps.h"\n#include <string.h>')
 edit(port, 'static void * sdio_bus_lock;',
      '''static void * sdio_bus_lock;
 
@@ -34,17 +34,39 @@ edit(port, 'static void * sdio_bus_lock;',
 // Internal DRAM, cache-line aligned for ESP32-P4 SDMMC DMA.
 #define ESPEN_SDIO_STAGE_SIZE 2048
 static DMA_ATTR uint8_t espen_rx_dma[ESPEN_SDIO_STAGE_SIZE] __attribute__((aligned(128)));
-static DMA_ATTR uint8_t espen_tx_dma[ESPEN_SDIO_STAGE_SIZE] __attribute__((aligned(128)));''')
+static DMA_ATTR uint8_t espen_tx_dma[ESPEN_SDIO_STAGE_SIZE] __attribute__((aligned(128)));
+
+// Preserve the upstream CMD53 transfer length and FIFO address. Larger
+// transfers use a temporary internal DMA buffer, not PSRAM.
+static uint8_t *espen_dma_buffer(uint8_t *small, size_t size)
+{
+	if (size <= ESPEN_SDIO_STAGE_SIZE)
+		return small;
+	uint8_t *buf = heap_caps_aligned_alloc(128, size, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+	if (!buf)
+		ESP_LOGE(TAG, "Espen SDIO: cannot allocate internal DMA buffer (%u bytes)", (unsigned)size);
+	return buf;
+}
+static void espen_dma_release(uint8_t *small, uint8_t *buf)
+{
+	if (buf && buf != small)
+		heap_caps_free(buf);
+}''')
 edit(port,
      'blocks = H_SDIO_RX_BLOCKS_TO_TRANSFER(remainder);\n\t\tsize = blocks * ESP_BLOCK_SIZE;\n\t\tres = sdmmc_io_read_blocks(card, function, addr, ptr, size);\n\t\tif (res)\n\t\t\treturn res;',
      '''blocks = H_SDIO_RX_BLOCKS_TO_TRANSFER(remainder);
-		if (blocks > ESPEN_SDIO_STAGE_SIZE / ESP_BLOCK_SIZE)
-			blocks = ESPEN_SDIO_STAGE_SIZE / ESP_BLOCK_SIZE;
 		size = blocks * ESP_BLOCK_SIZE;
-		res = sdmmc_io_read_blocks(card, function, addr, espen_rx_dma, size);
+		uint8_t *stage = espen_dma_buffer(espen_rx_dma, size);
+		if (!stage)
+			return ESP_ERR_NO_MEM;
+		res = sdmmc_io_read_blocks(card, function, addr, stage, size);
+		if (res == ESP_OK)
+			memcpy(ptr, stage, size);
+		else
+			ESP_LOGW(TAG, "Espen SDIO: CMD53 RX error=%s size=%u", esp_err_to_name(res), (unsigned)size);
+		espen_dma_release(espen_rx_dma, stage);
 		if (res)
-			return res;
-		memcpy(ptr, espen_rx_dma, size);''')
+			return res;''')
 edit(port,
      'res = sdmmc_io_read_bytes(card, function, addr, ptr, size);\n\t\tif (res)\n\t\t\treturn res;',
      '''res = sdmmc_io_read_bytes(card, function, addr, espen_rx_dma, size);
@@ -54,11 +76,15 @@ edit(port,
 edit(port,
      'blocks = H_SDIO_TX_BLOCKS_TO_TRANSFER(remainder);\n\t\tsize = blocks * ESP_BLOCK_SIZE;\n\t\tres = sdmmc_io_write_blocks(card, function, addr, ptr, size);',
      '''blocks = H_SDIO_TX_BLOCKS_TO_TRANSFER(remainder);
-		if (blocks > ESPEN_SDIO_STAGE_SIZE / ESP_BLOCK_SIZE)
-			blocks = ESPEN_SDIO_STAGE_SIZE / ESP_BLOCK_SIZE;
 		size = blocks * ESP_BLOCK_SIZE;
-		memcpy(espen_tx_dma, ptr, size);
-		res = sdmmc_io_write_blocks(card, function, addr, espen_tx_dma, size);''')
+		uint8_t *stage = espen_dma_buffer(espen_tx_dma, size);
+		if (!stage)
+			return ESP_ERR_NO_MEM;
+		memcpy(stage, ptr, size);
+		res = sdmmc_io_write_blocks(card, function, addr, stage, size);
+		if (res != ESP_OK)
+			ESP_LOGW(TAG, "Espen SDIO: CMD53 TX error=%s size=%u", esp_err_to_name(res), (unsigned)size);
+		espen_dma_release(espen_tx_dma, stage);''')
 edit(port,
      'res = sdmmc_io_write_bytes(card, function, addr, ptr, size);',
      'memcpy(espen_tx_dma, ptr, size);\n\t\tres = sdmmc_io_write_bytes(card, function, addr, espen_tx_dma, size);')
@@ -79,7 +105,7 @@ edit(port,
 			res = sdmmc_io_write_bytes(card, SDIO_FUNC_1, reg, espen_tx_dma, size);
 		}''')
 edit(port, 'config.max_freq_khz = sdio_config->clock_freq_khz;',
-     'config.max_freq_khz = sdio_config->clock_freq_khz;\n\tESP_LOGI(TAG, "Espen SDIO: internal DMA staging enabled (RX/TX 2048 bytes)");')
+     'config.max_freq_khz = sdio_config->clock_freq_khz;\n\tESP_LOGI(TAG, "Espen SDIO: internal DMA staging; original CMD53 sizes preserved");')
 
 drv = hosted / "host/drivers/transport/sdio/sdio_drv.c"
 # Make the reset pulse robust across host-only resets, without changing the
