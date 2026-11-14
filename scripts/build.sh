@@ -77,4 +77,5 @@ cp upstream/build/xiaozhi.bin dist/espen-app.bin
 cp upstream/build/generated_assets.bin dist/espen-assets.bin
 cp upstream/LICENSE dist/xiaozhi-LICENSE.txt
 cp firmware/vendor-LICENSE dist/panel-LICENSE.txt
+cp firmware/NOTO-OFL.txt dist/noto-LICENSE.txt
 (cd dist && sha256sum espen.bin > espen.bin.sha256 && sha256sum espen-app.bin espen-assets.bin > espen-update.sha256)

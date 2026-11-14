@@ -319,3 +319,42 @@ replace("main/application.cc",
         '        ESP_LOGW(TAG, "Espen conversation: protocol network error");\n'
         '        EspenCloudInfo("Błąd sesji Xiaozhi. Sprawdź log USB; spróbuj Mów ponownie.", "");\n'
         '        last_error_message_ = message;')
+
+# Preserve user-visible conversation history when the device becomes idle.
+replace("main/application.cc",
+        '                display->ClearChatMessages();  // Clear messages first\n',
+        '                // Espen: preserve conversation when returning to idle.\n')
+# Local Polish fallback precedes the optional server glyph cache.
+lvgl_src = up / "main/display/lvgl_display/lvgl_display.cc"
+src = lvgl_src.read_text()
+pos = src.index("bool LvglDisplay::SetTextFont(")
+lvgl_src.write_text(src[:pos] + (root / "firmware/polish_font.inc").read_text() + "\n" + src[pos:])
+replace("main/display/lvgl_display/lvgl_display.cc",
+        '    // LVGL styles keep raw lv_font_t pointers.',
+        '    text_font->SetFallback(EspenPolishFont());\n'
+        '    // LVGL styles keep raw lv_font_t pointers.')
+replace("main/display/lvgl_display/lvgl_display.cc",
+        '    text_font->SetFallback(fallback);',
+        '    EspenPolishFont()->fallback = fallback;\n'
+        '    text_font->SetFallback(EspenPolishFont());')
+replace("main/display/lcd_display.cc",
+        '    auto text_font = std::make_shared<LvglBuiltInFont>(&BUILTIN_TEXT_FONT);',
+        '    auto text_font = std::make_shared<LvglBuiltInFont>(&BUILTIN_TEXT_FONT);\n'
+        '    extern lv_font_t* EspenPolishFont();\n'
+        '    text_font->SetFallback(EspenPolishFont());')
+replace("main/display/lcd_display.cc",
+        '    auto emoji_collection = static_cast<LvglTheme*>(current_theme_)->emoji_collection();',
+        '    if (strcmp(emotion, "neutral") == 0) {\n'
+        '        DisplayLockGuard lock(this);\n'
+        '        if (content_ && lv_obj_get_child_cnt(content_) > 0) {\n'
+        '            if (gif_controller_) { gif_controller_->Stop(); gif_controller_.reset(); }\n'
+        '            lv_obj_add_flag(emoji_image_, LV_OBJ_FLAG_HIDDEN);\n'
+        '            if (emoji_label_) lv_obj_add_flag(emoji_label_, LV_OBJ_FLAG_HIDDEN);\n'
+        '            return;\n'
+        '        }\n'
+        '    }\n'
+        '    auto emoji_collection = static_cast<LvglTheme*>(current_theme_)->emoji_collection();')
+replace("main/display/lcd_display.cc",
+        '    if (child_count >= MAX_MESSAGES) {',
+        '    if (strlen(content) > 0 && child_count >= MAX_MESSAGES) {')
+replace("main/display/lcd_display.cc", "#define MAX_MESSAGES 40", "#define MAX_MESSAGES 80")

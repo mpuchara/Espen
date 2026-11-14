@@ -34,6 +34,13 @@
 #include <freertos/task.h>
 
 static constexpr const char* TAG = "EspenBoard";
+LV_FONT_DECLARE(font_noto_sans_basic_20_4);
+extern lv_font_t* EspenPolishFont();
+static const lv_font_t* EspenUiFont() {
+    static lv_font_t font = font_noto_sans_basic_20_4;
+    font.fallback = EspenPolishFont();
+    return &font;
+}
 
 // Activation info is shared by the Xiaozhi worker and the LVGL task.
 // Never store activation codes or cloud credentials in logs/NVS here.
@@ -183,6 +190,7 @@ class EspenDisplay : public LcdDisplay {
             lv_obj_set_style_bg_color(cloud_, lv_color_hex(0x102030), 0);
             lv_obj_set_style_bg_opa(cloud_, LV_OPA_COVER, 0);
             lv_obj_set_style_text_color(cloud_, lv_color_white(), 0);
+            lv_obj_set_style_text_font(cloud_, EspenUiFont(), 0);
             lv_obj_set_style_radius(cloud_, 0, 0);
             lv_obj_set_style_pad_all(cloud_, 12, 0);
             lv_obj_set_style_pad_row(cloud_, 7, 0);
@@ -358,6 +366,7 @@ class EspenDisplay : public LcdDisplay {
             lv_obj_set_style_bg_color(settings_, lv_color_hex(0x102030), 0);
             lv_obj_set_style_bg_opa(settings_, LV_OPA_COVER, 0);
             lv_obj_set_style_text_color(settings_, lv_color_white(), 0);
+            lv_obj_set_style_text_font(settings_, EspenUiFont(), 0);
             lv_obj_set_style_radius(settings_, 0, 0);
             lv_obj_set_style_pad_all(settings_, 14, 0);
             lv_obj_set_style_pad_row(settings_, 8, 0);
@@ -409,6 +418,17 @@ class EspenDisplay : public LcdDisplay {
                 self->CloseSettings();
                 self->OpenCloud();
             }, this, 340);
+            MakeButton(settings_, "Wyczyść rozmowę", [](lv_event_t* e) {
+                auto* self = static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                self->CloseSettings();
+                Application::GetInstance().Schedule([self]() {
+                    self->ClearChatMessages();
+                });
+            }, this, 340);
+            auto* font_test = lv_label_create(settings_);
+            lv_obj_set_width(font_test, lv_pct(100));
+            lv_label_set_long_mode(font_test, LV_LABEL_LONG_WRAP);
+            lv_label_set_text(font_test, "Test tekstu: Zażółć gęślą jaźń. ĄĆĘŁŃÓŚŹŻ");
             keyboard_ = lv_keyboard_create(settings_);
             lv_obj_set_size(keyboard_, lv_pct(100), 235);
             lv_keyboard_set_mode(keyboard_, LV_KEYBOARD_MODE_TEXT_LOWER);
@@ -624,7 +644,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.1.16 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.1.17 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();
