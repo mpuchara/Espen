@@ -18,11 +18,18 @@ fi
 git -C upstream/local_components/esp-wifi-connect fetch --depth 1 origin "$wifi_ref"
 git -C upstream/local_components/esp-wifi-connect reset --hard "$wifi_ref"
 hosted_ref=0e8d0e3f0c2723deaf15441200cb4d8c53fea230
-if [ ! -d upstream/local_components/esp-hosted/.git ]; then
-  git clone --depth 1 --branch v2.13.1 https://github.com/espressif/esp-hosted-mcu.git upstream/local_components/esp-hosted
+if [ ! -d upstream/local_components/espressif__esp_hosted/.git ]; then
+  git clone --depth 1 --branch v2.13.1 https://github.com/espressif/esp-hosted-mcu.git upstream/local_components/espressif__esp_hosted
 fi
-git -C upstream/local_components/esp-hosted fetch --depth 1 origin "$hosted_ref"
-git -C upstream/local_components/esp-hosted reset --hard "$hosted_ref"
+git -C upstream/local_components/espressif__esp_hosted fetch --depth 1 origin "$hosted_ref"
+git -C upstream/local_components/espressif__esp_hosted reset --hard "$hosted_ref"
+# A registry package includes protobuf-c, but a git checkout does not.
+# Initialize the exact submodule recorded by the pinned upstream commit.
+git -C upstream/local_components/espressif__esp_hosted submodule update --init --recursive common/protobuf-c
+test "$(git -C upstream/local_components/espressif__esp_hosted/common/protobuf-c rev-parse HEAD)" = abc67a11c6db271bedbb9f58be85d6f4e2ea8389
+test -s upstream/local_components/espressif__esp_hosted/common/protobuf-c/protobuf-c/protobuf-c.c
+test -s upstream/local_components/espressif__esp_hosted/common/protobuf-c/protobuf-c/protobuf-c.h
+
 python3 scripts/prepare.py upstream
 python3 scripts/prepare_wifi.py upstream
 python3 scripts/prepare_wifi_reliability.py upstream

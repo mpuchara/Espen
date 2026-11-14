@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 up = Path(sys.argv[1]).resolve()
-hosted = up / "local_components/esp-hosted"
+hosted = up / "local_components/espressif__esp_hosted"
 def edit(path, old, new, count=1):
     p = Path(path)
     s = p.read_text()
@@ -19,7 +19,7 @@ def edit(path, old, new, count=1):
 
 edit(up / "main/idf_component.yml",
      '  espressif/esp_hosted:\n    version: ^2.12.11',
-     '  espressif/esp_hosted:\n    version: "==2.13.1"\n    override_path: ../local_components/esp-hosted')
+     '  espressif/esp_hosted:\n    version: "==2.13.1"\n    override_path: ../local_components/espressif__esp_hosted')
 
 # The 2.13.1 aligned allocator prefers PSRAM for ALL aligned allocations,
 # including small SDIO register buffers. Use internal DMA staging at the
