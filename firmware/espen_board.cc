@@ -66,8 +66,9 @@ void EspenPlaybackLevel(const int16_t* pcm, size_t count) {
 static int EspenSpeechLevel() {
     const uint32_t meter = espen_playback_meter.load(std::memory_order_relaxed);
     const uint32_t ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
-    return ((ms - (meter & 0xffffffu)) & 0xffffffu) <= 180
-        ? static_cast<int>(meter >> 24) : 0;
+    if (((ms - (meter & 0xffffffu)) & 0xffffffu) <= 180)
+        return static_cast<int>(meter >> 24);
+    return 0;
 }
 
 // Activation info is shared by the Xiaozhi worker and the LVGL task.
@@ -604,15 +605,17 @@ class EspenDisplay : public LcdDisplay {
         if (value < target) return std::min(value + step, target);
         return std::max(value - step, target);
     }
-    static void Shape(lv_obj_t* obj, int x, int y, int w, int h) {
-        // Coordinates and sizes are already in logical LVGL pixels.
-        if (lv_obj_get_style_width(obj, LV_PART_MAIN) != w) lv_obj_set_width(obj, w);
-        if (lv_obj_get_style_height(obj, LV_PART_MAIN) != h) lv_obj_set_height(obj, h);
-        if (lv_obj_get_style_x(obj, LV_PART_MAIN) != x || lv_obj_get_style_y(obj, LV_PART_MAIN) != y)
-            lv_obj_set_pos(obj, x, y);
+    struct Geometry { int x = -1, y = -1, w = -1, h = -1; };
+    Geometry geometry_[5];
+    void Shape(lv_obj_t* obj, int slot, int x, int y, int w, int h) {
+        auto& old = geometry_[slot];
+        if (old.w != w || old.h != h) lv_obj_set_size(obj, w, h);
+        if (old.x != x || old.y != y) lv_obj_set_pos(obj, x, y);
+        old = {x, y, w, h};
     }
     static void Passive(lv_obj_t* obj) {
-        lv_obj_clear_flag(obj, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_clear_flag(obj, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_clear_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
     }
     static void Solid(lv_obj_t* obj, uint32_t rgb, int radius) {
         lv_obj_remove_style_all(obj);
@@ -730,10 +733,10 @@ class EspenDisplay : public LcdDisplay {
             const int eye_target = std::max(4, base_h * blink / 100);
             eye_h_[i] = Approach(eye_h_[i], eye_target, 32);
             const int center_x = i == 0 ? 111 : 273;
-            Shape(eyes_[i], center_x - eye_w / 2 + gaze_x_,
+            Shape(eyes_[i], i, center_x - eye_w / 2 + gaze_x_,
                   104 - eye_h_[i] / 2 + gaze_y_, eye_w, eye_h_[i]);
         }
-        Shape(mouth_, 192 - mouth_w_ / 2, 210 - mouth_h_ / 2, mouth_w_, mouth_h_);
+        Shape(mouth_, 2, 192 - mouth_w_ / 2, 210 - mouth_h_ / 2, mouth_w_, mouth_h_);
         // A smile/frown is built from the center bar and two curved ends.
         const bool show_corners = !talking && (mood == Mood::Happy || mood == Mood::Sad ||
             mood == Mood::Neutral);
@@ -742,7 +745,7 @@ class EspenDisplay : public LcdDisplay {
             if (show_corners) {
                 const int x = i == 0 ? 192 - mouth_w_ / 2 : 192 + mouth_w_ / 2 - 10;
                 const int h = mood == Mood::Happy ? 22 : 14;
-                Shape(corners_[i], x, mood == Mood::Sad ? 208 : 210 - h + 4, 10, h);
+                Shape(corners_[i], 3 + i, x, mood == Mood::Sad ? 208 : 210 - h + 4, 10, h);
             }
         }
         // Avoid invalidating a full framebuffer on unchanged colors.
