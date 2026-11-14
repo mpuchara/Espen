@@ -1,5 +1,6 @@
 #pragma once
 #include "wake_features.h"
+#include "speech_onset.h"
 #include <esp_log.h>
 #include <nvs.h>
 #include <mutex>
@@ -13,6 +14,8 @@ class EspenWakeEngine {
     Profile active_{}, pending_{};
     espen_wake::Extractor extractor_;
     bool loaded_=false, trained_=false, running_=false, learning_=false, recording_=false;
+    bool auto_speech_=false, speech_allowed_=false;
+    espen::SpeechOnset onset_;
     int count_=0, waited_=0, used_=0, voiced_=0, quiet_=0, start_=0, pos_=0, pre_count_=0, pre_pos_=0;
     float noise_=35.f, last_rms_=0.f;
     uint64_t armed_at_=0,last_frame_at_=0,last_health_log_=0;
@@ -79,6 +82,11 @@ class EspenWakeEngine {
         }
         if(!recording_ && rms<noise_ && used_==0)
             noise_=std::clamp(.80f*noise_+.20f*rms,10.f,1500.f);
+        if(auto_speech_&&speech_allowed_&&!learning_&&onset_.Feed(pcm_.data(),pcm_.size(),rms,noise_)) {
+            ESP_LOGI(TAG,"Local speech onset: rms=%d noise=%d",static_cast<int>(rms),static_cast<int>(noise_));
+            ResetSegment();
+            return espen::kSpeechWake;
+        }
         if((learning_&&!recording_)||(!learning_&&!trained_)){
             if(rms<noise_*2.6f)noise_=std::clamp(.97f*noise_+.03f*rms,10.f,1500.f);
             return {};
@@ -127,6 +135,14 @@ public:
         bool receiving,signal;uint32_t frames;uint64_t armed_ms;int rms,noise,gate;
     };
     void Load(){std::lock_guard<std::mutex> l(mutex_);LoadLocked();}
+    void SetAutoSpeech(bool on) {
+        std::lock_guard<std::mutex> l(mutex_);
+        if(auto_speech_!=on){auto_speech_=on;onset_.Reset();ResetSegment();}
+    }
+    void AllowSpeech(bool on) {
+        std::lock_guard<std::mutex> l(mutex_);
+        if(speech_allowed_!=on){speech_allowed_=on;onset_.Reset();}
+    }
     Snapshot Get(){
         std::lock_guard<std::mutex> l(mutex_);LoadLocked();
         auto now=NowMs();
@@ -142,6 +158,7 @@ public:
             return;
         }
         running_ = on;
+        onset_.Reset();
         ESP_LOGI(TAG,"Local detector %s; trained=%d",on?"armed":"paused",trained_);
         ResetSegment();
         if(on){
@@ -150,7 +167,7 @@ public:
         }
         if(!on&&recording_){recording_=false;message_="Nagranie przerwane. Wróć do trybu oczekiwania.";}
     }
-    void Begin(){std::lock_guard<std::mutex> l(mutex_);LoadLocked();learning_=true;recording_=false;count_=0;pending_=Profile{};ResetSegment();message_="Naciśnij Nagraj, powiedz frazę i zrób przerwę.";}
+    void Begin(){std::lock_guard<std::mutex> l(mutex_);LoadLocked();learning_=true;recording_=false;count_=0;pending_=Profile{};onset_.Reset();ResetSegment();message_="Naciśnij Nagraj, powiedz frazę i zrób przerwę.";}
     void Record(){
         std::lock_guard<std::mutex> l(mutex_);
         if(!learning_||recording_||count_>=3)return;
@@ -168,7 +185,7 @@ public:
         active_=pending_;trained_=true;learning_=false;ResetSegment();message_="Zapisano. Wróć i powiedz nowe hasło.";
         ESP_LOGI(TAG,"Saved 3 keyword templates threshold=%.3f",active_.threshold);return true;
     }
-    void Cancel(){std::lock_guard<std::mutex> l(mutex_);learning_=recording_=false;count_=0;ResetSegment();}
+    void Cancel(){std::lock_guard<std::mutex> l(mutex_);learning_=recording_=false;count_=0;onset_.Reset();ResetSegment();}
     std::string Feed(const int16_t* data,size_t samples){
         std::lock_guard<std::mutex> l(mutex_);
         if(!running_||!data)return {};

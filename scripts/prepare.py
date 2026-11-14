@@ -375,7 +375,7 @@ replace("main/display/lcd_display.cc", "#define MAX_MESSAGES 40", "#define MAX_M
 
 # Local speaker-dependent enrollment replaces the ineffective English MultiNet
 # phonetic spelling. Keep the existing AFE and cloud conversation pipeline.
-for name in ("wake_features.h", "espen_wake.h"):
+for name in ("wake_features.h", "espen_wake.h", "speech_onset.h"):
     shutil.copyfile(root / "firmware" / name, up / "main/audio" / name)
 replace("main/application.cc",
         '#include "application.h"',
@@ -641,3 +641,147 @@ replace("main/audio/audio_service.cc",
         '    if (!enable) voice_detected_.store(false);\n'
         '    if (enable) EnableWakeWordDetection(false);\n'
         '    ESP_LOGD(TAG, "%s voice processing", enable ? "Enabling" : "Disabling");')
+
+# 0.1.31: automatic speech onset, optional keyword-only mode, local pre-roll
+# and capture while the first conversation channel is opening.
+replace("main/application.cc",
+        '    EspenWake().Load();\n    espen_wake_ready_ = true;',
+        '    EspenWake().Load();\n'
+        '    Settings espen_ui("espen_ui", false);\n'
+        '    EspenWake().SetAutoSpeech(espen_ui.GetBool("auto_speech", true));\n'
+        '    espen_wake_ready_ = true;')
+replace("main/application.cc",
+        '    const bool allowed = state == kDeviceStateStarting || state == kDeviceStateActivating ||',
+        '    EspenWake().AllowSpeech(state == kDeviceStateIdle && EspenNetworkAvailable());\n'
+        '    const bool allowed = state == kDeviceStateStarting || state == kDeviceStateActivating ||')
+replace("main/application.cc",
+        '    if (state == kDeviceStateIdle) {\n        BeginWakeWordInvoke(wake_word);',
+        '    if (state == kDeviceStateIdle && wake_word == espen::kSpeechWake) {\n'
+        '        ESP_LOGI(TAG, "Espen: speech detected, opening conversation without wake phrase");\n'
+        '        if (SetDeviceState(kDeviceStateConnecting)) {\n'
+        '            const auto mode = GetDefaultListeningMode();\n'
+        '            Schedule([this, mode]() { ContinueOpenAudioChannel(mode); });\n'
+        '        } else audio_service_.CancelEspenSpeechCapture();\n'
+        '    } else if (state == kDeviceStateIdle) {\n        BeginWakeWordInvoke(wake_word);')
+replace("main/application.cc",
+        '    if (!protocol_ || (state == kDeviceStateIdle && !EspenNetworkAvailable())) {\n'
+        '        EspenLocalWakePulse(); EspenEnsureWake(); return;',
+        '    if (!protocol_ || (state == kDeviceStateIdle && !EspenNetworkAvailable())) {\n'
+        '        audio_service_.CancelEspenSpeechCapture();\n'
+        '        EspenLocalWakePulse(); EspenEnsureWake(); return;')
+replace("main/application.cc",
+        '    if (state == kDeviceStateIdle && !audio_service_.IsPlaybackIdle()) {',
+        '    if (state == kDeviceStateIdle && !audio_service_.IsPlaybackIdle()) {\n'
+        '        audio_service_.CancelEspenSpeechCapture();')
+replace("main/application.cc",
+        '    if (new_state != kDeviceStateListening) espen_timeout_.Reset();',
+        '    if (new_state != kDeviceStateListening) espen_timeout_.Reset();\n'
+        '    if (new_state != kDeviceStateConnecting && new_state != kDeviceStateListening)\n'
+        '        audio_service_.CancelEspenSpeechCapture();')
+# Allocate a bounded, volatile 4 s PCM ring in PSRAM, never NVS. Capture
+# uses the existing microphone task and the same resampler. Replay one
+# 10 ms block per live input block so we do not flood the 2-frame Opus queue.
+replace("main/audio/audio_service.h", '#include "audio_codec.h"',
+        '#include "audio_codec.h"\n#include "speech_onset.h"')
+# audio_service.h is also included by code outside main/audio, but the header
+# lives alongside it and the include is resolved relative to this file.
+replace("main/audio/audio_service.h",
+        '#define AS_EVENT_AUDIO_INPUT_STOP_REQUEST (1 << 4)',
+        '#define AS_EVENT_AUDIO_INPUT_STOP_REQUEST (1 << 4)\n'
+        '#define AS_EVENT_ESPEN_CAPTURE (1 << 5)')
+replace("main/audio/audio_service.h",
+        '    void EnableWakeWordDetection(bool enable);',
+        '    void EnableWakeWordDetection(bool enable);\n'
+        '    void CancelEspenSpeechCapture();')
+replace("main/audio/audio_service.h",
+        '    std::atomic<uint32_t> espen_wake_generation_{0};',
+        '    std::atomic<uint32_t> espen_wake_generation_{0};\n'
+        '    espen::SpeechRing espen_pcm_;\n'
+        '    int16_t* espen_pcm_storage_ = nullptr;\n'
+        '    bool espen_replaying_ = false;')
+replace("main/audio/audio_service.cc", '#include "espen_wake.h"',
+        '#include "espen_wake.h"\n#include <esp_heap_caps.h>')
+replace("main/audio/audio_service.cc", '    codec_ = codec;\n    codec_->Start();',
+        '    codec_ = codec;\n    codec_->Start();\n'
+        '    espen_pcm_storage_ = static_cast<int16_t*>(heap_caps_malloc(64000*sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));\n'
+        '    espen_pcm_.Attach(espen_pcm_storage_, 64000);\n'
+        '    if (!espen_pcm_storage_) ESP_LOGW(TAG, "Espen: speech pre-roll allocation failed");')
+replace("main/audio/audio_service.cc", 'AudioService::~AudioService() {',
+        'AudioService::~AudioService() {\n'
+        '    if (espen_pcm_storage_) heap_caps_free(espen_pcm_storage_);')
+replace("main/audio/audio_service.cc",
+        'AS_EVENT_AUDIO_PROCESSOR_RUNNING |\n                                           AS_EVENT_AUDIO_INPUT_STOP_REQUEST);',
+        'AS_EVENT_AUDIO_PROCESSOR_RUNNING | AS_EVENT_ESPEN_CAPTURE |\n'
+        '                                           AS_EVENT_AUDIO_INPUT_STOP_REQUEST);')
+replace("main/audio/audio_service.cc",
+        '                                                  AS_EVENT_AUDIO_PROCESSOR_RUNNING;\n    unsigned espen_read_failures',
+        '                                                  AS_EVENT_AUDIO_PROCESSOR_RUNNING | AS_EVENT_ESPEN_CAPTURE;\n'
+        '    unsigned espen_read_failures')
+replace("main/audio/audio_service.cc",
+        '        if (bits & (AS_EVENT_WAKE_WORD_RUNNING | AS_EVENT_AUDIO_PROCESSOR_RUNNING)) {\n'
+        '            const uint32_t generation',
+        '        if (bits & (AS_EVENT_WAKE_WORD_RUNNING | AS_EVENT_AUDIO_PROCESSOR_RUNNING | AS_EVENT_ESPEN_CAPTURE)) {\n'
+        '            const uint32_t generation')
+replace("main/audio/audio_service.cc",
+        '                    EventBits_t current = xEventGroupGetBits(event_group_);\n'
+        '                    if (generation == espen_wake_generation_.load()',
+        '                    EventBits_t current = xEventGroupGetBits(event_group_);\n'
+        '                    if (current & AS_EVENT_ESPEN_CAPTURE) {\n'
+        '                        espen_pcm_.Push(data.data(), data.size());\n'
+        '                    } else if (current & AS_EVENT_WAKE_WORD_RUNNING) {\n'
+        '                        espen_pcm_.Push(data.data(), data.size());\n'
+        '                        espen_pcm_.Keep(4800); // 300 ms pre-roll\n'
+        '                    } else if (espen_replaying_ && (current & AS_EVENT_AUDIO_PROCESSOR_RUNNING)) {\n'
+        '                        espen_pcm_.Push(data.data(), data.size());\n'
+        '                        espen_pcm_.Pop(data.data(), data.size());\n'
+        '                    }\n'
+        '                    if (generation == espen_wake_generation_.load()')
+replace("main/audio/audio_service.cc",
+        '                                espen_last_wake_ = std::move(hit);\n'
+        '                                EspenWake().SetRunning(false);',
+        '                                espen_last_wake_ = std::move(hit);\n'
+        '                                if (espen_last_wake_ == espen::kSpeechWake && espen_pcm_storage_)\n'
+        '                                    xEventGroupSetBits(event_group_, AS_EVENT_ESPEN_CAPTURE);\n'
+        '                                else espen_pcm_.Clear();\n'
+        '                                EspenWake().SetRunning(false);')
+replace("main/audio/audio_service.cc",
+        '                if (xEventGroupGetBits(event_group_) & AS_EVENT_AUDIO_PROCESSOR_RUNNING)\n'
+        '                    audio_engine_->Feed(std::move(data));',
+        '                // During the connecting phase, capture locally only.\n'
+        '                if (xEventGroupGetBits(event_group_) & AS_EVENT_AUDIO_PROCESSOR_RUNNING)\n'
+        '                    audio_engine_->Feed(std::move(data));')
+replace("main/audio/audio_service.cc",
+        'void AudioService::EnableWakeWordDetection(bool enable) {',
+        'void AudioService::CancelEspenSpeechCapture() {\n'
+        '    std::lock_guard<std::mutex> lock(espen_wake_mutex_);\n'
+        '    xEventGroupClearBits(event_group_, AS_EVENT_ESPEN_CAPTURE);\n'
+        '    espen_replaying_ = false; espen_pcm_.Clear();\n'
+        '}\n'
+        'void AudioService::EnableWakeWordDetection(bool enable) {')
+replace("main/audio/audio_service.cc",
+        '        EspenWake().SetRunning(true);\n        xEventGroupSetBits(event_group_, AS_EVENT_WAKE_WORD_RUNNING);',
+        '        xEventGroupClearBits(event_group_, AS_EVENT_ESPEN_CAPTURE);\n'
+        '        espen_replaying_ = false; espen_pcm_.Clear();\n'
+        '        EspenWake().SetRunning(true);\n'
+        '        xEventGroupSetBits(event_group_, AS_EVENT_WAKE_WORD_RUNNING);')
+replace("main/audio/audio_service.cc",
+        '    if (!enable) voice_detected_.store(false);\n'
+        '    if (enable) EnableWakeWordDetection(false);',
+        '    if (!enable) {voice_detected_.store(false); CancelEspenSpeechCapture();}\n'
+        '    if (enable) EnableWakeWordDetection(false);')
+replace("main/audio/audio_service.cc",
+        '        audio_engine_->EnableVoiceProcessing(true);\n'
+        '        xEventGroupSetBits(event_group_, AS_EVENT_AUDIO_PROCESSOR_RUNNING);',
+        '        audio_engine_->EnableVoiceProcessing(true);\n'
+        '        {\n'
+        '            std::lock_guard<std::mutex> lock(espen_wake_mutex_);\n'
+        '            espen_replaying_ = (xEventGroupGetBits(event_group_) & AS_EVENT_ESPEN_CAPTURE) && espen_pcm_.Size()>0;\n'
+        '            xEventGroupSetBits(event_group_, AS_EVENT_AUDIO_PROCESSOR_RUNNING);\n'
+        '            xEventGroupClearBits(event_group_, AS_EVENT_ESPEN_CAPTURE);\n'
+        '            if (espen_replaying_) ESP_LOGI(TAG, "Espen speech: replay %u ms buffered PCM",\n'
+        '                static_cast<unsigned>(espen_pcm_.Size()/16));\n'
+        '        }')
+# If AFE fails to initialize, do not leave a pending local capture.
+replace("main/audio/audio_service.cc",
+        '    if (enable) {\n        if (!InitializeAudioEngine()) {\n            return;\n        }\n        ResetDecoder();',
+        '    if (enable) {\n        if (!InitializeAudioEngine()) {\n            CancelEspenSpeechCapture();\n            return;\n        }\n        ResetDecoder();')

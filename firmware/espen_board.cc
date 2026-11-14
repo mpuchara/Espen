@@ -461,11 +461,12 @@ class EspenDisplay : public LcdDisplay {
     void RefreshWake() {
         auto s=EspenWake().Get();
         if(wake_indicator_) {
-            std::string status=!s.trained?"Naucz hasło w ustawieniach":
-                !s.running?"Hasło zapisane: "+s.name:
+            std::string status=!s.running?(auto_speech_?"Mowa: oczekiwanie":
+                    s.trained?"Hasło zapisane: "+s.name:"Naucz hasło w ustawieniach"):
                 !s.receiving?"Uruchamiam mikrofon...":
                 !s.signal?"Mikrofon: brak sygnału":
-                "Nasłuch: "+s.name;
+                auto_speech_?"Nasłuch: zacznij mówić":
+                s.trained?"Nasłuch: "+s.name:"Naucz hasło w ustawieniach";
             if(status!=wake_indicator_text_) {
                 wake_indicator_text_=status;
                 lv_label_set_text(wake_indicator_,status.c_str());
@@ -606,6 +607,17 @@ class EspenDisplay : public LcdDisplay {
                 self->CloseSettings();
                 self->OpenCloud();
             }, this, 340);
+            auto* mode=MakeButton(settings_,"Wybudzanie",[](lv_event_t* e){
+                auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                self->auto_speech_=!self->auto_speech_;
+                {Settings ui("espen_ui",true);ui.SetBool("auto_speech",self->auto_speech_);}
+                EspenWake().SetAutoSpeech(self->auto_speech_);
+                lv_label_set_text(self->speech_mode_label_,self->auto_speech_?
+                    "Wybudzanie: mowa":"Wybudzanie: hasło");
+                self->RefreshWake();
+            },this,420);
+            speech_mode_label_=lv_obj_get_child(mode,0);
+            lv_label_set_text(speech_mode_label_,auto_speech_?"Wybudzanie: mowa":"Wybudzanie: hasło");
             MakeButton(settings_, "Naucz hasło głosowe", [](lv_event_t* e) {
                 auto* self = static_cast<EspenDisplay*>(lv_event_get_user_data(e));
                 self->CloseSettings(); self->OpenWake();
@@ -689,6 +701,10 @@ class EspenDisplay : public LcdDisplay {
     bool wifi_offline_=false,wifi_online_=false,was_online_=false;
     uint32_t seen_local_wake_=0,seen_sleep_=0;
     lv_obj_t* wake_indicator_=nullptr;
+    lv_obj_t* speech_mode_label_=nullptr;
+    lv_obj_t* ear_[4]={};
+    bool auto_speech_=true;
+    int ear_pulse_=-1;
     std::string wake_indicator_text_;
     int touch_distance_=0;
     lv_point_t touch_prev_{};
@@ -787,6 +803,8 @@ class EspenDisplay : public LcdDisplay {
     void BuildFace() {
         Settings cfg("espen_ui",false);
         engine_.SetPersona(static_cast<espen::Persona>(std::clamp<int32_t>(cfg.GetInt("persona",0),0,static_cast<int32_t>(espen::Persona::Count)-1)));
+        auto_speech_=cfg.GetBool("auto_speech",true);
+        EspenWake().SetAutoSpeech(auto_speech_);
         face_=lv_obj_create(container_);Solid(face_,0x09141D,36);
         lv_obj_set_size(face_,384,294);
         lv_obj_set_style_border_color(face_,lv_color_hex(0x233D4B),0);
@@ -804,6 +822,22 @@ class EspenDisplay : public LcdDisplay {
             lv_obj_set_style_line_rounded(symbol,true,0);
             lv_obj_set_style_line_color(symbol,lv_color_hex(0xFF91C6),0);
             Hide(symbol,true);
+        }
+        // Vector ear: static point arrays, no emoji glyph or bitmap.
+        static const lv_point_precise_t ear_outline[]={{5,28},{3,19},{4,12},{9,5},{17,2},{26,4},{32,11},{34,20},{31,29},{25,37},{23,45},{18,50},{12,49},{8,44},{8,38}};
+        static const lv_point_precise_t ear_inner[]={{2,17},{2,10},{6,4},{12,3},{17,7},{18,13},{15,19},{10,22},{9,28}};
+        static const lv_point_precise_t wave1[]={{1,2},{5,7},{6,13},{5,19},{1,24}};
+        static const lv_point_precise_t wave2[]={{1,2},{7,8},{10,17},{10,24},{7,33},{1,39}};
+        const lv_point_precise_t* points[]={ear_outline,ear_inner,wave1,wave2};
+        const uint32_t counts[]={15,9,5,6};
+        const int xs[]={314,323,354,365},ys[]={158,169,169,162};
+        for(int i=0;i<4;++i) {
+            ear_[i]=lv_line_create(face_);Passive(ear_[i]);
+            lv_line_set_points(ear_[i],points[i],counts[i]);
+            lv_obj_set_style_line_width(ear_[i],i<2?4:3,0);
+            lv_obj_set_style_line_rounded(ear_[i],true,0);
+            lv_obj_set_style_line_color(ear_[i],lv_color_hex(0x7CF6DA),0);
+            lv_obj_set_pos(ear_[i],xs[i],ys[i]);Hide(ear_[i],true);
         }
         sleep_label_=lv_label_create(face_);
         lv_obj_set_style_text_font(sleep_label_,EspenUiFont(),0);
@@ -855,6 +889,18 @@ class EspenDisplay : public LcdDisplay {
         if(loud)last_ambient_=ambient;
         auto f=engine_.Tick(now,phase,speech.level,speech.shape,loud);
         auto& p=f.pose;
+        // Ear means actual listening / opening a conversation, never TTS.
+        const bool show_ear=phase==Phase::Listening||phase==Phase::Wake;
+        const bool hearing=show_ear&&Application::GetInstance().GetAudioService().IsVoiceDetected();
+        int pulse=hearing?static_cast<int>((now/140)%3):0;
+        for(int i=0;i<4;++i) {
+            Hide(ear_[i],!show_ear);
+            if(show_ear&&i>=2&&pulse!=ear_pulse_) {
+                lv_opa_t opacity=(i==2?pulse>=1:pulse>=2)?LV_OPA_COVER:LV_OPA_40;
+                lv_obj_set_style_line_opa(ear_[i],opacity,0);
+            }
+        }
+        ear_pulse_=show_ear?pulse:-1;
         for(int i=0;i<2;++i) {
             int cx=(i==0?111:273)+f.gaze_x;
             int h=i==0?f.eye_left:f.eye_right;
@@ -1220,7 +1266,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.1.30 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.1.31 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();
