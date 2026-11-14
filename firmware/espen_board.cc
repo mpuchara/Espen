@@ -59,6 +59,9 @@ static const lv_font_t* EspenUiFont() {
 static std::atomic<uint32_t> espen_playback_meter{0};
 static std::atomic<uint32_t> espen_ambient_ms{0};
 static std::atomic<bool> espen_network_error{false};
+static std::atomic<uint32_t> espen_local_wake_seq{0},espen_sleep_seq{0};
+void EspenLocalWakePulse() {espen_local_wake_seq.fetch_add(1,std::memory_order_relaxed);}
+void EspenSleepNow() {espen_sleep_seq.fetch_add(1,std::memory_order_relaxed);}
 void EspenAmbientPeak(int peak) {
     if (peak > 11000) espen_ambient_ms.store(
         static_cast<uint32_t>(esp_timer_get_time()/1000),std::memory_order_relaxed);
@@ -271,7 +274,8 @@ class EspenDisplay : public LcdDisplay {
         RefreshCloud();
         RefreshWake();
         auto& wifi=WifiManager::GetInstance();
-        wifi_offline_=wifi.IsInitialized()&&!wifi.IsConnected();
+        wifi_online_=wifi.IsInitialized()&&wifi.IsConnected();
+        wifi_offline_=wifi.IsInitialized()&&!wifi_online_;
     }
 
     void OpenCloud() {
@@ -452,6 +456,14 @@ class EspenDisplay : public LcdDisplay {
     }
     void RefreshWake() {
         auto s=EspenWake().Get();
+        if(wake_indicator_) {
+            std::string status=!s.trained?"Naucz hasło w ustawieniach":
+                s.running?"Nasłuch: "+s.name:"Hasło zapisane: "+s.name;
+            if(status!=wake_indicator_text_) {
+                wake_indicator_text_=status;
+                lv_label_set_text(wake_indicator_,status.c_str());
+            }
+        }
         if(wake_footer_) lv_label_set_text(wake_footer_,s.trained?"Hasło głosowe":"Naucz hasło");
         if(!wake_panel_||lv_obj_has_flag(wake_panel_,LV_OBJ_FLAG_HIDDEN))return;
         lv_label_set_text_fmt(wake_state_,"%d/3 | %s\n%s",s.count,s.running?"Mikrofon gotowy":"Oczekiwanie na tryb gotowości",s.message.c_str());
@@ -664,7 +676,10 @@ class EspenDisplay : public LcdDisplay {
     bool waiting_answer_=false,button_added_=false,touch_active_=false,touch_long_=false;
     uint32_t touch_started_=0,last_tap_=0;
     int preview_index_=0;
-    bool wifi_offline_=false;
+    bool wifi_offline_=false,wifi_online_=false,was_online_=false;
+    uint32_t seen_local_wake_=0,seen_sleep_=0;
+    lv_obj_t* wake_indicator_=nullptr;
+    std::string wake_indicator_text_;
     int touch_distance_=0;
     lv_point_t touch_prev_{};
     lv_obj_t* face_=nullptr;
@@ -784,6 +799,14 @@ class EspenDisplay : public LcdDisplay {
         lv_obj_set_style_text_font(sleep_label_,EspenUiFont(),0);
         lv_obj_set_style_text_color(sleep_label_,lv_color_hex(0x74A7BD),0);
         lv_label_set_text(sleep_label_,"Z z z");Passive(sleep_label_);Hide(sleep_label_,true);
+        wake_indicator_=lv_label_create(face_);
+        lv_obj_set_style_text_font(wake_indicator_,EspenUiFont(),0);
+        lv_obj_set_style_text_color(wake_indicator_,lv_color_hex(0x8DA8B8),0);
+        lv_obj_set_style_text_align(wake_indicator_,LV_TEXT_ALIGN_CENTER,0);
+        lv_obj_set_width(wake_indicator_,350);
+        lv_label_set_long_mode(wake_indicator_,LV_LABEL_LONG_DOT);
+        lv_obj_set_pos(wake_indicator_,15,264);
+        Passive(wake_indicator_);RefreshWake();
         lv_obj_add_flag(face_,LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(face_,[](lv_event_t* e){
             static_cast<EspenDisplay*>(lv_event_get_user_data(e))->FaceTouch(e);
@@ -801,10 +824,18 @@ class EspenDisplay : public LcdDisplay {
         auto state=Application::GetInstance().GetDeviceState();
         using espen::Phase;using espen::Accent;
         Phase phase=Phase::Idle;
+        if(wifi_online_&&!was_online_) engine_.Celebrate(now);
+        was_online_=wifi_online_;
+        uint32_t local=espen_local_wake_seq.load(std::memory_order_relaxed);
+        if(local!=seen_local_wake_) {seen_local_wake_=local;engine_.LocalWake(now);}
+        uint32_t sleep=espen_sleep_seq.load(std::memory_order_relaxed);
+        if(sleep!=seen_sleep_) {seen_sleep_=sleep;engine_.SleepNow(now);}
         if(state==kDeviceStateSpeaking||state==kDeviceStateNotifying) {
             phase=Phase::Speaking;waiting_answer_=false;last_audio_=now;
         } else if(state==kDeviceStateConnecting) phase=Phase::Wake;
         else if(state==kDeviceStateListening) phase=waiting_answer_&&now-last_stt_<20000?Phase::Thinking:Phase::Listening;
+        else if(state==kDeviceStateStarting||state==kDeviceStateUnknown||
+                state==kDeviceStateActivating||state==kDeviceStateWifiConfiguring) phase=Phase::Startup;
         else if(wifi_offline_||espen_network_error.load(std::memory_order_relaxed)) phase=Phase::Offline;
         if(waiting_answer_&&now-last_stt_>=20000)waiting_answer_=false;
         auto speech=EspenSpeech();
@@ -1179,7 +1210,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.1.28 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.1.29 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();

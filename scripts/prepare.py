@@ -435,3 +435,134 @@ src = app.read_text()
 src = src.replace("audio_service_.EnableWakeWordDetection(audio_service_.IsAfeWakeWord());",
                   "audio_service_.EnableWakeWordDetection(false);")
 app.write_text(src)
+
+# Espen standby policy: use the already-trained local detector independently
+# of Xiaozhi readiness. Apply local assets before arming the AFE, exactly once,
+# so its model list is never freed/replaced while it is active. A pending
+# remote assets download is deliberately completed before arming.
+shutil.copyfile(root / "firmware/conversation_timeout.h", up / "main/conversation_timeout.h")
+replace("main/application.h", '#define MAIN_EVENT_VAD_CHANGE',
+        '#define MAIN_EVENT_VAD_CHANGE')  # pinned source guard
+replace("main/application.h", '#include "audio_service.h"',
+        '#include "audio_service.h"\n#include "conversation_timeout.h"')
+replace("main/application.h", '    bool assets_version_checked_ = false;',
+        '    bool assets_version_checked_ = false;\n'
+        '    bool espen_wake_ready_ = false; // main-loop owned\n'
+        '    espen::ConversationTimeout espen_timeout_;\n'
+        '    void EspenEnsureWake();\n'
+        '    void EspenCheckSilence();')
+replace("main/application.cc",
+        '    // Update the status bar immediately to show the network state\n    display->UpdateStatusBar(true);\n}',
+        '    // Apply the installed assets only after the audio service and Wi-Fi\n'
+        '    // hardware are initialized. No network connection is required.\n'
+        '    EspenWake().Load();\n'
+        '    Settings espen_assets("assets", false);\n'
+        '    if (espen_assets.GetString("download_url").empty()) {\n'
+        '        CheckAssetsVersion();\n'
+        '        espen_wake_ready_ = true;\n'
+        '        EspenEnsureWake();\n'
+        '    }\n'
+        '    // Update the status bar immediately to show the network state\n    display->UpdateStatusBar(true);\n}')
+replace("main/application.cc",
+        '    CheckAssetsVersion();\n\n    // Check for new firmware version',
+        '    CheckAssetsVersion();\n'
+        '    // If a deferred assets download was necessary, arm from the main\n'
+        '    // task only after applying the final model list.\n'
+        '    Schedule([this]() { espen_wake_ready_ = true; EspenEnsureWake(); });\n\n'
+        '    // Check for new firmware version')
+replace("main/application.cc",
+        '        auto bits = xEventGroupWaitBits(event_group_, ALL_EVENTS, pdTRUE, pdFALSE, portMAX_DELAY);',
+        '        auto bits = xEventGroupWaitBits(event_group_, ALL_EVENTS, pdTRUE, pdFALSE, pdMS_TO_TICKS(100));')
+replace("main/application.cc",
+        '            clock_ticks_++;\n            auto display',
+        '            clock_ticks_++;\n            EspenEnsureWake();\n            auto display')
+replace("main/application.cc",
+        '                // SystemInfo::PrintTaskCpuUsage(pdMS_TO_TICKS(1000));\n            }\n        }\n    }\n}',
+        '                // SystemInfo::PrintTaskCpuUsage(pdMS_TO_TICKS(1000));\n            }\n        }\n'
+        '        EspenCheckSilence();\n    }\n}')
+replace("main/application.cc",
+        'void Application::HandleWakeWordDetectedEvent() {\n    if (!protocol_) {\n        return;\n    }\n\n    auto state = GetDeviceState();',
+        'extern void EspenLocalWakePulse();\n'
+        'extern void EspenSleepNow();\n'
+        'void Application::EspenEnsureWake() {\n'
+        '    if (!espen_wake_ready_) return;\n'
+        '    const auto state = GetDeviceState();\n'
+        '    const bool allowed = state == kDeviceStateStarting || state == kDeviceStateActivating || state == kDeviceStateIdle;\n'
+        '    if (!allowed) return;\n'
+        '    if (!audio_service_.IsPlaybackIdle()) return; // no self-trigger from TTS/alerts\n'
+        '    if (!audio_service_.IsWakeWordRunning() || !EspenWake().Get().running) {\n'
+        '        audio_service_.EnableWakeWordDetection(true);\n'
+        '        auto profile = EspenWake().Get();\n'
+        '        ESP_LOGI(TAG, "Espen wake: armed=%d trained=%d state=%d", profile.running, profile.trained, (int)state);\n'
+        '    }\n'
+        '}\n'
+        'void Application::EspenCheckSilence() {\n'
+        '    if (GetDeviceState() != kDeviceStateListening || !audio_service_.IsAudioProcessorRunning()) return;\n'
+        '    if (!audio_service_.IsPlaybackIdle()) { espen_timeout_.Voice(esp_timer_get_time()/1000); return; }\n'
+        '    const uint64_t now = esp_timer_get_time()/1000;\n'
+        '    if (audio_service_.IsVoiceDetected()) espen_timeout_.Voice(now);\n'
+        '    if (espen_timeout_.Expired(now)) {\n'
+        '        ESP_LOGI(TAG, "Espen conversation: inactivity timeout, returning to local wake");\n'
+        '        espen_timeout_.Reset();\n'
+        '        EspenSleepNow();\n'
+        '        HandleStopListeningEvent();\n'
+        '    }\n'
+        '}\n'
+        'void Application::HandleWakeWordDetectedEvent() {\n'
+        '    auto state = GetDeviceState();\n'
+        '    if (state == kDeviceStateStarting || state == kDeviceStateActivating) {\n'
+        '        // Recognize locally even while the cloud is unavailable. Do\n'
+        '        // not interrupt activation or touch its protocol pointer.\n'
+        '        EspenLocalWakePulse();\n'
+        '        ESP_LOGI(TAG, "Espen wake: local match, cloud not ready yet");\n'
+        '        EspenEnsureWake();\n'
+        '        return;\n'
+        '    }\n'
+        '    if (!protocol_) { EspenLocalWakePulse(); EspenEnsureWake(); return; }\n'
+        '    if (state == kDeviceStateIdle && !audio_service_.IsPlaybackIdle()) {\n'
+        '        // Playback is not a user wake invocation. Periodic recovery\n'
+        '        // will restore the detector after the sound has drained.\n'
+        '        return;\n'
+        '    }')
+replace("main/application.cc",
+        '    switch (new_state) {\n        case kDeviceStateUnknown:',
+        '    if (new_state != kDeviceStateListening) espen_timeout_.Reset();\n'
+        '    switch (new_state) {\n        case kDeviceStateStarting:\n'
+        '        case kDeviceStateActivating:\n'
+        '            EspenEnsureWake();\n'
+        '            break;\n'
+        '        case kDeviceStateUpgrading:\n'
+        '            audio_service_.EnableWakeWordDetection(false);\n'
+        '            break;\n'
+        '        case kDeviceStateUnknown:')
+replace("main/application.cc",
+        '            audio_service_.EnableVoiceProcessing(false);\n            audio_service_.EnableWakeWordDetection(true);\n            if (last_error_message_.empty()) {',
+        '            audio_service_.EnableVoiceProcessing(false);\n'
+        '            espen_wake_ready_ = true;\n'
+        '            EspenEnsureWake();\n'
+        '            if (last_error_message_.empty()) {')
+replace("main/application.cc",
+        '        case kDeviceStateListening:\n            display->SetStatus(Lang::Strings::LISTENING);',
+        '        case kDeviceStateListening:\n'
+        '            espen_timeout_.Start(esp_timer_get_time()/1000);\n'
+        '            display->SetStatus(Lang::Strings::LISTENING);')
+replace("main/application.cc",
+        '    protocol_->SendStartListening(listening_mode_);\n    audio_service_.EnableVoiceProcessing(true);',
+        '    protocol_->SendStartListening(listening_mode_);\n'
+        '    audio_service_.EnableVoiceProcessing(true);\n'
+        '    espen_timeout_.Start(esp_timer_get_time()/1000);')
+replace("main/application.cc",
+        'Schedule([display, message = std::string(text->valuestring),\n                          glyphs = std::move(glyphs), bpp]() {\n                    display->AddTextGlyphs(glyphs, bpp);\n                    display->SetChatMessage("user", message.c_str());',
+        'Schedule([this, display, message = std::string(text->valuestring),\n'
+        '                          glyphs = std::move(glyphs), bpp]() {\n'
+        '                    if (GetDeviceState() == kDeviceStateListening) espen_timeout_.Request(esp_timer_get_time()/1000);\n'
+        '                    display->AddTextGlyphs(glyphs, bpp);\n'
+        '                    display->SetChatMessage("user", message.c_str());')
+# Read VAD cross-task without a data race and avoid carrying a stale speaking
+# flag from a previous turn into the next silence timer.
+replace("main/audio/audio_service.h", '    bool voice_detected_ = false;',
+        '    std::atomic<bool> voice_detected_{false};')
+replace("main/audio/audio_service.cc",
+        'void AudioService::EnableVoiceProcessing(bool enable) {',
+        'void AudioService::EnableVoiceProcessing(bool enable) {\n'
+        '    if (!enable) voice_detected_.store(false);')

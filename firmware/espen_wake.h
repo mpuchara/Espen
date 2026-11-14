@@ -33,7 +33,7 @@ class EspenWakeEngine {
             nvs_close(h);
         }
         if(trained_) message_="Hasło zapisane. Gotowe do użycia.";
-        ESP_LOGI(TAG,"Local keyword templates loaded=%d",trained_);
+        ESP_LOGI(TAG,"Local keyword templates loaded=%d (NVS espen_wake/profile)",trained_);
     }
     void ResetSegment(){used_=voiced_=quiet_=start_=pos_=pre_count_=pre_pos_=0;blocked_=false;blocked_quiet_=0;}
     void FinishRecording(const espen_wake::Example& e) {
@@ -110,6 +110,7 @@ public:
             return;
         }
         running_ = on;
+        ESP_LOGI(TAG,"Local detector %s; trained=%d",on?"armed":"paused",trained_);
         ResetSegment();
         if(on){noise_frames_=0;noise_=35.f;}
         if(!on&&recording_){recording_=false;message_="Nagranie przerwane. Wróć do trybu oczekiwania.";}

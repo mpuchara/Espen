@@ -1,5 +1,6 @@
 #include "../firmware/face_engine.h"
 #include "../firmware/dirty_rect.h"
+#include "../firmware/conversation_timeout.h"
 #include <cassert>
 #include <array>
 #include <iostream>
@@ -25,18 +26,35 @@ int main() {
     for(uint32_t t=2400;t<2800;t+=50) f=e.Tick(t,Phase::Speaking,0,MouthShape::Closed);
     assert(f.pose.mouth_h<=8);
     e.Tick(3000,Phase::Idle,0,MouthShape::Closed);
-    assert(e.Tick(603001,Phase::Idle,0,MouthShape::Closed).asleep);
+    assert(!e.Tick(7999,Phase::Idle,0,MouthShape::Closed).asleep);
+    assert(e.Tick(8000,Phase::Idle,0,MouthShape::Closed).asleep);
     e.Touch(true,15,0,603002);
     assert(!e.Tick(603052,Phase::Idle,0,MouthShape::Closed).asleep);
     e.Touch(false,0,0,603060); e.React(Gesture::Tickle,603061);
     assert(e.Tick(603100,Phase::Idle,0,MouthShape::Closed).mood==Mood::Laugh);
-    assert(e.Tick(604900,Phase::Offline,0,MouthShape::Closed).mood==Mood::Sad);
+    assert(e.Tick(604900,Phase::Offline,0,MouthShape::Closed).mood!=Mood::Sad);
     e.Tick(605000,Phase::Idle,0,MouthShape::Closed);
     e.Preview(Mood::Love,605100);
     assert(e.Tick(605150,Phase::Idle,0,MouthShape::Closed).mood==Mood::Love);
     for(int p=0;p<static_cast<int>(Persona::Count);++p) {
         e.SetPersona(static_cast<Persona>(p)); assert(e.GetPersona()==static_cast<Persona>(p));
     }
+    FaceEngine boot;
+    assert(boot.Tick(100,Phase::Startup,0,MouthShape::Closed).mood!=Mood::Sad);
+    assert(boot.Tick(5100,Phase::Startup,0,MouthShape::Closed).asleep);
+    boot.LocalWake(5200);
+    assert(!boot.Tick(5250,Phase::Startup,0,MouthShape::Closed).asleep);
+    boot.Celebrate(6000);
+    assert(boot.Tick(6100,Phase::Startup,0,MouthShape::Closed).mood==Mood::Excited);
+    assert(boot.Tick(6200,Phase::Idle,0,MouthShape::Closed).mood==Mood::Excited);
+    boot.Tick(10000,Phase::Listening,0,MouthShape::Closed);
+    boot.SleepNow(15000);
+    assert(boot.Tick(15000,Phase::Idle,0,MouthShape::Closed).asleep);
+    espen::ConversationTimeout timeout;
+    timeout.Start(1000);assert(!timeout.Expired(5999));assert(timeout.Expired(6000));
+    timeout.Start(1000);timeout.Voice(5500);assert(!timeout.Expired(6000));assert(timeout.Expired(10500));
+    timeout.Start(1000);timeout.Request(2500);assert(!timeout.Expired(8000));assert(timeout.Expired(32500));
+    timeout.Reset();assert(!timeout.Expired(100000));
     // Disjoint tiles and padded tile stride; after each swap both buffers agree.
     std::array<uint16_t,48> a{},b{};
     const uint16_t tile[]={10,11,99,20,21,99};
