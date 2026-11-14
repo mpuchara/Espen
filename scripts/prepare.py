@@ -12,7 +12,7 @@ for src, dst in [("config.h","config.h"),("config.json","config.json"),
                  ("espen_board.cc","espen_board.cc"),
                  ("board_p4_st7701_init.h","board_p4_st7701_init.h"),
                  ("face_engine.h","face_engine.h"),("dirty_rect.h","dirty_rect.h"),
-                 ("social_reactions.h","social_reactions.h")]:
+                 ("social_reactions.h","social_reactions.h"),("speech_quality.h","speech_quality.h")]:
     shutil.copyfile(root / "firmware" / src, board / dst)
 
 def replace(path, old, new):
@@ -937,3 +937,128 @@ replace("main/application.cc",
         '            if (GetDeviceState() == kDeviceStateListening) {\n'
         '                if (audio_service_.IsVoiceDetected() && audio_service_.IsPlaybackIdle())\n'
         '                    espen_timeout_.Voice(esp_timer_get_time()/1000);')
+
+# 0.1.35: bundle the real NSNet2 and VADNet models into assets.
+# Upstream assets builder only packs WakeNet/MultiNet. Use its existing
+# generic model-directory copier for the two additional models.
+replace("scripts/build_default_assets.py",
+        '    # Print model information (only for models that will actually be packaged)',
+        '    # Espen: assets must contain the actual models, not only Kconfig flags.\n'
+        '    with open(args.sdkconfig, encoding="utf-8") as f:\n'
+        '        espen_cfg = set(f.read().splitlines())\n'
+        '    for flag, subdir, name in [("CONFIG_SR_NSN_NSNET2=y", "nsnet_model", "nsnet2"),\n'
+        '                                ("CONFIG_SR_VADN_VADNET1_MEDIUM=y", "vadnet_model", "vadnet1_medium")]:\n'
+        '        if flag in espen_cfg:\n'
+        '            model = os.path.join(args.esp_sr_model_path, subdir, name)\n'
+        '            if not os.path.isdir(model):\n'
+        '                raise RuntimeError("Missing Espen speech model: " + model)\n'
+        '            multinet_model_paths.append(model)\n'
+        '            print("Espen speech model:", name)\n'
+        '    # Print model information (only for models that will actually be packaged)')
+replace("main/audio/engines/afe_audio_engine.cc",
+        '#include "audio_service.h"',
+        '#include "audio_service.h"\n#include "settings.h"\n#include <esp_nsn_models.h>')
+replace("main/audio/engines/afe_audio_engine.cc",
+        '    afe_config_t* afe_config =\n'
+        '        afe_config_init(input_format.c_str(), models_, AFE_TYPE_FD, AFE_MODE_LOW_COST);',
+        '    Settings speech("espen_audio", false);\n'
+        '    const bool enhance = speech.GetBool("enhance", true);\n'
+        '    const bool high_perf = speech.GetBool("high_perf", false);\n'
+        '    char* ns_model = models_ == nullptr ? nullptr : esp_srmodel_filter(models_, ESP_NSNET_PREFIX, nullptr);\n'
+        '    afe_config_t* afe_config = afe_config_init(input_format.c_str(), models_, AFE_TYPE_FD,\n'
+        '        high_perf ? AFE_MODE_HIGH_PERF : AFE_MODE_LOW_COST);')
+replace("main/audio/engines/afe_audio_engine.cc",
+        '    afe_config->ns_init = false;',
+        '    afe_config->ns_init = enhance && ns_model != nullptr;\n'
+        '    if (afe_config->ns_init) {\n'
+        '        afe_config->ns_model_name = ns_model;\n'
+        '        afe_config->afe_ns_mode = AFE_NS_MODE_NET;\n'
+        '    }\n'
+        '    if (enhance && !ns_model) ESP_LOGW(TAG, "Espen NSNet2 model missing: NS bypass");')
+replace("main/audio/engines/afe_audio_engine.cc",
+        '    afe_config->vad_min_noise_ms = 100;',
+        '    afe_config->vad_min_speech_ms = 96;\n'
+        '    afe_config->vad_min_noise_ms = 180;\n'
+        '    afe_config->vad_delay_ms = 128;')
+replace("main/audio/engines/afe_audio_engine.cc",
+        '    afe_config->agc_init = false;',
+        '    afe_config->agc_init = enhance;\n'
+        '    afe_config->agc_mode = AFE_AGC_MODE_WEBRTC;\n'
+        '    afe_config->agc_compression_gain_db = 6;\n'
+        '    afe_config->agc_target_level_dbfs = 6;\n'
+        '    ESP_LOGI(TAG, "Espen AFE: NS=%s AGC=%d VAD=%s high_perf=%d",\n'
+        '        afe_config->ns_init ? ns_model : "off", enhance, vad_model_name ? vad_model_name : "WebRTC", high_perf);')
+replace("main/audio/engines/afe_audio_engine.cc",
+        '    afe_config_free(afe_config);\n\n    if (afe_iface_ == nullptr || afe_data_ == nullptr) {',
+        '    if (afe_data_ == nullptr && (enhance || high_perf)) {\n'
+        '        ESP_LOGW(TAG, "Espen enhanced AFE failed; retrying baseline");\n'
+        '        afe_config->ns_init = false; afe_config->agc_init = false;\n'
+        '        afe_config->afe_mode = AFE_MODE_LOW_COST;\n'
+        '        afe_iface_ = esp_afe_handle_from_config(afe_config);\n'
+        '        if (afe_iface_) afe_data_ = afe_iface_->create_from_config(afe_config);\n'
+        '    }\n'
+        '    afe_config_free(afe_config);\n\n    if (afe_iface_ == nullptr || afe_data_ == nullptr) {')
+# Improve encoder quality without changing the protocol frame duration.
+replace("main/audio/audio_service.h",
+        '            .complexity = 0,',
+        '            .complexity = 2,')
+replace("main/audio/audio_service.h",
+        '#define MAX_ENCODE_TASKS_IN_QUEUE 2',
+        '#define MAX_ENCODE_TASKS_IN_QUEUE 6')
+# Explicitly armed, bounded capture of raw input and outgoing Opus.
+replace("main/audio/audio_service.cc",
+        '                if (feed_voice && (xEventGroupGetBits(event_group_) & AS_EVENT_AUDIO_PROCESSOR_RUNNING))\n'
+        '                    audio_engine_->Feed(std::move(data));',
+        '                if (feed_voice && (xEventGroupGetBits(event_group_) & AS_EVENT_AUDIO_PROCESSOR_RUNNING)) {\n'
+        '                    extern void EspenDiagRaw(const int16_t*, size_t);\n'
+        '                    EspenDiagRaw(data.data(), data.size());\n'
+        '                    audio_engine_->Feed(std::move(data));\n'
+        '                }')
+replace("main/application.cc",
+        '                if (protocol_ && !protocol_->SendAudio(std::move(packet))) {',
+        '                extern void EspenDiagOpus(const AudioStreamPacket&);\n'
+        '                if (protocol_) EspenDiagOpus(*packet);\n'
+        '                if (protocol_ && !protocol_->SendAudio(std::move(packet))) {')
+replace("main/application.cc",
+        '    if (new_state != kDeviceStateListening) {\n'
+        '        espen_timeout_.Reset(); espen_finish_at_ = 0; EspenTurnWaiting(false);',
+        '    if (new_state != kDeviceStateListening) {\n'
+        '        extern void EspenDiagEnd(); EspenDiagEnd();\n'
+        '        espen_timeout_.Reset(); espen_finish_at_ = 0; EspenTurnWaiting(false);')
+replace("main/application.cc",
+        '    protocol_->SendStartListening(wire_mode);',
+        '    extern void EspenDiagBegin(); EspenDiagBegin();\n'
+        '    protocol_->SendStartListening(wire_mode);')
+replace("main/application.cc",
+        '            if (protocol_) protocol_->SendStopListening();\n            espen_timeout_.Request(now);',
+        '            extern void EspenDiagEnd(); EspenDiagEnd();\n'
+        '            if (protocol_) protocol_->SendStopListening();\n            espen_timeout_.Request(now);')
+replace("main/application.cc",
+        '    if (!espen_wake_ready_) return;',
+        '    if (!espen_wake_ready_) return;\n'
+        '    extern bool EspenDiagnosticBusy();\n'
+        '    if (EspenDiagnosticBusy()) {\n'
+        '        if (audio_service_.IsWakeWordRunning()) audio_service_.EnableWakeWordDetection(false);\n'
+        '        return;\n'
+        '    }')
+# Local RAW playback uses the existing sole speaker-owner task.
+replace("main/audio/audio_service.h",
+        '    bool IsEspenUplinkDrained();',
+        '    bool IsEspenUplinkDrained();\n'
+        '    bool QueueEspenDiagnosticPcm(std::vector<int16_t>&& pcm);')
+replace("main/audio/audio_service.cc",
+        'bool AudioService::IsEspenUplinkDrained() {',
+        'bool AudioService::QueueEspenDiagnosticPcm(std::vector<int16_t>&& pcm) {\n'
+        '    if (pcm.empty()) return false;\n'
+        '    std::unique_lock<std::mutex> lock(audio_queue_mutex_);\n'
+        '    const auto generation=playback_generation_;\n'
+        '    if (!audio_queue_cv_.wait_for(lock, std::chrono::milliseconds(500), [this,generation](){\n'
+        '        return service_stopped_.load() || generation != playback_generation_ ||\n'
+        '            audio_playback_queue_.size() < MAX_PLAYBACK_TASKS_IN_QUEUE;\n'
+        '    })) return false;\n'
+        '    if (service_stopped_.load() || generation!=playback_generation_) return false;\n'
+        '    AudioTask task; task.type=kAudioTaskTypeDecodeToPlaybackQueue; task.pcm=std::move(pcm);\n'
+        '    audio_playback_queue_.push_back(std::move(task));\n'
+        '    playback_drained_notified_=false; audio_queue_cv_.notify_all(); return true;\n'
+        '}\n\n'
+        'bool AudioService::IsEspenUplinkDrained() {')

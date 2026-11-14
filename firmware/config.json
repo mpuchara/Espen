@@ -61,7 +61,9 @@
         "CONFIG_SR_WN_WN9_NIHAOXIAOZHI_TTS=n",
         "CONFIG_WAKE_WORD_DISABLED=y",
         "CONFIG_SR_MN_EN_NONE=y",
-        "CONFIG_USE_AUDIO_PROCESSOR=y"
+        "CONFIG_USE_AUDIO_PROCESSOR=y",
+        "CONFIG_SR_NSN_NSNET2=y",
+        "CONFIG_SR_VADN_VADNET1_MEDIUM=y"
       ]
     }
   ]

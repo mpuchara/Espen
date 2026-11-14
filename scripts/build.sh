@@ -13,6 +13,8 @@ c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_speech_onset.cc -o /tmp/espe
 /tmp/espen-speech-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_social_reactions.cc -o /tmp/espen-social-test
 /tmp/espen-social-test
+c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_speech_quality.cc -o /tmp/espen-quality-test
+/tmp/espen-quality-test
 ref=49b4380b3faa0ceadd28a3e78aaf0f311c46c57e
 if [ ! -d upstream/.git ]; then
   git clone --depth 1 --branch v2.5.2 https://github.com/78/xiaozhi-esp32.git upstream
@@ -52,6 +54,8 @@ python3 scripts/build.py guition/espen-guition-jc4880p443 --name espen-guition-j
 for setting in \
   CONFIG_WAKE_WORD_DISABLED=y \
   CONFIG_USE_AUDIO_PROCESSOR=y \
+  CONFIG_SR_NSN_NSNET2=y \
+  CONFIG_SR_VADN_VADNET1_MEDIUM=y \
   CONFIG_ESP_HOSTED_MEMPOOL_PREFER_SPIRAM=y \
   CONFIG_ESP_HOSTED_SDIO_CLOCK_FREQ_KHZ=10000 \
   CONFIG_ESP_HOSTED_SDIO_RESET_DELAY_MS=2500 \
