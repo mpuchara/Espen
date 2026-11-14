@@ -53,9 +53,12 @@ void Application::CheckNewVersion() {
             EspenCloudInfo("Wpisz kod w Xiaozhi Console. Sprawdzam przypisanie.", shown_code.c_str());
         } else {
             shown_code.clear();
-            if (ota_->HasTestCredentials() && !challenge) {
-                EspenCloudInfo("Serwer zwrócił konto testowe. Sprawdzam ponownie.", "");
+            if (ota_->HasTestCredentials() && !challenge && !usable) {
+                EspenCloudInfo("Xiaozhi: konto testowe, brak kodu. Sprawdź przypisanie urządzenia w konsoli. Ponawiam za 30 s.", "");
                 display->SetStatus("Xiaozhi: konto testowe");
+                ESP_LOGW(TAG, "Espen activation: test credentials only; no binding code; see xiaozhi-esp32 issue #1785; retry in 30 s");
+                vTaskDelay(pdMS_TO_TICKS(30000));
+                continue;
             } else if (challenge) {
                 EspenCloudInfo("Potwierdzam aktywację urządzenia.", "");
                 display->SetStatus("Xiaozhi: aktywacja");

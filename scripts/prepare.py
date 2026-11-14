@@ -290,3 +290,13 @@ replace("main/application.cc",
         '    ESP_LOGI(TAG, "Network connected");\n    EspenConfigureNetwork();\n    auto state = GetDeviceState();')
 # Allow the remote endpoint more time on high-latency Internet connections.
 replace("main/ota.cc", "    http->SetTimeout(10000);", "    http->SetTimeout(20000);")
+
+# Never persist test credentials over a previously provisioned account.
+# The two flags HasMqttConfig/HasWebsocketConfig describe usable personal
+# credentials, not whether the server included the JSON sections.
+ota_src = up / "main/ota.cc"
+src = ota_src.read_text()
+start = src.index("    has_test_credentials_ = false;")
+end = src.index("    has_server_time_ = false;", start)
+src = src[:start] + (root / "firmware/cloud_credentials.inc").read_text() + "\n" + src[end:]
+ota_src.write_text(src)
