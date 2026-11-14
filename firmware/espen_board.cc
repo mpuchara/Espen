@@ -810,6 +810,7 @@ class EspenDisplay : public LcdDisplay {
         }
         if(!touch_active_)return;
         touch_prev_=p;
+        const int before=pet_motion_.Distance();
         auto motion=pet_motion_.Move(p.x,p.y,now);
         touch_distance_=pet_motion_.Distance();
         lv_area_t a;lv_obj_get_coords(face_,&a);
@@ -817,7 +818,7 @@ class EspenDisplay : public LcdDisplay {
         // React during motion, not only at release. Once tickling is
         // recognized keep that classification until this touch ends.
         if(pet_kind_==espen::Motion::Tickle)motion=pet_kind_;
-        if(motion!=espen::Motion::None&&(motion!=pet_kind_||now-last_pet_>=600)) {
+        if(motion!=espen::Motion::None&&(motion!=pet_kind_||(touch_distance_>before&&now-last_pet_>=600))) {
             if(pet_kind_==espen::Motion::None) {
                 heart_x_=std::clamp<int>(p.x-a.x1,65,310);
                 heart_y_=std::clamp<int>(p.y-a.y1,125,225);

@@ -124,6 +124,7 @@ public:
         }
     }
     void Preview(Mood m,uint32_t now) {
+        social_=Social::None;
         gesture_=m;gesture_until_=now+4200;gesture_active_=true;
         force_sleep_=false;
         if(phase_==Phase::Idle||phase_==Phase::Offline||phase_==Phase::Startup) ResetIdle(now);
@@ -132,7 +133,7 @@ public:
         if(reaction==Social::None)return;
         // Sustained petting extends the effect without restarting each frame.
         if(social_!=reaction||Due(now,social_until_))social_at_=now;
-        social_=reaction;
+        social_=reaction;gesture_active_=false;
         social_until_=now+(reaction==Social::Affection?3200:
             reaction==Social::Celebration?2400:reaction==Social::Tickle?1700:2600);
         force_sleep_=false;
@@ -143,9 +144,9 @@ public:
         if(g==Gesture::Tickle){SocialReact(Social::Tickle,now);return;}
         if(g==Gesture::TripleTap){SocialReact(Social::Celebration,now);return;}
         if(g==Gesture::Boop){SocialReact(Social::Boop,now);return;}
-        gesture_=g==Gesture::DoubleTap?Mood::Surprise:g==Gesture::Tickle?Mood::Laugh:
-                 g==Gesture::Stroke?Mood::Happy:Mood::Wink;
-        gesture_until_=now+(g==Gesture::Tickle?1700:1300); gesture_active_=true;
+        social_=Social::None;
+        gesture_=g==Gesture::DoubleTap?Mood::Surprise:Mood::Wink;
+        gesture_until_=now+1300;gesture_active_=true;
         force_sleep_=false;
         if(phase_==Phase::Idle||phase_==Phase::Offline||phase_==Phase::Startup) ResetIdle(now);
     }

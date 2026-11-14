@@ -40,5 +40,9 @@ int main(){
     assert(e.Tick(5100,Phase::Idle,0,MouthShape::Closed).hearts);
     e.React(Gesture::TripleTap,5200);
     assert(e.Tick(5300,Phase::Idle,0,MouthShape::Closed).mood==Mood::Excited);
+    e.React(Gesture::Boop,5400);
+    assert(e.Tick(5450,Phase::Idle,0,MouthShape::Closed).mood==Mood::Shy);
+    e.React(Gesture::DoubleTap,5500);
+    assert(e.Tick(5550,Phase::Idle,0,MouthShape::Closed).mood==Mood::Surprise);
     std::cout<<"Espen social reaction tests passed\n";
 }
