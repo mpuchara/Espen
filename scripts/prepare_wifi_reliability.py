@@ -7,9 +7,17 @@ from pathlib import Path
 up = Path(sys.argv[1]).resolve()
 lib = up / "local_components/esp-wifi-connect"
 
-def edit(path, old, new):
+def edit(path, old, new, form_submit=False):
     p = lib / path
     s = p.read_text()
+    if form_submit:
+        a = s.index("httpd_uri_t form_submit = {")
+        b = s.index("ESP_ERROR_CHECK(httpd_register_uri_handler(server_, &form_submit));", a)
+        section = s[a:b]
+        if section.count(old) != 1:
+            raise RuntimeError(f"Unexpected /submit source: {old[:100]}")
+        p.write_text(s[:a] + section.replace(old, new, 1) + s[b:])
+        return
     if s.count(old) != 1:
         raise RuntimeError(f"Unexpected source: {p}: {old[:100]}")
     p.write_text(s.replace(old, new, 1))
@@ -207,8 +215,8 @@ edit("wifi_configuration_ap.cc",
                 if (ret <= 0) break;
                 received += ret;
             }
-            if (received != buf_len || buf_len == 0) {""")
-edit("wifi_configuration_ap.cc", "            buf[ret] = '\\0';", "            buf[received] = '\\0';")
+            if (received != buf_len || buf_len == 0) {""", form_submit=True)
+edit("wifi_configuration_ap.cc", "            buf[ret] = '\\0';", "            buf[received] = '\\0';", form_submit=True)
 # /exit formerly stopped AP and started STA in place. The new submit handler
 # already schedules reboot, so never race it with a second state transition.
 p = lib / "wifi_configuration_ap.cc"
