@@ -31,6 +31,9 @@ int main() {
     e.Touch(false,0,0,603060); e.React(Gesture::Tickle,603061);
     assert(e.Tick(603100,Phase::Idle,0,MouthShape::Closed).mood==Mood::Laugh);
     assert(e.Tick(604900,Phase::Offline,0,MouthShape::Closed).mood==Mood::Sad);
+    e.Tick(605000,Phase::Idle,0,MouthShape::Closed);
+    e.Preview(Mood::Love,605100);
+    assert(e.Tick(605150,Phase::Idle,0,MouthShape::Closed).mood==Mood::Love);
     for(int p=0;p<static_cast<int>(Persona::Count);++p) {
         e.SetPersona(static_cast<Persona>(p)); assert(e.GetPersona()==static_cast<Persona>(p));
     }

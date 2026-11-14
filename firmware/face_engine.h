@@ -86,7 +86,8 @@ struct Frame {
 class FaceEngine {
     uint32_t rng_=0x45a9b3e1u, idle_since_=0, phase_since_=0, emotion_at_=0;
     uint32_t gesture_until_=0, next_blink_=0, blink_at_=0, next_gaze_=0, next_micro_=0, micro_until_=0;
-    uint32_t last_tick_=0;
+    uint32_t last_tick_=0,wake_anim_at_=0;
+    bool wake_anim_=false;
     bool initialized_=false, blink_active_=false, double_blink_=false, second_blink_=false;
     bool gesture_active_=false, micro_active_=false, touch_=false;
     int target_x_=0,target_y_=0, touch_x_=0,touch_y_=0;
@@ -107,7 +108,14 @@ public:
     }
     void Touch(bool active,int x,int y,uint32_t now) {
         touch_=active; touch_x_=std::clamp(x,-26,26); touch_y_=std::clamp(y,-16,16);
-        if(active && phase_==Phase::Idle) ResetIdle(now);
+        if(active && phase_==Phase::Idle) {
+            if(frame_.asleep) {wake_anim_=true;wake_anim_at_=now;}
+            ResetIdle(now);
+        }
+    }
+    void Preview(Mood m,uint32_t now) {
+        gesture_=m;gesture_until_=now+4200;gesture_active_=true;
+        if(phase_==Phase::Idle) ResetIdle(now);
     }
     void React(Gesture g,uint32_t now) {
         gesture_=g==Gesture::DoubleTap?Mood::Surprise:g==Gesture::Tickle?Mood::Laugh:
@@ -125,6 +133,7 @@ public:
             phase_=phase;phase_since_=now;
             if(phase==Phase::Idle) ResetIdle(now);
             if(phase==Phase::Wake || phase==Phase::Listening) {
+                if(frame_.asleep) {wake_anim_=true;wake_anim_at_=now;}
                 cloud_=Mood::Neutral; gesture_active_=false; micro_active_=false; blink_active_=false;
                 next_blink_=now+1800; target_x_=target_y_=0;
             }
@@ -165,6 +174,15 @@ public:
         if(phase==Phase::Wake) {p.eye_h=58;p.mouth_w=111;}
         if(mood==Mood::Sleepy && micro_active_ && idle<300000) {p.mouth_h=38;p.mouth_w=42;}
         if(asleep) {p.eye_h=4;p.mouth_h=5;p.mouth_w=55;}
+        // A short staggered opening is purely visual; listening starts
+        // immediately and is never held up by the wake animation.
+        if(wake_anim_) {
+            uint32_t t=now-wake_anim_at_;
+            if(t<420 && phase!=Phase::Speaking) {
+                p.eye_h=std::max(p.eye_h,48);
+                p.asym=static_cast<int>(std::max<int>(0,48-static_cast<int>(t/8)));
+            } else wake_anim_=false;
+        }
         if(phase==Phase::Speaking) {
             if(level<5) {p.mouth_h=7;p.mouth_w=76;}
             else {
@@ -183,7 +201,10 @@ public:
             next_gaze_=now+1500+Rand(3300)+(100-traits.energy)*20;
         }
         int gx=target_x_,gy=target_y_;
-        if(phase==Phase::Listening || phase==Phase::Wake || phase==Phase::Speaking) {gx=0;gy=0;}
+        if(phase==Phase::Listening || phase==Phase::Wake || phase==Phase::Speaking) {
+            gx=target_x_*(100-traits.attention)/100;
+            gy=target_y_*(100-traits.attention)/100;
+        }
         if(mood==Mood::Thinking) {gx=17;gy=-12;}
         if(mood==Mood::Shy) {gx=-20;gy=7;}
         if(mood==Mood::Confused) {gx=12;gy=-4;}

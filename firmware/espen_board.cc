@@ -171,8 +171,9 @@ class EspenDisplay : public LcdDisplay {
     }
     void Flush(lv_display_t* disp,const lv_area_t* area,uint8_t* pixels) {
         espen::DirtyRect r{area->x1,area->y1,area->x2,area->y2};
-        if(swap_failed_ || !r.Valid(DISPLAY_WIDTH,DISPLAY_HEIGHT)) {
-            ESP_LOGE(TAG,"LCD: invalid tile or failed swap");
+        if(swap_failed_) {lv_display_flush_ready(disp);return;}
+        if(!r.Valid(DISPLAY_WIDTH,DISPLAY_HEIGHT)) {
+            ESP_LOGE(TAG,"LCD: invalid tile");
             lv_display_flush_ready(disp);return;
         }
         const size_t stride=lv_draw_buf_width_to_stride(r.x2-r.x1+1,LV_COLOR_FORMAT_RGB565);
@@ -182,7 +183,10 @@ class EspenDisplay : public LcdDisplay {
         auto err=SyncRows(frames_[back_],dirty_);
         if(err==ESP_OK) {
             xSemaphoreTake(frame_done_,0);
-            err=esp_lcd_panel_draw_bitmap(panel_,0,0,DISPLAY_WIDTH,DISPLAY_HEIGHT,frames_[back_]);
+            // IDF 6.1 recognizes a native framebuffer pointer, switches the
+            // scanout index and writes back only y_start..y_end. Pass the
+            // dirty row span, not a full-frame rectangle.
+            err=esp_lcd_panel_draw_bitmap(panel_,0,dirty_.y1,DISPLAY_WIDTH,dirty_.y2+1,frames_[back_]);
         }
         if(err==ESP_OK && xSemaphoreTake(frame_done_,pdMS_TO_TICKS(150))==pdTRUE &&
             xSemaphoreTake(frame_done_,pdMS_TO_TICKS(150))==pdTRUE) {
@@ -210,6 +214,10 @@ class EspenDisplay : public LcdDisplay {
         if(err!=ESP_OK) {
             swap_failed_=true;
             ESP_LOGE(TAG,"LCD: safe stop after present/cache failure: %s",esp_err_to_name(err));
+            if(partial_render_) {
+                Settings ui("espen_ui",true);ui.SetBool("partial_lcd",false);
+                ESP_LOGW(TAG,"LCD: full fallback saved for next reboot");
+            }
         }
         dirty_={};
         lv_display_flush_ready(disp);
@@ -262,6 +270,8 @@ class EspenDisplay : public LcdDisplay {
         }
         RefreshCloud();
         RefreshWake();
+        auto& wifi=WifiManager::GetInstance();
+        wifi_offline_=wifi.IsInitialized()&&!wifi.IsConnected();
     }
 
     void OpenCloud() {
@@ -599,6 +609,12 @@ class EspenDisplay : public LcdDisplay {
             },this,420);
             persona_label_=lv_obj_get_child(persona,0);
             lv_label_set_text_fmt(persona_label_,"Osobowość: %s",kPersonas[static_cast<int>(engine_.GetPersona())]);
+            MakeButton(settings_,"Test kolejnej emocji",[](lv_event_t* e){
+                auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                self->preview_index_=(self->preview_index_+1)%static_cast<int>(espen::Mood::Count);
+                self->engine_.Preview(static_cast<espen::Mood>(self->preview_index_),lv_tick_get());
+                self->CloseSettings();
+            },this,420);
             auto* lcd=MakeButton(settings_,"Tryb LCD",[](lv_event_t* e){
                 auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
                 {Settings ui("espen_ui",true);ui.SetBool("partial_lcd",!self->partial_render_);}
@@ -647,6 +663,8 @@ class EspenDisplay : public LcdDisplay {
     uint32_t seen_mood_=0,last_stt_=0,last_ambient_=0,last_audio_=0;
     bool waiting_answer_=false,button_added_=false,touch_active_=false,touch_long_=false;
     uint32_t touch_started_=0,last_tap_=0;
+    int preview_index_=0;
+    bool wifi_offline_=false;
     int touch_distance_=0;
     lv_point_t touch_prev_{};
     lv_obj_t* face_=nullptr;
@@ -787,7 +805,7 @@ class EspenDisplay : public LcdDisplay {
             phase=Phase::Speaking;waiting_answer_=false;last_audio_=now;
         } else if(state==kDeviceStateConnecting) phase=Phase::Wake;
         else if(state==kDeviceStateListening) phase=waiting_answer_&&now-last_stt_<20000?Phase::Thinking:Phase::Listening;
-        else if(espen_network_error.load(std::memory_order_relaxed)) phase=Phase::Offline;
+        else if(wifi_offline_||espen_network_error.load(std::memory_order_relaxed)) phase=Phase::Offline;
         if(waiting_answer_&&now-last_stt_>=20000)waiting_answer_=false;
         auto speech=EspenSpeech();
         uint32_t ambient=espen_ambient_ms.load(std::memory_order_relaxed);
