@@ -55,6 +55,20 @@ int main() {
     timeout.Start(1000);timeout.Voice(5500);assert(!timeout.Expired(6000));assert(timeout.Expired(10500));
     timeout.Start(1000);timeout.Request(2500);assert(!timeout.Expired(8000));assert(timeout.Expired(32500));
     timeout.Reset();assert(!timeout.Expired(100000));
+    // No speech: five seconds. Speech: a full two seconds of silence.
+    timeout.Start(1000);
+    assert(!timeout.EndOfSpeech(5999)&&!timeout.Expired(5999));
+    assert(timeout.Expired(6000));
+    timeout.Start(1000);timeout.Voice(1300);
+    assert(!timeout.EndOfSpeech(2400)); // "co to jest robot" ... short pause
+    timeout.Voice(2500); // "EMO"
+    assert(!timeout.EndOfSpeech(4499));
+    assert(timeout.EndOfSpeech(4500));
+    timeout.Request(4500);
+    assert(timeout.Waiting()&&!timeout.EndOfSpeech(10000)&&!timeout.Expired(10000));
+    timeout.Start(1000);timeout.Pause(2000);
+    assert(!timeout.EndOfSpeech(4000)&&!timeout.Expired(6999));
+    assert(timeout.Expired(7000));
     // Disjoint tiles and padded tile stride; after each swap both buffers agree.
     std::array<uint16_t,48> a{},b{};
     const uint16_t tile[]={10,11,99,20,21,99};

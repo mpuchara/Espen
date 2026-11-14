@@ -58,7 +58,8 @@ static const lv_font_t* EspenUiFont() {
 // 22-bit time, 2-bit mouth shape, 8-bit level, one atomic publication.
 static std::atomic<uint32_t> espen_playback_meter{0};
 static std::atomic<uint32_t> espen_ambient_ms{0};
-static std::atomic<bool> espen_network_error{false};
+static std::atomic<bool> espen_network_error{false},espen_turn_waiting{false};
+void EspenTurnWaiting(bool waiting) {espen_turn_waiting.store(waiting,std::memory_order_relaxed);}
 static std::atomic<uint32_t> espen_local_wake_seq{0},espen_sleep_seq{0};
 void EspenLocalWakePulse() {espen_local_wake_seq.fetch_add(1,std::memory_order_relaxed);}
 void EspenSleepNow() {espen_sleep_seq.fetch_add(1,std::memory_order_relaxed);}
@@ -915,7 +916,7 @@ class EspenDisplay : public LcdDisplay {
         if(state==kDeviceStateSpeaking||state==kDeviceStateNotifying) {
             phase=Phase::Speaking;waiting_answer_=false;last_audio_=now;
         } else if(state==kDeviceStateConnecting) phase=Phase::Wake;
-        else if(state==kDeviceStateListening) phase=waiting_answer_&&now-last_stt_<20000?Phase::Thinking:Phase::Listening;
+        else if(state==kDeviceStateListening) phase=espen_turn_waiting.load(std::memory_order_relaxed)?Phase::Thinking:Phase::Listening;
         else if(state==kDeviceStateStarting||state==kDeviceStateUnknown||
                 state==kDeviceStateActivating||state==kDeviceStateWifiConfiguring) phase=Phase::Startup;
         else if(wifi_offline_||espen_network_error.load(std::memory_order_relaxed)) phase=Phase::Offline;
@@ -1327,7 +1328,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.1.32 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.1.33 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();

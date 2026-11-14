@@ -816,3 +816,120 @@ replace("main/application.cc",
         '        return;\n'
         '    }\n'
         '    espen_timeout_.Start(esp_timer_get_time()/1000);')
+
+# 0.1.33: local end-of-utterance for automatic conversation.
+# Use the existing protocol's manual mode on the wire, but retain the
+# application's auto mode so TTS completion resumes listening as before.
+# This avoids relying on the server's short automatic silence threshold.
+replace("main/application.h",
+        '    espen::ConversationTimeout espen_timeout_;',
+        '    espen::ConversationTimeout espen_timeout_;\n'
+        '    uint64_t espen_finish_at_ = 0;')
+replace("main/application.cc",
+        'extern void EspenSleepNow();',
+        'extern void EspenSleepNow();\nextern void EspenTurnWaiting(bool waiting);')
+replace("main/application.cc",
+        '    if (new_state != kDeviceStateListening) espen_timeout_.Reset();',
+        '    if (new_state != kDeviceStateListening) {\n'
+        '        espen_timeout_.Reset(); espen_finish_at_ = 0; EspenTurnWaiting(false);\n'
+        '    }')
+replace("main/application.cc",
+        '    protocol_->SendStartListening(listening_mode_);\n    audio_service_.EnableVoiceProcessing(true);',
+        '    const auto wire_mode = listening_mode_ == kListeningModeAutoStop ? kListeningModeManualStop : listening_mode_;\n'
+        '    protocol_->SendStartListening(wire_mode);\n'
+        '    espen_finish_at_ = 0; EspenTurnWaiting(false);\n'
+        '    ESP_LOGI(TAG, "Espen listen start: app_mode=%d wire_mode=%d endpoint_ms=%u",\n'
+        '        (int)listening_mode_, (int)wire_mode, (unsigned)espen::ConversationTimeout::kEndOfSpeechMs);\n'
+        '    audio_service_.EnableVoiceProcessing(true);')
+p = up / "main/application.cc"
+src = p.read_text()
+a = src.index("void Application::EspenCheckSilence() {")
+b = src.index("void Application::HandleWakeWordDetectedEvent()", a)
+src = src[:a] + """void Application::EspenCheckSilence() {
+    if (GetDeviceState() != kDeviceStateListening) return;
+    const uint64_t now = esp_timer_get_time()/1000;
+    // Let already encoded audio reach the server before sending listen/stop.
+    // The 250 ms minimum gives late AFE/Opus work time to settle.
+    if (espen_finish_at_) {
+        const uint64_t elapsed = now-espen_finish_at_;
+        if (elapsed >= 250 && (audio_service_.IsEspenUplinkDrained() || elapsed >= 1200)) {
+            espen_finish_at_ = 0;
+            if (protocol_) protocol_->SendStopListening();
+            espen_timeout_.Request(now);
+            ESP_LOGI(TAG, "Espen listen stop: local endpoint; uplink drain %u ms", (unsigned)elapsed);
+        }
+        return;
+    }
+    // Waiting for the answer is distinct from idle silence. The microphone
+    // has already been stopped locally; do not require it to be running.
+    if (espen_timeout_.Waiting()) {
+        if (espen_timeout_.Expired(now)) {
+            ESP_LOGW(TAG, "Espen: response timeout");
+            espen_timeout_.Reset(); EspenTurnWaiting(false); EspenSleepNow();
+            if (protocol_ && protocol_->IsAudioChannelOpened()) protocol_->CloseAudioChannel();
+            SetDeviceState(kDeviceStateIdle);
+        }
+        return;
+    }
+    if (!audio_service_.IsAudioProcessorRunning()) return;
+    if (!audio_service_.IsPlaybackIdle()) {
+        espen_timeout_.Pause(now);
+        return;
+    }
+    if (audio_service_.IsVoiceDetected()) espen_timeout_.Voice(now);
+    if (listening_mode_ == kListeningModeAutoStop && espen_timeout_.EndOfSpeech(now)) {
+        ESP_LOGI(TAG, "Espen: end of speech after %u ms silence", (unsigned)espen::ConversationTimeout::kEndOfSpeechMs);
+        espen_timeout_.Request(now);
+        espen_finish_at_ = now;
+        EspenTurnWaiting(true);
+        Board::GetInstance().GetDisplay()->SetStatus("Myślę...");
+        audio_service_.EnableVoiceProcessing(false);
+        return;
+    }
+    if (espen_timeout_.Expired(now)) {
+        ESP_LOGI(TAG, "Espen conversation: inactivity timeout, returning to local wake");
+        espen_timeout_.Reset(); EspenSleepNow();
+        HandleStopListeningEvent();
+    }
+}
+""" + src[b:]
+p.write_text(src)
+# If an STT message arrives early, don't let a cloud transcript cancel a
+# locally ongoing utterance. In manual wire mode, the endpoint owns stop.
+replace("main/application.cc",
+        '                    if (GetDeviceState() == kDeviceStateListening) espen_timeout_.Request(esp_timer_get_time()/1000);',
+        '                    if (GetDeviceState() == kDeviceStateListening &&\n'
+        '                        (listening_mode_ != kListeningModeAutoStop || espen_timeout_.Waiting()))\n'
+        '                        espen_timeout_.Request(esp_timer_get_time()/1000);')
+# Queue state under the existing audio mutex. Track the encoder job that
+# has been popped but is still being encoded.
+replace("main/audio/audio_service.h",
+        '    bool IsPlaybackIdle();',
+        '    bool IsPlaybackIdle();\n    bool IsEspenUplinkDrained();')
+replace("main/audio/audio_service.h",
+        '    bool decode_in_flight_ = false;',
+        '    bool decode_in_flight_ = false;\n    bool espen_encode_in_flight_ = false;')
+replace("main/audio/audio_service.cc",
+        '            auto task = std::move(audio_encode_queue_.front());\n            audio_encode_queue_.pop_front();',
+        '            auto task = std::move(audio_encode_queue_.front());\n'
+        '            espen_encode_in_flight_ = true;\n'
+        '            audio_encode_queue_.pop_front();')
+replace("main/audio/audio_service.cc",
+        '            lock.lock();\n        }\n    }\n\n    ESP_LOGW(TAG, "Opus codec task stopped");',
+        '            lock.lock();\n'
+        '            espen_encode_in_flight_ = false;\n'
+        '        }\n    }\n\n    ESP_LOGW(TAG, "Opus codec task stopped");')
+replace("main/audio/audio_service.cc",
+        'bool AudioService::IsPlaybackIdle() {',
+        'bool AudioService::IsEspenUplinkDrained() {\n'
+        '    std::lock_guard<std::mutex> lock(audio_queue_mutex_);\n'
+        '    return audio_encode_queue_.empty() && audio_send_queue_.empty() && !espen_encode_in_flight_;\n'
+        '}\n\n'
+        'bool AudioService::IsPlaybackIdle() {')
+# Polling can miss short VAD pulses; record speech at the VAD event too.
+replace("main/application.cc",
+        '        if (bits & MAIN_EVENT_VAD_CHANGE) {\n            if (GetDeviceState() == kDeviceStateListening) {',
+        '        if (bits & MAIN_EVENT_VAD_CHANGE) {\n'
+        '            if (GetDeviceState() == kDeviceStateListening) {\n'
+        '                if (audio_service_.IsVoiceDetected() && audio_service_.IsPlaybackIdle())\n'
+        '                    espen_timeout_.Voice(esp_timer_get_time()/1000);')
