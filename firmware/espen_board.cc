@@ -41,8 +41,13 @@ static constexpr const char* TAG = "EspenBoard";
 LV_FONT_DECLARE(font_noto_sans_basic_20_4);
 extern lv_font_t* EspenPolishFont();
 static const lv_font_t* EspenUiFont() {
-    static lv_font_t font = font_noto_sans_basic_20_4;
-    font.fallback = EspenPolishFont();
+    // The board's UI font has process lifetime, unlike theme fonts which
+    // are replaced when Xiaozhi loads the assets partition.
+    static const lv_font_t font = []() {
+        lv_font_t copy = font_noto_sans_basic_20_4;
+        copy.fallback = EspenPolishFont();
+        return copy;
+    }();
     return &font;
 }
 
@@ -758,6 +763,13 @@ class EspenDisplay : public LcdDisplay {
     }
     void StyleHome() {
         auto* screen = lv_screen_active();
+        // Base SetupUI initially binds the screen to the current theme's
+        // heap-owned font. Xiaozhi later replaces it in SetTextFont().
+        // Rebind the root BEFORE creating any descendants: even creating
+        // a label or clearing its scroll flag can measure inherited text.
+        lv_obj_set_style_text_font(screen, EspenUiFont(), 0);
+        lv_obj_set_style_text_font(container_, EspenUiFont(), 0);
+        lv_obj_set_style_text_font(content_, EspenUiFont(), 0);
         lv_obj_set_style_bg_color(screen, lv_color_black(), 0);
         lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
         lv_obj_set_style_bg_color(container_, lv_color_black(), 0);
@@ -803,6 +815,7 @@ class EspenDisplay : public LcdDisplay {
         }
         auto* row = lv_obj_create(content_);
         lv_obj_remove_style_all(row);
+        lv_obj_set_style_text_font(row, EspenUiFont(), 0);
         Passive(row);
         lv_obj_set_width(row, lv_pct(100));
         lv_obj_set_height(row, LV_SIZE_CONTENT);
@@ -813,12 +826,13 @@ class EspenDisplay : public LcdDisplay {
             LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
         auto* bubble = lv_obj_create(row);
         Solid(bubble, user ? 0x16465B : (system ? 0x202A32 : 0x17252F), 18);
+        lv_obj_set_style_text_font(bubble, EspenUiFont(), 0);
         lv_obj_set_style_pad_all(bubble, 12, 0);
         lv_obj_set_width(bubble, LV_SIZE_CONTENT);
         lv_obj_set_height(bubble, LV_SIZE_CONTENT);
         auto* label = lv_label_create(bubble);
-        Passive(label);
         lv_obj_set_style_text_font(label, EspenUiFont(), 0);
+        Passive(label);
         lv_obj_set_style_text_color(label, lv_color_hex(system ? 0xBCD1DC : 0xFFFFFF), 0);
         lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
         lv_label_set_text(label, message);
@@ -919,8 +933,21 @@ public:
     }
 
     void SetTheme(Theme* theme) override {
-        // Espen's home has a fixed black theme. Preserve upstream theme
-        // selection for assets and settings without restyling the home.
+        if (!theme) return;
+        // Called by upstream SetTextFont() while the previous font owners
+        // are still alive. The home deliberately retains its static font,
+        // but must never leave a style pointing at a soon-to-be-freed font.
+        DisplayLockGuard lock(this);
+        if (!lock) return;
+        if (button_added_) {
+            auto* screen = lv_screen_active();
+            lv_obj_set_style_text_font(screen, EspenUiFont(), 0);
+            lv_obj_set_style_text_font(container_, EspenUiFont(), 0);
+            lv_obj_set_style_text_font(content_, EspenUiFont(), 0);
+            ESP_LOGI(TAG, "UI: fixed home font retained across theme update");
+        }
+        // Preserve the user's theme selection without recoloring the
+        // explicitly black home.
         Display::SetTheme(theme);
     }
 
@@ -1046,7 +1073,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.1.20 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.1.22 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();
