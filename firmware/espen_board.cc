@@ -57,7 +57,17 @@ static const lv_font_t* EspenUiFont() {
 // Small audio feature meter: no raw audio retained, no LVGL calls from audio tasks.
 // 22-bit time, 2-bit mouth shape, 8-bit level, one atomic publication.
 static std::atomic<uint32_t> espen_playback_meter{0};
-static std::atomic<uint32_t> espen_ambient_ms{0};
+static std::atomic<uint32_t> espen_ambient_ms{0},espen_mic_meter{0};
+void EspenMicLevel(int rms) {
+    uint32_t level=static_cast<uint32_t>(std::clamp((rms-80)/12,0,100));
+    uint32_t now=static_cast<uint32_t>(esp_timer_get_time()/1000);
+    espen_mic_meter.store((level<<24)|(now&0xffffffu),std::memory_order_relaxed);
+}
+static int EspenMicMeter() {
+    uint32_t v=espen_mic_meter.load(std::memory_order_relaxed);
+    uint32_t now=static_cast<uint32_t>(esp_timer_get_time()/1000);
+    return ((now-(v&0xffffffu))&0xffffffu)<160?static_cast<int>(v>>24):0;
+}
 static std::atomic<bool> espen_network_error{false},espen_turn_waiting{false};
 void EspenTurnWaiting(bool waiting) {espen_turn_waiting.store(waiting,std::memory_order_relaxed);}
 static std::atomic<uint32_t> espen_local_wake_seq{0},espen_sleep_seq{0};
@@ -710,9 +720,13 @@ class EspenDisplay : public LcdDisplay {
     uint32_t seen_local_wake_=0,seen_sleep_=0;
     lv_obj_t* wake_indicator_=nullptr;
     lv_obj_t* speech_mode_label_=nullptr;
-    lv_obj_t* ear_[4]={};
+    lv_obj_t* waves_[5]={};
+    int wave_h_[5]={-1,-1,-1,-1,-1};
+    espen::ListeningLayout listening_layout_;
+    lv_obj_t* effect_icons_[3]={};
+    espen::PetEffect drawn_effect_=espen::PetEffect::None;
+    int effect_y_[3]={-1,-1,-1},effect_x_[3]={-1,-1,-1};
     bool auto_speech_=true;
-    int ear_pulse_=-1;
     std::string wake_indicator_text_;
     int touch_distance_=0;
     lv_point_t touch_prev_{};
@@ -793,7 +807,7 @@ class EspenDisplay : public LcdDisplay {
                     tap_count_=(last_tap_&&now-last_tap_<380)?tap_count_+1:1;
                     last_tap_=now;
                     lv_area_t a;lv_obj_get_coords(face_,&a);
-                    int x=touch_prev_.x-a.x1,y=touch_prev_.y-a.y1;
+                    int x=touch_prev_.x-a.x1-listening_layout_.shift,y=touch_prev_.y-a.y1;
                     if(tap_count_>=3){engine_.React(espen::Gesture::TripleTap,now);tap_count_=0;last_tap_=0;}
                     else if(tap_count_==2)engine_.React(espen::Gesture::DoubleTap,now);
                     else engine_.React(x>=155&&x<=230&&y>=125&&y<=185?
@@ -851,21 +865,17 @@ class EspenDisplay : public LcdDisplay {
             lv_obj_set_style_line_color(symbol,lv_color_hex(0xFF91C6),0);
             Hide(symbol,true);
         }
-        // Vector ear: static point arrays, no emoji glyph or bitmap.
-        static const lv_point_precise_t ear_outline[]={{5,28},{3,19},{4,12},{9,5},{17,2},{26,4},{32,11},{34,20},{31,29},{25,37},{23,45},{18,50},{12,49},{8,44},{8,38}};
-        static const lv_point_precise_t ear_inner[]={{2,17},{2,10},{6,4},{12,3},{17,7},{18,13},{15,19},{10,22},{9,28}};
-        static const lv_point_precise_t wave1[]={{1,2},{5,7},{6,13},{5,19},{1,24}};
-        static const lv_point_precise_t wave2[]={{1,2},{7,8},{10,17},{10,24},{7,33},{1,39}};
-        const lv_point_precise_t* points[]={ear_outline,ear_inner,wave1,wave2};
-        const uint32_t counts[]={15,9,5,6};
-        const int xs[]={314,323,354,365},ys[]={158,169,169,162};
-        for(int i=0;i<4;++i) {
-            ear_[i]=lv_line_create(face_);Passive(ear_[i]);
-            lv_line_set_points(ear_[i],points[i],counts[i]);
-            lv_obj_set_style_line_width(ear_[i],i<2?4:3,0);
-            lv_obj_set_style_line_rounded(ear_[i],true,0);
-            lv_obj_set_style_line_color(ear_[i],lv_color_hex(0x7CF6DA),0);
-            lv_obj_set_pos(ear_[i],xs[i],ys[i]);Hide(ear_[i],true);
+        // Large rounded audio bars driven by actual input PCM.
+        for(int i=0;i<5;++i) {
+            waves_[i]=lv_obj_create(face_);Solid(waves_[i],0x7CF6DA,7);
+            lv_obj_set_size(waves_[i],10,12);
+            lv_obj_set_pos(waves_[i],293+i*16,120);
+            Hide(waves_[i],true);
+        }
+        for(auto& icon:effect_icons_) {
+            icon=lv_line_create(face_);Passive(icon);
+            lv_obj_set_style_line_width(icon,3,0);
+            lv_obj_set_style_line_rounded(icon,true,0);Hide(icon,true);
         }
         // Six reusable vector particles. No per-frame heap allocation or
         // full-screen animation layer; dirty rectangles remain local.
@@ -928,20 +938,22 @@ class EspenDisplay : public LcdDisplay {
         if(loud)last_ambient_=ambient;
         auto f=engine_.Tick(now,phase,speech.level,speech.shape,loud);
         auto& p=f.pose;
-        // Ear means actual listening / opening a conversation, never TTS.
-        const bool show_ear=phase==Phase::Listening||phase==Phase::Wake;
-        const bool hearing=show_ear&&Application::GetInstance().GetAudioService().IsVoiceDetected();
-        int pulse=hearing?static_cast<int>((now/140)%3):0;
-        for(int i=0;i<4;++i) {
-            Hide(ear_[i],!show_ear);
-            if(show_ear&&i>=2&&pulse!=ear_pulse_) {
-                lv_opa_t opacity=(i==2?pulse>=1:pulse>=2)?LV_OPA_COVER:LV_OPA_40;
-                lv_obj_set_style_line_opa(ear_[i],opacity,0);
+        const bool listening=phase==Phase::Listening||phase==Phase::Wake;
+        listening_layout_.Tick(listening,EspenMicMeter(),now);
+        const int shift=listening_layout_.shift;
+        const int gaze_x=shift?std::clamp(f.gaze_x,-12,12):f.gaze_x;
+        for(int i=0;i<5;++i) {
+            const bool visible=listening&&shift<=-32;
+            Hide(waves_[i],!visible);
+            if(visible&&wave_h_[i]!=listening_layout_.heights[i]) {
+                int h=listening_layout_.heights[i];
+                lv_obj_set_size(waves_[i],10,h);
+                lv_obj_set_pos(waves_[i],293+i*16,132-h/2);
+                wave_h_[i]=h;
             }
         }
-        ear_pulse_=show_ear?pulse:-1;
         for(int i=0;i<2;++i) {
-            int cx=(i==0?111:273)+f.gaze_x;
+            int cx=(i==0?111:273)+gaze_x+shift;
             int h=i==0?f.eye_left:f.eye_right;
             Shape(i,cx-p.eye_w/2,104-h/2+f.gaze_y+f.bob,p.eye_w,h,i==0?p.tilt:-p.tilt);
             bool brow=!f.asleep&&(p.brow!=0||p.tilt!=0);
@@ -949,25 +961,25 @@ class EspenDisplay : public LcdDisplay {
             if(brow)Shape(5+i,cx-35,61+p.brow/2+f.gaze_y+f.bob,70,7,i==0?p.tilt:-p.tilt);
         }
         int my=210+f.bob;
-        Shape(2,192-p.mouth_w/2,my-p.mouth_h/2,p.mouth_w,p.mouth_h);
+        Shape(2,192+shift-p.mouth_w/2,my-p.mouth_h/2,p.mouth_w,p.mouth_h);
         for(int i=0;i<2;++i) {
             bool show=p.smile!=0&&phase!=Phase::Speaking;
             Hide(shapes_[3+i],!show);
             if(show) {
                 int h=std::max(6,std::abs(p.smile));
-                Shape(3+i,i==0?192-p.mouth_w/2:192+p.mouth_w/2-10,
+                Shape(3+i,192+shift+(i==0?-p.mouth_w/2:p.mouth_w/2-10),
                     p.smile>0?my-h+4:my-2,10,h);
             }
             bool blush=p.accent==Accent::Blush;
             Hide(shapes_[7+i],!blush);
-            if(blush)Shape(7+i,i==0?51:294,155+f.bob,36,13);
+            if(blush)Shape(7+i,(i==0?51:294)+shift,155+f.bob,36,13);
         }
         Hide(shapes_[9],p.accent!=Accent::Tear);
-        if(p.accent==Accent::Tear)Shape(9,304,139+static_cast<int>((now/150)%12),12,20);
+        if(p.accent==Accent::Tear)Shape(9,304+shift,139+static_cast<int>((now/150)%12),12,20);
         for(int i=0;i<3;++i) {
             bool show=p.accent==Accent::Dots;
             Hide(shapes_[10+i],!show);
-            if(show) {int h=(now/250)%3==static_cast<uint32_t>(i)?13:7;Shape(10+i,164+i*25,251-h/2, h,h);}
+            if(show) {int h=(now/250)%3==static_cast<uint32_t>(i)?13:7;Shape(10+i,164+shift+i*25,251-h/2, h,h);}
         }
         // Static line point arrays outlive LVGL objects (no dangling points).
         static const lv_point_precise_t heart[]={{2,13},{4,5},{12,2},{20,9},{28,2},{36,5},{38,13},{20,32},{2,13}};
@@ -981,7 +993,7 @@ class EspenDisplay : public LcdDisplay {
                 lv_obj_set_style_line_color(symbols_[i],lv_color_hex(0x09141D),0);
             }
             if(show) {
-                int x=(i==0?111:273)+f.gaze_x-20,y=104+f.gaze_y+f.bob-17;
+                int x=(i==0?111:273)+gaze_x+shift-20,y=104+f.gaze_y+f.bob-17;
                 if(x!=symbol_x_[i]||y!=symbol_y_[i]) {lv_obj_set_pos(symbols_[i],x,y);symbol_x_[i]=x;symbol_y_[i]=y;}
             }
         }
@@ -1006,6 +1018,28 @@ class EspenDisplay : public LcdDisplay {
                 heart_opa_[i]=h.opacity;
             }
         }
+        // Original vector badges, reused in place.
+        static const lv_point_precise_t flower[]={{14,13},{8,8},{8,3},{14,1},{19,4},{19,9},{25,7},{30,11},{29,17},{23,20},{24,26},{19,30},{14,26},{10,30},{4,26},{5,20},{1,16},{2,10},{8,8},{14,13},{19,9}};
+        static const lv_point_precise_t flame[]={{15,1},{17,9},{24,14},{28,23},{25,30},{19,34},{9,34},{3,29},{1,22},{6,16},{8,23},{14,16},{15,1}};
+        using espen::PetEffect;
+        bool fire=f.effect==PetEffect::Flame||f.effect==PetEffect::Volcano;
+        int count=f.effect==PetEffect::None?0:(f.effect==PetEffect::Bouquet||f.effect==PetEffect::Volcano?3:1);
+        for(int i=0;i<3;++i) {
+            Hide(effect_icons_[i],i>=count);
+            if(i>=count)continue;
+            if(drawn_effect_!=f.effect) {
+                lv_line_set_points(effect_icons_[i],fire?flame:flower,fire?13:21);
+                lv_obj_set_style_line_color(effect_icons_[i],lv_color_hex(fire?0xFF8759:0xFFD487),0);
+                effect_y_[i]=-1;
+            }
+            int y=9+static_cast<int>((f.effect_age/80+i*3)%9);
+            int x=176+shift+(i==0?0:i==1?-40:40);
+            if(y!=effect_y_[i]||x!=effect_x_[i]) {
+                lv_obj_set_pos(effect_icons_[i],x,y);
+                effect_x_[i]=x;effect_y_[i]=y;
+            }
+        }
+        drawn_effect_=f.effect;
         last_accent_=p.accent;
     }
     void StyleHome() {
@@ -1328,7 +1362,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.1.33 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.1.34 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();

@@ -49,15 +49,19 @@ replace("main/audio/codecs/es8311_audio_codec.cc",
         static int count = 0;
         static int peak = 0;
         int block_peak = 0;
+        int64_t block_sq = 0;
         for (int i = 0; i < samples; ++i) {
             const int v = dest[i];
             const int a = v < 0 ? -v : v;
             if (a > peak) peak = a;
             if (a > block_peak) block_peak = a;
             sum_sq += static_cast<int64_t>(v) * v;
+            block_sq += static_cast<int64_t>(v) * v;
         }
         extern void EspenAmbientPeak(int);
         EspenAmbientPeak(block_peak);
+        extern void EspenMicLevel(int);
+        if(samples>0) EspenMicLevel(static_cast<int>(std::sqrt(static_cast<double>(block_sq)/samples)));
         count += samples;
         const int64_t now = esp_timer_get_time();
         if (now - last >= 1000000 && count > 0) {
