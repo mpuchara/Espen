@@ -761,7 +761,7 @@ class EspenDisplay : public LcdDisplay {
     }
     void BuildFace() {
         Settings cfg("espen_ui",false);
-        engine_.SetPersona(static_cast<espen::Persona>(std::clamp(cfg.GetInt("persona",0),0,5)));
+        engine_.SetPersona(static_cast<espen::Persona>(std::clamp<int32_t>(cfg.GetInt("persona",0),0,static_cast<int32_t>(espen::Persona::Count)-1)));
         face_=lv_obj_create(container_);Solid(face_,0x09141D,36);
         lv_obj_set_size(face_,384,294);
         lv_obj_set_style_border_color(face_,lv_color_hex(0x233D4B),0);
@@ -1179,7 +1179,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.1.27 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.1.28 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();
