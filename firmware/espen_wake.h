@@ -3,6 +3,7 @@
 #include <esp_log.h>
 #include <nvs.h>
 #include <mutex>
+#include <chrono>
 #include <string>
 
 class EspenWakeEngine {
@@ -13,8 +14,14 @@ class EspenWakeEngine {
     espen_wake::Extractor extractor_;
     bool loaded_=false, trained_=false, running_=false, learning_=false, recording_=false;
     int count_=0, waited_=0, used_=0, voiced_=0, quiet_=0, start_=0, pos_=0, pre_count_=0, pre_pos_=0;
-    float noise_=35.f;
+    float noise_=35.f, last_rms_=0.f;
+    uint64_t armed_at_=0,last_frame_at_=0,last_health_log_=0;
+    uint32_t frames_received_=0,zero_frames_=0,candidates_=0;
     int noise_frames_=0, blocked_quiet_=0;
+    static uint64_t NowMs() {
+        return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
+    }
     bool blocked_=false;
     std::array<int16_t,espen_wake::kSamples> pcm_{};
     std::array<Feature,espen_wake::kMaxFrames> segment_{};
@@ -53,12 +60,25 @@ class EspenWakeEngine {
     std::string Frame() {
         double energy=0;for(auto x:pcm_)energy+=double(x)*x;
         float rms=std::sqrt(energy/pcm_.size());
-        // Learn the quiet room floor before enrollment, even with no profile.
-        // Keep the first 200 ms after opening the microphone out of detection.
+        last_rms_=rms; last_frame_at_=NowMs(); ++frames_received_;
+        zero_frames_=rms<1.f?std::min<uint32_t>(zero_frames_+1,10000):0;
+        if(last_frame_at_-last_health_log_>=5000) {
+            last_health_log_=last_frame_at_;
+            ESP_LOGI(TAG,"Wake PCM: frames=%lu rms=%d noise=%d gate=%d candidates=%lu trained=%d",
+                static_cast<unsigned long>(frames_received_),static_cast<int>(rms),
+                static_cast<int>(noise_),static_cast<int>(std::max(45.f,noise_*2.6f)),
+                static_cast<unsigned long>(candidates_),trained_);
+        }
+        // Use the quietest early frame, not the mean of a boot sound.
+        // Rapid downward adaptation prevents a loud startup from permanently
+        // putting a quiet user's voice below the gate.
         if(noise_frames_<10 && !recording_){
-            noise_=std::clamp((noise_*noise_frames_+rms)/(noise_frames_+1),10.f,1500.f);
+            float v=std::clamp(rms,10.f,1500.f);
+            noise_=noise_frames_==0?v:std::min(noise_,v);
             ++noise_frames_;return {};
         }
+        if(!recording_ && rms<noise_ && used_==0)
+            noise_=std::clamp(.80f*noise_+.20f*rms,10.f,1500.f);
         if((learning_&&!recording_)||(!learning_&&!trained_)){
             if(rms<noise_*2.6f)noise_=std::clamp(.97f*noise_+.03f*rms,10.f,1500.f);
             return {};
@@ -94,6 +114,7 @@ class EspenWakeEngine {
         std::string result;
         if(recording_)FinishRecording(example);
         else if(trained_ && n>=15 && voiced_>=10){
+            ++candidates_;
             float score=0;bool hit=espen_wake::Match(active_,example,&score);
             ESP_LOGI(TAG,"Keyword candidate frames=%d score=%.3f threshold=%.3f match=%d",n,score,active_.threshold,hit);
             if(hit)result=active_.name;
@@ -101,9 +122,20 @@ class EspenWakeEngine {
         ResetSegment();return result;
     }
 public:
-    struct Snapshot {bool trained, running, recording;int count;std::string name,message;};
+    struct Snapshot {
+        bool trained,running,recording;int count;std::string name,message;
+        bool receiving,signal;uint32_t frames;uint64_t armed_ms;int rms,noise,gate;
+    };
     void Load(){std::lock_guard<std::mutex> l(mutex_);LoadLocked();}
-    Snapshot Get(){std::lock_guard<std::mutex> l(mutex_);LoadLocked();return {trained_,running_,recording_,count_,trained_?active_.name:"Hej Ala",message_};}
+    Snapshot Get(){
+        std::lock_guard<std::mutex> l(mutex_);LoadLocked();
+        auto now=NowMs();
+        bool receiving=running_&&frames_received_>0&&now-last_frame_at_<1000;
+        return {trained_,running_,recording_,count_,trained_?active_.name:"Hej Ala",message_,
+            receiving,receiving&&zero_frames_<50,frames_received_,running_?now-armed_at_:0,
+            static_cast<int>(last_rms_),static_cast<int>(noise_),
+            static_cast<int>(std::max(45.f,noise_*2.6f))};
+    }
     void SetRunning(bool on){
         std::lock_guard<std::mutex> l(mutex_);LoadLocked();
         if (on == running_) {
@@ -112,7 +144,10 @@ public:
         running_ = on;
         ESP_LOGI(TAG,"Local detector %s; trained=%d",on?"armed":"paused",trained_);
         ResetSegment();
-        if(on){noise_frames_=0;noise_=35.f;}
+        if(on){
+            noise_frames_=0;noise_=35.f;last_rms_=0;frames_received_=zero_frames_=candidates_=0;
+            armed_at_=last_health_log_=NowMs();last_frame_at_=0;
+        }
         if(!on&&recording_){recording_=false;message_="Nagranie przerwane. Wróć do trybu oczekiwania.";}
     }
     void Begin(){std::lock_guard<std::mutex> l(mutex_);LoadLocked();learning_=true;recording_=false;count_=0;pending_=Profile{};ResetSegment();message_="Naciśnij Nagraj, powiedz frazę i zrób przerwę.";}

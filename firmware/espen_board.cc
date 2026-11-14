@@ -462,7 +462,10 @@ class EspenDisplay : public LcdDisplay {
         auto s=EspenWake().Get();
         if(wake_indicator_) {
             std::string status=!s.trained?"Naucz hasło w ustawieniach":
-                s.running?"Nasłuch: "+s.name:"Hasło zapisane: "+s.name;
+                !s.running?"Hasło zapisane: "+s.name:
+                !s.receiving?"Uruchamiam mikrofon...":
+                !s.signal?"Mikrofon: brak sygnału":
+                "Nasłuch: "+s.name;
             if(status!=wake_indicator_text_) {
                 wake_indicator_text_=status;
                 lv_label_set_text(wake_indicator_,status.c_str());
@@ -470,7 +473,10 @@ class EspenDisplay : public LcdDisplay {
         }
         if(wake_footer_) lv_label_set_text(wake_footer_,s.trained?"Hasło głosowe":"Naucz hasło");
         if(!wake_panel_||lv_obj_has_flag(wake_panel_,LV_OBJ_FLAG_HIDDEN))return;
-        lv_label_set_text_fmt(wake_state_,"%d/3 | %s\n%s",s.count,s.running?"Mikrofon gotowy":"Oczekiwanie na tryb gotowości",s.message.c_str());
+        const char* mic=!s.running?"Oczekiwanie na gotowość":
+            !s.receiving?"Uruchamiam mikrofon":!s.signal?"Brak sygnału":"Mikrofon gotowy";
+        lv_label_set_text_fmt(wake_state_,"%d/3 | %s\nRMS %d / próg %d\n%s",
+            s.count,mic,s.rms,s.gate,s.message.c_str());
     }
     void CloseWake() {
         EspenWake().Cancel();
@@ -1214,7 +1220,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.1.29 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.1.30 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();

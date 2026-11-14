@@ -377,39 +377,6 @@ replace("main/display/lcd_display.cc", "#define MAX_MESSAGES 40", "#define MAX_M
 # phonetic spelling. Keep the existing AFE and cloud conversation pipeline.
 for name in ("wake_features.h", "espen_wake.h"):
     shutil.copyfile(root / "firmware" / name, up / "main/audio" / name)
-replace("main/audio/engines/afe_audio_engine.h",
-        "        kMultiNet,",
-        "        kMultiNet,\n        kEspen,")
-replace("main/audio/engines/afe_audio_engine.cc",
-        '#include "afe_audio_engine.h"',
-        '#include "afe_audio_engine.h"\n#include "../espen_wake.h"')
-engine = up / "main/audio/engines/afe_audio_engine.cc"
-src = engine.read_text()
-a = src.index("    char* wakenet_model_name = nullptr;")
-b = src.index("    const bool needs_afe", a)
-src = src[:a] + '    wake_detector_ = WakeDetector::kEspen;\n    EspenWake().Load();\n\n' + src[b:]
-engine.write_text(src)
-replace("main/audio/engines/afe_audio_engine.cc",
-        '    // WakeNet enable/disable on the AFE instance',
-        '    if (wake_detector_ == WakeDetector::kEspen) EspenWake().SetRunning(enable);\n\n'
-        '    // WakeNet enable/disable on the AFE instance')
-replace("main/audio/engines/afe_audio_engine.cc",
-        'void AfeAudioEngine::HandleWakeWordResult(const afe_fetch_result_t* result) {',
-        'void AfeAudioEngine::HandleWakeWordResult(const afe_fetch_result_t* result) {\n'
-        '    if (wake_detector_ == WakeDetector::kEspen) {\n'
-        '        auto hit = EspenWake().Feed(result->data, result->data_size / sizeof(int16_t));\n'
-        '        if (!hit.empty()) {\n'
-        '            last_detected_wake_word_ = hit;\n'
-        '            EspenWake().SetRunning(false);\n'
-        '            xEventGroupClearBits(event_group_, kWakeWordEnabled);\n'
-        '            UpdateActiveState();\n'
-        '            if (wake_word_detected_callback_) wake_word_detected_callback_(hit);\n'
-        '        }\n'
-        '        return;\n'
-        '    }')
-replace("main/audio/engines/afe_audio_engine.cc",
-        '(wake_detector_ == WakeDetector::kMultiNet ? "MultiNet" : "none")',
-        '(wake_detector_ == WakeDetector::kEspen ? "Espen local templates" : "none")')
 replace("main/application.cc",
         '#include "application.h"',
         '#include "application.h"\n#include "audio/espen_wake.h"')
@@ -436,10 +403,8 @@ src = src.replace("audio_service_.EnableWakeWordDetection(audio_service_.IsAfeWa
                   "audio_service_.EnableWakeWordDetection(false);")
 app.write_text(src)
 
-# Espen standby policy: use the already-trained local detector independently
-# of Xiaozhi readiness. Apply local assets before arming the AFE, exactly once,
-# so its model list is never freed/replaced while it is active. A pending
-# remote assets download is deliberately completed before arming.
+# Local wake does not need AFE, assets, Wi-Fi or protocol initialization.
+# Arm after the input task and callbacks are installed, before starting Wi-Fi.
 shutil.copyfile(root / "firmware/conversation_timeout.h", up / "main/conversation_timeout.h")
 replace("main/application.h", '#include "audio_service.h"',
         '#include "audio_service.h"\n#include "conversation_timeout.h"')
@@ -450,24 +415,11 @@ replace("main/application.h", '    bool assets_version_checked_ = false;',
         '    void EspenEnsureWake();\n'
         '    void EspenCheckSilence();')
 replace("main/application.cc",
-        '    // Update the status bar immediately to show the network state\n    display->UpdateStatusBar(true);\n}',
-        '    // Apply the installed assets only after the audio service and Wi-Fi\n'
-        '    // hardware are initialized. No network connection is required.\n'
+        '    audio_service_.SetCallbacks(callbacks);',
+        '    audio_service_.SetCallbacks(callbacks);\n'
         '    EspenWake().Load();\n'
-        '    Settings espen_assets("assets", false);\n'
-        '    if (espen_assets.GetString("download_url").empty()) {\n'
-        '        CheckAssetsVersion();\n'
-        '        espen_wake_ready_ = true;\n'
-        '        EspenEnsureWake();\n'
-        '    }\n'
-        '    // Update the status bar immediately to show the network state\n    display->UpdateStatusBar(true);\n}')
-replace("main/application.cc",
-        '    CheckAssetsVersion();\n\n    // Check for new firmware version',
-        '    CheckAssetsVersion();\n'
-        '    // If a deferred assets download was necessary, arm from the main\n'
-        '    // task only after applying the final model list.\n'
-        '    Schedule([this]() { espen_wake_ready_ = true; EspenEnsureWake(); });\n\n'
-        '    // Check for new firmware version')
+        '    espen_wake_ready_ = true;\n'
+        '    EspenEnsureWake();')
 replace("main/application.cc",
         '        auto bits = xEventGroupWaitBits(event_group_, ALL_EVENTS, pdTRUE, pdFALSE, portMAX_DELAY);',
         '        auto bits = xEventGroupWaitBits(event_group_, ALL_EVENTS, pdTRUE, pdFALSE, pdMS_TO_TICKS(100));')
@@ -486,11 +438,20 @@ replace("main/application.cc",
         'void Application::EspenEnsureWake() {\n'
         '    if (!espen_wake_ready_) return;\n'
         '    const auto state = GetDeviceState();\n'
-        '    const bool allowed = state == kDeviceStateStarting || state == kDeviceStateActivating || state == kDeviceStateIdle;\n'
-        '    if (!allowed) return;\n'
+        '    const bool allowed = state == kDeviceStateStarting || state == kDeviceStateActivating ||\n'
+        '                         state == kDeviceStateIdle || state == kDeviceStateWifiConfiguring;\n'
+        '    if (!allowed) {\n'
+        '        if (audio_service_.IsWakeWordRunning()) audio_service_.EnableWakeWordDetection(false);\n'
+        '        return;\n'
+        '    }\n'
         '    if (!audio_service_.IsPlaybackIdle()) {\n'
         '        if (audio_service_.IsWakeWordRunning()) audio_service_.EnableWakeWordDetection(false);\n'
         '        return; // no self-trigger from TTS/alerts\n'
+        '    }\n'
+        '    auto health = EspenWake().Get();\n'
+        '    if (health.running && !health.receiving && health.armed_ms >= 2000 && !health.recording) {\n'
+        '        ESP_LOGW(TAG, "Espen wake: no PCM for 2 s, rearming");\n'
+        '        audio_service_.EnableWakeWordDetection(false);\n'
         '    }\n'
         '    if (!audio_service_.IsWakeWordRunning() || !EspenWake().Get().running) {\n'
         '        audio_service_.EnableWakeWordDetection(true);\n'
@@ -512,7 +473,7 @@ replace("main/application.cc",
         '}\n'
         'void Application::HandleWakeWordDetectedEvent() {\n'
         '    auto state = GetDeviceState();\n'
-        '    if (state == kDeviceStateStarting || state == kDeviceStateActivating) {\n'
+        '    if (state == kDeviceStateStarting || state == kDeviceStateActivating || state == kDeviceStateWifiConfiguring) {\n'
         '        // Recognize locally even while the cloud is unavailable. Do\n'
         '        // not interrupt activation or touch its protocol pointer.\n'
         '        EspenLocalWakePulse();\n'
@@ -569,3 +530,114 @@ replace("main/audio/audio_service.cc",
         'void AudioService::EnableVoiceProcessing(bool enable) {',
         'void AudioService::EnableVoiceProcessing(bool enable) {\n'
         '    if (!enable) voice_detected_.store(false);')
+
+# Espen wake-only audio path. Use the same mono 16 kHz resampled PCM that
+# would enter the AFE (no AEC/NS/AGC on this board). The AFE is created only
+# for active voice processing, so a blocked AFE fetch cannot disable wake.
+replace("main/audio/audio_service.cc", '#include "audio_service.h"',
+        '#include "audio_service.h"\n#include "espen_wake.h"')
+replace("main/audio/audio_service.h",
+        '    const std::string& GetLastWakeWord() const;',
+        '    std::string GetLastWakeWord() const;')
+replace("main/audio/audio_service.h",
+        '    bool audio_engine_initialized_ = false;',
+        '    bool audio_engine_initialized_ = false;\n'
+        '    mutable std::mutex espen_wake_mutex_;\n'
+        '    std::string espen_last_wake_;\n'
+        '    std::atomic<uint32_t> espen_wake_generation_{0};')
+replace("main/audio/audio_service.cc",
+        'const std::string& AudioService::GetLastWakeWord() const {\n'
+        '    static const std::string empty;\n'
+        '    return audio_engine_ ? audio_engine_->GetLastDetectedWakeWord() : empty;\n}',
+        'std::string AudioService::GetLastWakeWord() const {\n'
+        '    std::lock_guard<std::mutex> lock(espen_wake_mutex_);\n'
+        '    return espen_last_wake_;\n}')
+p = up / "main/audio/audio_service.cc"
+src = p.read_text()
+a = src.index("void AudioService::EnableWakeWordDetection(bool enable) {")
+b = src.index("void AudioService::ReleaseWakeWordResources()", a)
+src = src[:a] + """void AudioService::EnableWakeWordDetection(bool enable) {
+    std::lock_guard<std::mutex> lock(espen_wake_mutex_);
+    const bool was = (xEventGroupGetBits(event_group_) & AS_EVENT_WAKE_WORD_RUNNING) != 0;
+    if (enable == was && EspenWake().Get().running == enable) return;
+    espen_wake_generation_.fetch_add(1);
+    if (enable) {
+        if (!codec_ || service_stopped_.load()) return;
+        EspenWake().SetRunning(true);
+        xEventGroupSetBits(event_group_, AS_EVENT_WAKE_WORD_RUNNING);
+        ESP_LOGI(TAG, "Espen local wake: direct mono PCM 16k enabled");
+    } else {
+        xEventGroupClearBits(event_group_, AS_EVENT_WAKE_WORD_RUNNING);
+        EspenWake().SetRunning(false);
+    }
+}
+
+""" + src[b:]
+p.write_text(src)
+replace("main/audio/audio_service.cc",
+        'bool AudioService::IsAfeWakeWord() {\n    return audio_engine_initialized_ && audio_engine_->IsAfeWakeWord();\n}',
+        'bool AudioService::IsAfeWakeWord() { return false; }')
+replace("main/audio/audio_service.cc",
+        '                                                  AS_EVENT_AUDIO_PROCESSOR_RUNNING;\n\n    while (true) {',
+        '                                                  AS_EVENT_AUDIO_PROCESSOR_RUNNING;\n'
+        '    unsigned espen_read_failures = 0;\n\n    while (true) {')
+replace("main/audio/audio_service.cc",
+        '        /* Feed the selected audio engine */\n'
+        '        if (bits & (AS_EVENT_WAKE_WORD_RUNNING | AS_EVENT_AUDIO_PROCESSOR_RUNNING)) {\n'
+        '            int samples = 160;  // 10ms\n'
+        '            std::vector<int16_t> data;\n'
+        '            if (ReadAudioData(data, 16000, samples)) {\n'
+        '                audio_engine_->Feed(std::move(data));\n'
+        '                continue;\n'
+        '            }\n'
+        '        }',
+        """        // Direct local wake consumes resampled PCM from the same input
+        // task; no AFE fetch, cloud channel or second microphone owner.
+        if (bits & (AS_EVENT_WAKE_WORD_RUNNING | AS_EVENT_AUDIO_PROCESSOR_RUNNING)) {
+            const uint32_t generation = espen_wake_generation_.load();
+            std::vector<int16_t> data;
+            if (ReadAudioData(data, 16000, 160) && !data.empty()) {
+                espen_read_failures = 0;
+                {
+                    std::lock_guard<std::mutex> lock(espen_wake_mutex_);
+                    EventBits_t current = xEventGroupGetBits(event_group_);
+                    if (generation == espen_wake_generation_.load() &&
+                        (current & AS_EVENT_WAKE_WORD_RUNNING) &&
+                        !(current & (AS_EVENT_AUDIO_PROCESSOR_RUNNING | AS_EVENT_AUDIO_TESTING_RUNNING))) {
+                        // ES8311 is mono. Do not send standby audio to the network.
+                        if (IsPlaybackIdle()) {
+                            auto hit = EspenWake().Feed(data.data(), data.size());
+                            if (!hit.empty()) {
+                                espen_last_wake_ = std::move(hit);
+                                EspenWake().SetRunning(false);
+                                xEventGroupClearBits(event_group_, AS_EVENT_WAKE_WORD_RUNNING);
+                                espen_wake_generation_.fetch_add(1);
+                                if (callbacks_.on_wake_word_detected)
+                                    callbacks_.on_wake_word_detected(espen_last_wake_);
+                            }
+                        }
+                    }
+                }
+                if (xEventGroupGetBits(event_group_) & AS_EVENT_AUDIO_PROCESSOR_RUNNING)
+                    audio_engine_->Feed(std::move(data));
+                continue;
+            }
+            // Recover repeated codec read errors in the input task itself;
+            // never close the codec during TTS or a live conversation.
+            if (++espen_read_failures >= 50) {
+                espen_read_failures = 0;
+                EventBits_t current = xEventGroupGetBits(event_group_);
+                if ((current & AS_EVENT_WAKE_WORD_RUNNING) &&
+                    !(current & AS_EVENT_AUDIO_PROCESSOR_RUNNING) && IsPlaybackIdle()) {
+                    ESP_LOGW(TAG, "Espen local wake: restarting input after repeated read failures");
+                    codec_->EnableInput(false);
+                }
+            }
+        }""")
+# Drop wake before voice processing starts, even if app events are coalesced.
+replace("main/audio/audio_service.cc",
+        '    if (!enable) voice_detected_.store(false);\n'
+        '    ESP_LOGD(TAG, "%s voice processing", enable ? "Enabling" : "Disabling");',
+        '    if (!enable) voice_detected_.store(false);\n'
+        '    if (enable) EnableWakeWordDetection(false);\n'
+        '    ESP_LOGD(TAG, "%s voice processing", enable ? "Enabling" : "Disabling");')

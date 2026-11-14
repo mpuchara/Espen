@@ -36,14 +36,28 @@ int main() {
     rebooted.Load();
     assert(rebooted.Get().trained && rebooted.Get().name=="Hej Ala");
     rebooted.SetRunning(true);
-    assert(rebooted.Get().running);
-    for(int i=0;i<15;++i) rebooted.Feed(silence.data(),silence.size());
+    assert(rebooted.Get().running && !rebooted.Get().receiving);
+    // A loud startup must not lock out the keyword after ambient quiet.
+    for(int i=0;i<10;++i) rebooted.Feed(speech.data(),speech.size());
+    for(int i=0;i<30;++i) rebooted.Feed(silence.data(),silence.size());
+    assert(rebooted.Get().receiving && rebooted.Get().gate<100);
+    // Use the actual input-task block size (10 ms at 16 kHz).
     std::string hit;
-    for(int i=0;i<25;++i) rebooted.Feed(speech.data(),speech.size());
+    for(int i=0;i<25;++i) {
+        rebooted.Feed(speech.data(),160);
+        rebooted.Feed(speech.data()+160,160);
+    }
     for(int i=0;i<15;++i) {
         auto r=rebooted.Feed(silence.data(),silence.size());if(!r.empty())hit=r;
     }
     assert(hit=="Hej Ala");
+    assert(rebooted.Get().receiving);
+    rebooted.SetRunning(false);
+    assert(!rebooted.Get().receiving);
+    rebooted.SetRunning(true);
+    assert(!rebooted.Get().receiving);
+    for(int i=0;i<60;++i) rebooted.Feed(silence.data(),silence.size());
+    assert(rebooted.Get().receiving && !rebooted.Get().signal);
     nvs_committed[0]=0;
     EspenWakeEngine corrupt;
     assert(!corrupt.Get().trained);
