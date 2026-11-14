@@ -227,3 +227,52 @@ replace("main/application.cc",
         '                continue;\n'
         '            }\n'
         '            EspenCloudInfo("Serwer nie wymaga kodu; konfiguruję rozmowę", "");')
+
+# Replace the activation loop as a single unit, keeping the pinned upstream
+# OTA HTTP implementation, response parser and protocol classes.
+app = up / "main/application.cc"
+src = app.read_text()
+start = src.index("void Application::CheckNewVersion() {")
+end = src.index("void Application::InitializeProtocol() {", start)
+app.write_text(src[:start] + (root / "firmware/activation_flow.inc").read_text() + "\n" + src[end:])
+
+# Use the actual HTTP interface from pinned esp-ml307 v3.7.6. This is a
+# per-operation timeout, not a guarantee of total DNS/TLS wall-clock time.
+replace("main/ota.cc",
+        '    auto http = network->CreateHttp(0);\n    auto user_agent = SystemInfo::GetUserAgent();',
+        '    auto http = network->CreateHttp(0);\n'
+        '    http->SetTimeout(10000);\n'
+        '    http->SetKeepAlive(false);\n'
+        '    auto user_agent = SystemInfo::GetUserAgent();')
+# Decide which protocol is usable from this response, not from stale NVS.
+# Do not reject real MQTT because an unused WebSocket is a test account.
+replace("main/ota.cc",
+        '        has_mqtt_config_ = true;',
+        '        auto endpoint = cJSON_GetObjectItem(mqtt, "endpoint");\n'
+        '        has_mqtt_config_ = cJSON_IsString(endpoint) && endpoint->valuestring[0] &&\n'
+        '            cJSON_IsString(client) && client->valuestring[0] &&\n'
+        '            strncmp(client->valuestring, "GID_test@@@", 11) != 0;')
+replace("main/ota.cc",
+        '        has_websocket_config_ = true;',
+        '        auto ws_url = cJSON_GetObjectItem(websocket, "url");\n'
+        '        has_websocket_config_ = cJSON_IsString(ws_url) && ws_url->valuestring[0] &&\n'
+        '            (!cJSON_IsString(token) || strcmp(token->valuestring, "test-token") != 0);')
+replace("main/ota.cc",
+        '    ESP_LOGI(TAG, "Activation payload: %s", json.c_str());',
+        '    ESP_LOGI(TAG, "Activation payload prepared");')
+replace("main/ota.cc",
+        '        ESP_LOGE(TAG, "Failed to activate, code: %d, body: %s", *status_code, http->ReadAll().c_str());',
+        '        ESP_LOGE(TAG, "Failed to activate, HTTP status: %d", *status_code);')
+replace("main/ota.cc",
+        '    ESP_LOGI(TAG, "Activation successful");',
+        '    http->Close();\n    ESP_LOGI(TAG, "Activation successful");')
+# Distinguish activation from the actual chat transport, including the
+# WebSocket protocol which only connects when the first conversation starts.
+replace("main/application.cc",
+        '    protocol_->Start();\n}',
+        '    const bool ws = !ota_->HasMqttConfig() && ota_->HasWebsocketConfig();\n'
+        '    if (!protocol_->Start()) {\n'
+        '        EspenCloudInfo("Sparowano, ale połączenie rozmowy nie powiodło się. Spróbuj Mów.", "");\n'
+        '    } else if (ws) {\n'
+        '        EspenCloudInfo("Sparowano. Naciśnij Mów, aby połączyć WebSocket.", "");\n'
+        '    }\n}')

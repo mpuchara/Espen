@@ -1,6 +1,6 @@
 # Espen — polski asystent głosowy na ESP32-P4
 
-Pierwszy port [Xiaozhi ESP32](https://github.com/78/xiaozhi-esp32) v2.5.2 dla GUITION JC4880P443C_I_W(_Y), z ekranem ST7701S 480×800, GT911, mikrofonem ES8311 i Wi-Fi przez ESP32-C6. Niezależny od Home-Buddy. Wersja 0.1.8 jest eksperymentalna; wymaga testu na sprzęcie.
+Pierwszy port [Xiaozhi ESP32](https://github.com/78/xiaozhi-esp32) v2.5.2 dla GUITION JC4880P443C_I_W(_Y), z ekranem ST7701S 480×800, GT911, mikrofonem ES8311 i Wi-Fi przez ESP32-C6. Niezależny od Home-Buddy. Wersja 0.1.9 jest eksperymentalna; wymaga testu na sprzęcie.
 
 ## Instalacja
 [Instalator Espen](https://mpuchara.github.io/Espen/) — Chrome/Edge na komputerze, kabel USB z danymi. Wybierz Install i port **P4**, nie C6. Jeśli potrzebne, przytrzymaj BOOT podczas resetu i ponów połączenie. Pierwsza instalacja zastępuje poprzedni firmware i może skasować konfigurację; wykonaj kopię. Instalator obsługuje tylko wariant P4 rev1 (16 MB flash) tej konkretnej płytki, nie inne P4.
@@ -47,3 +47,6 @@ Dedykowany przycisk Xiaozhi w głównym pasku, automatyczne otwarcie panelu po o
 
 ## 0.1.8 — identyfikacja urządzenia i konto testowe
 OTA używa zweryfikowanego MAC stacji C6; ekran Xiaozhi pokazuje dokładny Device-ID wysłany do serwera. Brak prawidłowego MAC powoduje ponowienie zamiast wysyłania niezainicjalizowanych bajtów. Odpowiedź serwera z GID_test@@@ lub test-token bez aktywacji jest osobnym stanem: Espen nie uznaje jej za sparowanie i sprawdza ponownie co 30 s. Zobacz https://github.com/78/xiaozhi-esp32/issues/1785 — autor wskazuje procedurę odwiązania urządzenia https://my.feishu.cn/wiki/IJmWwu841isfAWkz1dEcrJjznof. Nie zmieniamy MAC/UUID ani nie generujemy kodu lokalnie. Wymagany log z fizycznego urządzenia, aby stwierdzić, czy serwer rzeczywiście zwraca tryb testowy.
+
+## 0.1.9 — przejście z parowania do rozmowy
+Po dodaniu urządzenia w konsoli odświeżamy konfigurację OTA co cykl zamiast dziesięciu prób /activate na tym samym challenge. Uznajemy aktywację po świeżej odpowiedzi z użyteczną konfiguracją i bez wymogu parowania albo po potwierdzeniu /activate i pobraniu użytecznej konfiguracji. Code-only jest obsługiwany przez odpytywanie OTA. MQTT/WS testowe nie blokują prawidłowego drugiego protokołu. Ustawiono timeout HTTP 10 s na operację, bez keep-alive, oraz osobne komunikaty stanu i bezpieczne logi bez payloadu aktywacyjnego. Nie zmieniamy identyfikatora, NVS, Wi-Fi ani głośnika. W portalu można wyłączyć OTA; Espen i tak nie instaluje zdalnego firmware. Test na fizycznym urządzeniu nadal konieczny.
