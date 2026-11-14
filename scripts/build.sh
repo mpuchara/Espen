@@ -7,6 +7,8 @@ c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_wake_features.cc -o /tmp/esp
 /tmp/espen-wake-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread -Itests/stubs tests/test_wake_engine.cc -o /tmp/espen-wake-engine-test
 /tmp/espen-wake-engine-test
+c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_face_engine.cc -o /tmp/espen-face-test
+/tmp/espen-face-test
 ref=49b4380b3faa0ceadd28a3e78aaf0f311c46c57e
 if [ ! -d upstream/.git ]; then
   git clone --depth 1 --branch v2.5.2 https://github.com/78/xiaozhi-esp32.git upstream

@@ -10,7 +10,8 @@ board = up / "main/boards/guition/espen-guition-jc4880p443"
 board.mkdir(parents=True, exist_ok=True)
 for src, dst in [("config.h","config.h"),("config.json","config.json"),
                  ("espen_board.cc","espen_board.cc"),
-                 ("board_p4_st7701_init.h","board_p4_st7701_init.h")]:
+                 ("board_p4_st7701_init.h","board_p4_st7701_init.h"),
+                 ("face_engine.h","face_engine.h"),("dirty_rect.h","dirty_rect.h")]:
     shutil.copyfile(root / "firmware" / src, board / dst)
 
 def replace(path, old, new):
@@ -46,12 +47,16 @@ replace("main/audio/codecs/es8311_audio_codec.cc",
         static int64_t sum_sq = 0;
         static int count = 0;
         static int peak = 0;
+        int block_peak = 0;
         for (int i = 0; i < samples; ++i) {
             const int v = dest[i];
             const int a = v < 0 ? -v : v;
             if (a > peak) peak = a;
+            if (a > block_peak) block_peak = a;
             sum_sq += static_cast<int64_t>(v) * v;
         }
+        extern void EspenAmbientPeak(int);
+        EspenAmbientPeak(block_peak);
         count += samples;
         const int64_t now = esp_timer_get_time();
         if (now - last >= 1000000 && count > 0) {
