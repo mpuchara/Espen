@@ -82,7 +82,8 @@ struct Frame {
     Pose pose{};
     int eye_left=44,eye_right=44,gaze_x=0,gaze_y=0,bob=0;
     bool asleep=false,hearts=false;
-    uint32_t heart_age=0;
+    uint32_t heart_age=0,effect_age=0;
+    PetEffect effect=PetEffect::None;
     Mood mood=Mood::Neutral;
 };
 class FaceEngine {
@@ -92,7 +93,8 @@ class FaceEngine {
     bool celebrating_=false,local_waking_=false,force_sleep_=false;
     bool wake_anim_=false;
     Social social_=Social::None;
-    uint32_t social_at_=0,social_until_=0;
+    uint32_t social_at_=0,social_until_=0,last_startle_=0;
+    Affinity affinity_;
     bool initialized_=false, blink_active_=false, double_blink_=false, second_blink_=false;
     bool gesture_active_=false, micro_active_=false, touch_=false;
     int target_x_=0,target_y_=0, touch_x_=0,touch_y_=0;
@@ -131,11 +133,13 @@ public:
     }
     void SocialReact(Social reaction,uint32_t now) {
         if(reaction==Social::None)return;
+        affinity_.Record(reaction,now);
         // Sustained petting extends the effect without restarting each frame.
         if(social_!=reaction||Due(now,social_until_))social_at_=now;
         social_=reaction;gesture_active_=false;
         social_until_=now+(reaction==Social::Affection?3200:
-            reaction==Social::Celebration?2400:reaction==Social::Tickle?1700:2600);
+            reaction==Social::Celebration?2400:reaction==Social::Tickle?1700:
+            reaction==Social::Comfort?4200:reaction==Social::Annoyed?3000:2600);
         force_sleep_=false;
         if(phase_==Phase::Idle||phase_==Phase::Offline||phase_==Phase::Startup)ResetIdle(now);
     }
@@ -179,8 +183,11 @@ public:
         bool dance=celebrating_&&quiet;
         uint32_t idle=quiet?now-idle_since_:0;
         bool asleep=quiet && (force_sleep_||idle>=kSleepMs) && !touch_ && !gesture_active_ && social_==Social::None && !dance && !local_waking_;
-        if(loud && phase==Phase::Idle && !asleep && !gesture_active_) {
-            gesture_=Mood::Surprise; gesture_active_=true; gesture_until_=now+750;
+        if(loud && quiet && !touch_ && !gesture_active_ && social_==Social::None &&
+           !dance && !local_waking_ && (!last_startle_||now-last_startle_>=3500)) {
+            last_startle_=now;gesture_=Mood::Surprise;gesture_active_=true;gesture_until_=now+1100;
+            if(asleep){wake_anim_=true;wake_anim_at_=now;}
+            asleep=false;force_sleep_=false;ResetIdle(now);
         }
         if(phase==Phase::Idle && !gesture_active_ && !asleep && Due(now,next_micro_)) {
             if(idle>=120000) micro_=Mood::Sleepy;
@@ -215,6 +222,9 @@ public:
                 case Social::Tickle:mood=Mood::Laugh;break;
                 case Social::Boop:mood=Mood::Shy;break;
                 case Social::Goodnight:mood=Mood::Sleepy;break;
+                case Social::Comfort:mood=Mood::Love;break;
+                case Social::Apology:mood=Mood::Happy;break;
+                case Social::Annoyed:mood=Mood::Angry;break;
                 default:break;
             }
         }
@@ -224,6 +234,14 @@ public:
         // interrupt ongoing speech or listening.
         if(social_==Social::Goodnight && phase==Phase::Speaking) {
             p.eye_h=20;p.accent=Accent::None;
+        }
+        if(social_==Social::Comfort) {
+            if(now-social_at_<650) {p=Expression(Mood::Sad);p.accent=Accent::None;p.color=0x83ACFF;}
+            else {p.eye_h=39;p.smile=19;p.color=0xFFB8D4;}
+        }
+        if(social_==Social::Annoyed) {
+            p.tilt=18;p.brow=23;
+            if(now-social_at_>1600){p.eye_h=32;p.tilt=9;}
         }
         if(phase==Phase::Listening && mood==Mood::Neutral) {p.eye_h=54;p.color=0x7CF6DA;}
         if(phase==Phase::Wake) {p.eye_h=58;p.mouth_w=111;}
@@ -263,6 +281,8 @@ public:
         if(mood==Mood::Thinking) {gx=17;gy=-12;}
         if(mood==Mood::Shy) {gx=-20;gy=7;}
         if(mood==Mood::Confused) {gx=12;gy=-4;}
+        if(social_==Social::Comfort){gx=0;gy=4;}
+        if(social_==Social::Annoyed&&now-social_at_>650)gx=-16;
         if(dance||social_==Social::Celebration) {
             uint32_t t=now-(social_==Social::Celebration?social_at_:celebrate_at_);
             int swing=static_cast<int>((t/35)%32);
@@ -309,9 +329,11 @@ public:
         else if(asleep) bob=static_cast<int>((now/250)%6)-3;
         else if(phase==Phase::Listening) bob=static_cast<int>((now/220)%4)-2;
         else if(mood==Mood::Fear) bob=static_cast<int>((now/60)%5)-2;
+        else if(social_==Social::Annoyed&&now-social_at_<650) bob=static_cast<int>((now/65)%7)-3;
         f.bob=Approach(f.bob,bob,std::max(1,speed));f.mood=mood;f.asleep=asleep;
-        f.hearts=social_==Social::Affection;
+        f.hearts=social_==Social::Affection||(social_==Social::Comfort&&now-social_at_>=650);
         f.heart_age=f.hearts?(now-social_at_)%1950:0;
+        f.effect=affinity_.Effect(now);f.effect_age=affinity_.Age(now);
         return f;
     }
 };

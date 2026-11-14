@@ -1,12 +1,13 @@
 #pragma once
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <string>
 #include <string_view>
 
 namespace espen {
-enum class Social { None, Praise, Affection, Thanks, Greeting, Celebration, Goodnight, Boop, Tickle };
+enum class Social { None, Praise, Affection, Thanks, Greeting, Celebration, Goodnight, Boop, Tickle, Comfort, Apology, Annoyed };
 // Deliberately conservative local phrase matching, on user STT only.
 // Fold Polish diacritics, case and punctuation; match whole words.
 inline std::string FoldSpeech(std::string_view text) {
@@ -43,17 +44,27 @@ inline Social ClassifySocial(std::string_view text) {
     };
     // Avoid reacting happily to negated compliments or quoted/question-like
     // examples. Not a general sentiment model.
-    if(has("nie")||has("nienawidze")||has("not")||has("powiedz")||
-       has("co znaczy")||has("co oznacza")||has("jak powiedziec")||
+    if(has("powiedz")||has("co znaczy")||has("co oznacza")||has("jak powiedziec")||
        has("przetlumacz")||has("cytat")||has("czy"))return Social::None;
+    for(auto p:{"jest mi smutno","jestem smutny","jestem smutna","jestem chory","jestem chora",
+                "jestem zmeczony","jestem zmeczona","jest mi zle","mam zly dzien",
+                "jestem zly","jestem zla","zle sie czuje","nie czuje sie dobrze"})
+        if(has(p))return Social::Comfort;
+    if(has("przepraszam")||has("wybacz mi")||has("sorry"))return Social::Apology;
+    for(auto p:{"nie lubie cie","jestes glupi","jestes glupia","jestes okropna","jestes okropny",
+                "jestes wredna","jestes wredny","nienawidze cie","ale jestes nudna","ale jestes nudny"})
+        if(has(p))return Social::Annoyed;
+    if(has("nie")||has("nienawidze")||has("not"))return Social::None;
     for(auto p:{"kocham cie","lubie cie","uwielbiam cie","jestes kochana","jestes kochany",
                 "jestes slodka","jestes slodki","jestes urocza","jestes uroczy","jestes cudowna",
-                "jestes cudowny","tesknilem za toba","tesknilam za toba","love you"})
+                "jestes cudowny","tesknilem za toba","tesknilam za toba","love you",
+                "przytul mnie","daj mi przytulasa","chce sie przytulic","przytulam cie","buziak"})
         if(has(p))return Social::Affection;
     for(auto p:{"jestes super","jestes swietna","jestes swietny","jestes wspaniala","jestes wspanialy",
                 "jestes najlepsza","jestes najlepszy","dobra robota","swietna robota","dobrze ci idzie",
                 "ladnie wygladasz","piekna buzia","ale jestes fajna","ale jestes fajny",
-                "jestes fajna","jestes fajny","jestes madra","jestes madry","super robota","well done"})
+                "jestes fajna","jestes fajny","jestes madra","jestes madry","super robota","well done",
+                "jestes naprawde swietna","jestes naprawde swietny","jestes niesamowita","jestes niesamowity"})
         if(has(p))return Social::Praise;
     if(has("brawo")||has("gratuluje")||has("przybij piatke")||has("high five"))return Social::Celebration;
     if(has("dziekuje")||has("dzieki")||has("thank you"))return Social::Thanks;
@@ -102,4 +113,51 @@ inline HeartParticle HeartAt(uint32_t age,int i,int origin_x,int origin_y) {
     int opacity=t<180?t*255/180:std::min(255,(life-t)*255/350);
     return {std::clamp(x,5,354),std::clamp(y,5,235),opacity,true};
 }
+struct ListeningLayout {
+    int shift=0,level=0;
+    std::array<int,5> heights{12,19,26,19,12};
+    void Tick(bool listening,int mic,uint32_t now) {
+        int target=listening?-42:0;
+        shift=shift<target?std::min(shift+8,target):std::max(shift-8,target);
+        int want=listening?std::clamp(mic,0,100):0;
+        level=level<want?std::min(level+24,want):std::max(level-12,want);
+        constexpr int base[]={12,19,26,19,12},weight[]={45,77,100,77,45};
+        for(int i=0;i<5;++i) {
+            int t=static_cast<int>((now/65+i*3)%16);
+            int wave=(t<8?t:16-t)-4;
+            heights[i]=std::clamp(base[i]+level*weight[i]/100+wave*level/80,8,126);
+        }
+    }
+};
+enum class PetEffect { None, Flower, Bouquet, Flame, Volcano };
+class Affinity {
+    uint32_t last_=0,positive_at_=0,negative_at_=0;
+    int positive_=0,negative_=0;
+    bool seen_=false;
+    PetEffect effect_=PetEffect::None;
+public:
+    void Record(Social r,uint32_t now) {
+        bool good=r==Social::Affection||r==Social::Praise||r==Social::Thanks||r==Social::Greeting;
+        bool bad=r==Social::Annoyed;
+        if(r==Social::Apology){negative_=0;effect_=PetEffect::None;return;}
+        if(!good&&!bad)return;
+        if(seen_&&now-last_<1800)return;
+        seen_=true;last_=now;
+        if(good) {
+            if(now-positive_at_>60000)positive_=0;
+            positive_at_=now;negative_=0;
+            if(++positive_>=3){effect_=PetEffect::Bouquet;positive_=0;}
+            else effect_=PetEffect::Flower;
+        } else {
+            if(now-negative_at_>60000)negative_=0;
+            negative_at_=now;positive_=0;
+            if(++negative_>=3){effect_=PetEffect::Volcano;negative_=0;}
+            else effect_=PetEffect::Flame;
+        }
+    }
+    PetEffect Effect(uint32_t now) const {
+        return seen_&&now-last_<2600?effect_:PetEffect::None;
+    }
+    uint32_t Age(uint32_t now) const{return now-last_;}
+};
 }
