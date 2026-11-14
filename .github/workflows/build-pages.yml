@@ -2,11 +2,13 @@ name: Espen firmware and installer
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: espen-pages
+  group: espen-pages-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'main' }}
   cancel-in-progress: true
 jobs:
   build:
@@ -42,10 +44,12 @@ jobs:
             upstream/dependencies.lock
           if-no-files-found: error
       - name: Upload Pages
+        if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3
         with:
           path: dist
   deploy:
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     permissions:

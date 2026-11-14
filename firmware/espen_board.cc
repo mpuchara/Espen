@@ -28,6 +28,9 @@
 #include <ssid_manager.h>
 #include <wifi_manager.h>
 #include <cstring>
+#include <algorithm>
+#include <atomic>
+#include <esp_timer.h>
 #include <mutex>
 #include <string>
 #include "settings.h"
@@ -41,6 +44,31 @@ static const lv_font_t* EspenUiFont() {
     static lv_font_t font = font_noto_sans_basic_20_4;
     font.fallback = EspenPolishFont();
     return &font;
+}
+
+// Audio output task publishes only a level and timestamp; no PCM is retained.
+// 24-bit millisecond timestamp wraps safely (~4.6 h); the upper eight bits
+// carry the amplitude. A single atomic avoids inconsistent level/time reads.
+static std::atomic<uint32_t> espen_playback_meter{0};
+void EspenPlaybackLevel(const int16_t* pcm, size_t count) {
+    if (!pcm || count == 0) return;
+    uint32_t sum = 0, samples = 0;
+    for (size_t i = 0; i < count; i += 4) {
+        const int v = pcm[i];
+        sum += static_cast<uint32_t>(v < 0 ? -v : v);
+        ++samples;
+    }
+    const uint32_t level = std::min<uint32_t>(255, (sum / samples) / 24);
+    const uint32_t ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
+    espen_playback_meter.store((level << 24) | (ms & 0xffffffu), std::memory_order_relaxed);
+}
+
+static int EspenSpeechLevel() {
+    const uint32_t meter = espen_playback_meter.load(std::memory_order_relaxed);
+    const uint32_t ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
+    if (((ms - (meter & 0xffffffu)) & 0xffffffu) <= 180)
+        return static_cast<int>(meter >> 24);
+    return 0;
 }
 
 // Activation info is shared by the Xiaozhi worker and the LVGL task.
@@ -454,7 +482,7 @@ class EspenDisplay : public LcdDisplay {
             lv_obj_set_style_pad_row(settings_, 8, 0);
             lv_obj_set_flex_flow(settings_, LV_FLEX_FLOW_COLUMN);
             auto* title = lv_label_create(settings_);
-            lv_label_set_text(title, "ESPEN / Ustawienia Wi-Fi");
+            lv_label_set_text(title, "ESPEN / Ustawienia");
             settings_status_ = lv_label_create(settings_);
             lv_obj_set_width(settings_status_, lv_pct(100));
             lv_label_set_long_mode(settings_status_, LV_LABEL_LONG_WRAP);
@@ -548,7 +576,265 @@ class EspenDisplay : public LcdDisplay {
         lv_obj_move_foreground(settings_);
     }
 
+    // Face widgets have a fixed layout; the chat is a separate scrollable
+    // sibling. The LVGL timer is the sole writer of animated geometry.
+    enum class Mood { Neutral, Happy, Sad, Surprise, Thinking, Angry, Sleepy };
+    std::atomic<Mood> mood_{Mood::Neutral};
+    lv_obj_t* face_ = nullptr;
+    lv_obj_t* eyes_[2] = {};
+    lv_obj_t* mouth_ = nullptr;
+    lv_obj_t* corners_[2] = {};
+    lv_timer_t* face_timer_ = nullptr;
+    uint32_t next_blink_ = 0, blink_start_ = 0, next_look_ = 0, idle_since_ = 0;
+    uint32_t rng_ = 0x45a9b3e1u;
+    bool blinking_ = false;
+    bool idle_tracking_ = false;
+    int gaze_x_ = 0, gaze_y_ = 0, target_x_ = 0, target_y_ = 0;
+    int eye_h_[2] = {44, 44}, mouth_h_ = 8, mouth_w_ = 88;
+    uint32_t face_color_ = 0x63E6FF;
     bool button_added_ = false;
+
+    static bool Due(uint32_t now, uint32_t deadline) {
+        return static_cast<int32_t>(now - deadline) >= 0;
+    }
+    uint32_t Random(uint32_t limit) {
+        rng_ ^= rng_ << 13; rng_ ^= rng_ >> 17; rng_ ^= rng_ << 5;
+        return rng_ % limit;
+    }
+    static int Approach(int value, int target, int step) {
+        if (value < target) return std::min(value + step, target);
+        return std::max(value - step, target);
+    }
+    struct Geometry { int x = -1, y = -1, w = -1, h = -1; };
+    Geometry geometry_[5];
+    void Shape(lv_obj_t* obj, int slot, int x, int y, int w, int h) {
+        auto& old = geometry_[slot];
+        if (old.w != w || old.h != h) lv_obj_set_size(obj, w, h);
+        if (old.x != x || old.y != y) lv_obj_set_pos(obj, x, y);
+        old = {x, y, w, h};
+    }
+    static void Passive(lv_obj_t* obj) {
+        lv_obj_clear_flag(obj, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_clear_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
+    }
+    static void Solid(lv_obj_t* obj, uint32_t rgb, int radius) {
+        lv_obj_remove_style_all(obj);
+        lv_obj_set_style_bg_color(obj, lv_color_hex(rgb), 0);
+        lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(obj, radius, 0);
+        Passive(obj);
+    }
+    static void Hide(lv_obj_t* obj, bool hide) {
+        if (hide == lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN)) return;
+        if (hide) lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_clear_flag(obj, LV_OBJ_FLAG_HIDDEN);
+    }
+    bool OverlayVisible() const {
+        for (auto* panel : {settings_, wake_panel_, cloud_}) {
+            if (panel && !lv_obj_has_flag(panel, LV_OBJ_FLAG_HIDDEN)) return true;
+        }
+        return false;
+    }
+    void SettingsGesture(lv_obj_t* obj) {
+        lv_obj_add_flag(obj, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(obj, [](lv_event_t* e) {
+            auto* self = static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+            if (!self->OverlayVisible()) self->OpenSettings();
+        }, LV_EVENT_LONG_PRESSED, this);
+    }
+    void BuildFace() {
+        face_ = lv_obj_create(container_);
+        Solid(face_, 0x09141D, 36);
+        lv_obj_set_size(face_, 384, 294);
+        lv_obj_set_style_border_color(face_, lv_color_hex(0x233D4B), 0);
+        lv_obj_set_style_border_width(face_, 2, 0);
+        lv_obj_set_style_margin_top(face_, 8, 0);
+        lv_obj_set_style_margin_bottom(face_, 8, 0);
+        lv_obj_move_to_index(face_, 1);
+        for (auto& eye : eyes_) {
+            eye = lv_obj_create(face_);
+            Solid(eye, 0x63E6FF, 20);
+        }
+        mouth_ = lv_obj_create(face_);
+        Solid(mouth_, 0x63E6FF, 20);
+        for (auto& corner : corners_) {
+            corner = lv_obj_create(face_);
+            Solid(corner, 0x63E6FF, 5);
+        }
+        SettingsGesture(face_);
+        const uint32_t now = lv_tick_get();
+        next_blink_ = now + 2400;
+        next_look_ = now + 1500;
+        TickFace();
+        // Native full-frame display: cap redraw frequency to about 15 fps.
+        face_timer_ = lv_timer_create([](lv_timer_t* timer) {
+            static_cast<EspenDisplay*>(lv_timer_get_user_data(timer))->TickFace();
+        }, 65, this);
+    }
+    void TickFace() {
+        if (!face_ || OverlayVisible()) return;
+        const uint32_t now = lv_tick_get();
+        const auto state = Application::GetInstance().GetDeviceState();
+        const bool talking = state == kDeviceStateSpeaking;
+        const bool listening = state == kDeviceStateListening;
+        const bool idle = state == kDeviceStateIdle;
+        if (idle && !idle_tracking_) { idle_since_ = now; idle_tracking_ = true; }
+        if (!idle) idle_tracking_ = false;
+        Mood mood = mood_.load(std::memory_order_relaxed);
+        if (idle && now - idle_since_ > 45000 && mood == Mood::Neutral) mood = Mood::Sleepy;
+        if (state == kDeviceStateConnecting && mood == Mood::Neutral) mood = Mood::Thinking;
+
+        if (Due(now, next_blink_) && !blinking_) {
+            blinking_ = true;
+            blink_start_ = now;
+        }
+        int blink = 100;
+        if (blinking_) {
+            const uint32_t t = now - blink_start_;
+            if (t < 65) blink = 100 - static_cast<int>(t * 95 / 65);
+            else if (t < 130) blink = 5;
+            else if (t < 260) blink = 5 + static_cast<int>((t - 130) * 95 / 130);
+            else { blinking_ = false; next_blink_ = now + 2500 + Random(3500); }
+        }
+        if (Due(now, next_look_)) {
+            target_x_ = static_cast<int>(Random(35)) - 17;
+            target_y_ = static_cast<int>(Random(15)) - 7;
+            next_look_ = now + 1600 + Random(3000);
+        }
+        if (listening || talking) { target_x_ = 0; target_y_ = 0; }
+        if (mood == Mood::Thinking && !talking && !listening) { target_x_ = 17; target_y_ = -8; }
+        gaze_x_ = Approach(gaze_x_, target_x_, 3);
+        gaze_y_ = Approach(gaze_y_, target_y_, 2);
+
+        int base_h = listening ? 54 : 44;
+        int eye_w = 76;
+        int mouth_width = 88, mouth_height = 8;
+        uint32_t color = 0x63E6FF;
+        switch (mood) {
+            case Mood::Happy: base_h = 30; mouth_width = 112; color = 0x7CF6DA; break;
+            case Mood::Sad: base_h = 30; mouth_width = 66; color = 0x83ACFF; break;
+            case Mood::Surprise: base_h = 65; eye_w = 63; mouth_width = 37; mouth_height = 37; break;
+            case Mood::Thinking: base_h = 38; mouth_width = 60; break;
+            case Mood::Angry: base_h = 25; mouth_width = 77; color = 0xFF907B; break;
+            case Mood::Sleepy: base_h = 12; mouth_width = 65; color = 0x74A7BD; break;
+            case Mood::Neutral: break;
+        }
+        if (listening && mood == Mood::Neutral) color = 0x7CF6DA;
+        // Mouth envelope follows actual speaker PCM, not the text or a
+        // perpetual talking loop. During pauses it returns to a closed pose.
+        if (talking) {
+            const int level = EspenSpeechLevel();
+            mouth_width = 88 + level / 8;
+            mouth_height = level < 5 ? 8 : std::min(62, 9 + level / 4);
+        }
+        mouth_h_ = Approach(mouth_h_, mouth_height, 18);
+        mouth_w_ = Approach(mouth_w_, mouth_width, 10);
+        for (int i = 0; i < 2; ++i) {
+            const int eye_target = std::max(4, base_h * blink / 100);
+            eye_h_[i] = Approach(eye_h_[i], eye_target, 32);
+            const int center_x = i == 0 ? 111 : 273;
+            Shape(eyes_[i], i, center_x - eye_w / 2 + gaze_x_,
+                  104 - eye_h_[i] / 2 + gaze_y_, eye_w, eye_h_[i]);
+        }
+        Shape(mouth_, 2, 192 - mouth_w_ / 2, 210 - mouth_h_ / 2, mouth_w_, mouth_h_);
+        // A smile/frown is built from the center bar and two curved ends.
+        const bool show_corners = !talking && (mood == Mood::Happy || mood == Mood::Sad ||
+            mood == Mood::Neutral);
+        for (int i = 0; i < 2; ++i) {
+            Hide(corners_[i], !show_corners);
+            if (show_corners) {
+                const int x = i == 0 ? 192 - mouth_w_ / 2 : 192 + mouth_w_ / 2 - 10;
+                const int h = mood == Mood::Happy ? 22 : 14;
+                Shape(corners_[i], 3 + i, x, mood == Mood::Sad ? 208 : 210 - h + 4, 10, h);
+            }
+        }
+        // Avoid invalidating a full framebuffer on unchanged colors.
+        if (color != face_color_) {
+            face_color_ = color;
+            for (auto* eye : eyes_) lv_obj_set_style_bg_color(eye, lv_color_hex(color), 0);
+            lv_obj_set_style_bg_color(mouth_, lv_color_hex(color), 0);
+            for (auto* corner : corners_) lv_obj_set_style_bg_color(corner, lv_color_hex(color), 0);
+        }
+    }
+    void StyleHome() {
+        auto* screen = lv_screen_active();
+        lv_obj_set_style_bg_color(screen, lv_color_black(), 0);
+        lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(container_, lv_color_black(), 0);
+        lv_obj_set_style_bg_opa(container_, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_image_src(container_, nullptr, 0);
+        lv_obj_clear_flag(container_, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_flex_align(container_, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_bg_color(top_bar_, lv_color_black(), 0);
+        lv_obj_set_style_bg_opa(top_bar_, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(content_, lv_color_black(), 0);
+        lv_obj_set_style_bg_opa(content_, LV_OPA_COVER, 0);
+        lv_obj_set_style_pad_all(content_, 12, 0);
+        lv_obj_set_style_pad_row(content_, 10, 0);
+        lv_obj_set_scrollbar_mode(content_, LV_SCROLLBAR_MODE_ACTIVE);
+        lv_obj_set_scroll_dir(content_, LV_DIR_VER);
+        lv_obj_set_flex_align(content_, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+        for (auto* label : {status_label_, notification_label_, network_label_, mute_label_, battery_label_})
+            lv_obj_set_style_text_color(label, lv_color_hex(0xB5C8D3), 0);
+        lv_obj_set_style_text_font(status_label_, EspenUiFont(), 0);
+        lv_obj_set_style_text_font(notification_label_, EspenUiFont(), 0);
+        Hide(emoji_label_, true);
+        Hide(emoji_image_, true);
+    }
+    static constexpr uint32_t kHistoryLimit = 80;
+    void AddBubble(const char* role, const char* message) {
+        const bool user = strcmp(role, "user") == 0;
+        const bool system = strcmp(role, "system") == 0;
+        uint32_t n = lv_obj_get_child_cnt(content_);
+        // Empty system updates may dismiss only the latest system notice.
+        if (system && n > 0) {
+            auto* last = lv_obj_get_child(content_, n - 1);
+            if (lv_obj_get_user_data(last) == static_cast<const void*>(kSystemRole)) {
+                lv_obj_delete(last);
+                --n;
+            }
+        }
+        if (!*message) return;
+        lv_obj_update_layout(content_);
+        const bool follow = lv_obj_get_scroll_bottom(content_) <= 30;
+        while (n >= kHistoryLimit) {
+            lv_obj_delete(lv_obj_get_child(content_, 0));
+            --n;
+        }
+        auto* row = lv_obj_create(content_);
+        lv_obj_remove_style_all(row);
+        Passive(row);
+        lv_obj_set_width(row, lv_pct(100));
+        lv_obj_set_height(row, LV_SIZE_CONTENT);
+        if (system) lv_obj_set_user_data(row, const_cast<char*>(kSystemRole));
+        lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(row, user ? LV_FLEX_ALIGN_END :
+            (system ? LV_FLEX_ALIGN_CENTER : LV_FLEX_ALIGN_START),
+            LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        auto* bubble = lv_obj_create(row);
+        Solid(bubble, user ? 0x16465B : (system ? 0x202A32 : 0x17252F), 18);
+        lv_obj_set_style_pad_all(bubble, 12, 0);
+        lv_obj_set_width(bubble, LV_SIZE_CONTENT);
+        lv_obj_set_height(bubble, LV_SIZE_CONTENT);
+        auto* label = lv_label_create(bubble);
+        Passive(label);
+        lv_obj_set_style_text_font(label, EspenUiFont(), 0);
+        lv_obj_set_style_text_color(label, lv_color_hex(system ? 0xBCD1DC : 0xFFFFFF), 0);
+        lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+        lv_label_set_text(label, message);
+        lv_obj_set_width(label, LV_SIZE_CONTENT);
+        lv_obj_update_layout(label);
+        const int width = std::min(352, std::max(20, static_cast<int>(lv_obj_get_width(label))));
+        lv_obj_set_width(label, width);
+        lv_obj_set_width(bubble, width + 24);
+        if (follow) {
+            lv_obj_update_layout(content_);
+            lv_obj_scroll_to_y(content_, lv_obj_get_scroll_y(content_) +
+                lv_obj_get_scroll_bottom(content_), LV_ANIM_OFF);
+        }
+    }
+    static constexpr const char* kSystemRole = "system";
+
 public:
     EspenDisplay(esp_lcd_panel_io_handle_t io, esp_lcd_panel_handle_t panel)
         : LcdDisplay(io, panel, DISPLAY_WIDTH, DISPLAY_HEIGHT) {
@@ -583,32 +869,16 @@ public:
         ESP_LOGI(TAG, "LCD: native LVGL display registered");
     }
     void SetupUI() override {
-        LcdDisplay::SetupUI();
         if (button_added_) return;
+        LcdDisplay::SetupUI();
         if (!lvgl_port_lock(1000)) return;
         if (auto* screen = lv_screen_active()) {
-            // Put controls in a flex footer, not over the conversation.
-            auto* footer = lv_obj_create(container_ ? container_ : screen);
-            lv_obj_set_size(footer, DISPLAY_WIDTH, 70);
-            lv_obj_set_flex_flow(footer, LV_FLEX_FLOW_ROW);
-            lv_obj_set_flex_align(footer, LV_FLEX_ALIGN_SPACE_EVENLY,
-                                  LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-            lv_obj_set_style_pad_all(footer, 4, 0);
-            lv_obj_set_style_border_width(footer, 0, 0);
-            lv_obj_set_style_radius(footer, 0, 0);
-            if (!container_) lv_obj_align(footer, LV_ALIGN_BOTTOM_MID, 0, 0);
-            auto* wake_button = MakeButton(footer, "Naucz hasło", [](lv_event_t* e) {
-                static_cast<EspenDisplay*>(lv_event_get_user_data(e))->OpenWake();
-            }, this, 156);
-            wake_footer_ = lv_obj_get_child(wake_button,0);
-            lv_obj_set_style_text_font(wake_footer_,EspenUiFont(),0);
-            RefreshWake();
-            MakeButton(footer, "Xiaozhi", [](lv_event_t* e) {
-                static_cast<EspenDisplay*>(lv_event_get_user_data(e))->OpenCloud();
-            }, this, 136);
-            MakeButton(footer, "Ustawienia", [](lv_event_t* e) {
-                static_cast<EspenDisplay*>(lv_event_get_user_data(e))->OpenSettings();
-            }, this, 150);
+            StyleHome();
+            BuildFace();
+            SettingsGesture(screen);
+            SettingsGesture(top_bar_);
+            SettingsGesture(status_bar_);
+            SettingsGesture(content_);
             cloud_timer_ = lv_timer_create([](lv_timer_t* timer) {
                 static_cast<EspenDisplay*>(lv_timer_get_user_data(timer))->TickCloud();
             }, 1000, this);
@@ -616,6 +886,44 @@ public:
         }
         lvgl_port_unlock();
     }
+
+    void SetEmotion(const char* emotion) override {
+        Mood mood = Mood::Neutral;
+        if (emotion) {
+            const std::string e(emotion);
+            if (e == "happy" || e == "laughing" || e == "funny" || e == "loving" ||
+                e == "kissy" || e == "confident" || e == "winking" || e == "cool" ||
+                e == "delicious" || e == "relaxed") mood = Mood::Happy;
+            else if (e == "sad" || e == "crying" || e == "embarrassed") mood = Mood::Sad;
+            else if (e == "surprised" || e == "surprise" || e == "shocked" ||
+                e == "silly") mood = Mood::Surprise;
+            else if (e == "thinking" || e == "confused" || e == "curious") mood = Mood::Thinking;
+            else if (e == "angry" || e == "annoyed") mood = Mood::Angry;
+            else if (e == "sleepy" || e == "tired" || e == "sleeping") mood = Mood::Sleepy;
+        }
+        mood_.store(mood, std::memory_order_relaxed);
+    }
+
+    void SetChatMessage(const char* role, const char* message) override {
+        if (!role || !message || !button_added_) return;
+        if (!lvgl_port_lock(1000)) return;
+        AddBubble(role, message);
+        lvgl_port_unlock();
+    }
+
+    void ClearChatMessages() override {
+        if (!button_added_ || !lvgl_port_lock(1000)) return;
+        lv_obj_clean(content_);
+        chat_message_label_ = nullptr;
+        lvgl_port_unlock();
+    }
+
+    void SetTheme(Theme* theme) override {
+        // Espen's home has a fixed black theme. Preserve upstream theme
+        // selection for assets and settings without restyling the home.
+        Display::SetTheme(theme);
+    }
+
 };
 
 class EspenBoard : public WifiBoard {

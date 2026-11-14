@@ -88,3 +88,10 @@ Testy hostowe w `tests/test_wake_features.cc` sprawdzają DTW, kalibrację, odrz
 
 ## 0.1.20 — poprawka kompilacji uczenia hasła
 Build 0.1.19 przeszedł testy syntetyczne cech i DTW, ale GCC ESP-IDF odrzucił dwie instrukcje w espen_wake.h (LoadLocked i SetRunning) z powodu -Werror=misleading-indentation. Rozdzielono instrukcje i dodano klamry, bez zmiany algorytmu. Testy hostowe kompilowane teraz z -Wall -Wextra -Werror, dodatkowy test kompiluje cały EspenWakeEngine z atrapami ESP-IDF i sprawdza podstawowe stany uczenia, anulowanie oraz odrzucenie zapisu bez próbek. Atrapy nie testują rzeczywistego NVS ani mikrofonu. Wi-Fi, SDIO, parowanie i dane pozostają bez zmian.
+
+## 0.1.21 — animowana twarz i rozmowa
+Nowy czarny ekran 480 × 800: nieruchomy panel twarzy u góry, przewijana historia do 80 dymków poniżej, odpowiedzi po lewej, użytkownik po prawej. Nie przeskakujemy na koniec, gdy użytkownik czyta starsze wiadomości. Przytrzymanie ekranu otwiera istniejące ustawienia; gest przewijania nie powinien uruchamiać menu. Zachowano polską czcionkę, ustawienia Wi-Fi, Xiaozhi, naukę hasła i ręczny tryb Mów/Stop. Brak przycisków w stopce.
+
+Mimika LVGL: neutralna, radosna, smutna, zaskoczona, myśląca, zła i senna; mapowanie zdarzeń llm.emotion, losowe mruganie, płynne ruchy oczu, półprzymknięcie oczu po 45 s bezczynności. Podczas wypowiedzi usta reagują na amplitudę rzeczywistego PCM przekazywanego do kodeka, nie na losową animację. Przerwy wyciszają usta; to animacja obwiedni audio, nie pełne odwzorowanie fonemów. Aktualizacja maks. ~15 klatek/s, bez zmiany istniejącego transportu LCD, Wi-Fi, parowania, NVS i wake-word.
+
+Testy sprzętowe: wybudzenie, polska rozmowa, emocje z Xiaozhi, ruch ust przy mowie i ciszy, przewinięcie historii bez skoku po nowej wiadomości, długie przytrzymanie twarzy i czatu, powrót z ustawień, 10 minut rozmowy bez utraty audio lub zamrożenia LCD. Historia nadal tylko w RAM, restart ją czyści. CI dla PR buduje firmware bez publikowania do Pages; wymagany udany build i fizyczny test przed wdrożeniem.

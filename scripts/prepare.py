@@ -20,6 +20,14 @@ def replace(path, old, new):
         raise RuntimeError(f"Unexpected upstream source: {path}: {old[:80]}")
     p.write_text(data.replace(old, new, 1))
 
+# Pass only the current speaker PCM envelope to the face animator.
+# The audio task never touches LVGL and the overlay is applied to the pinned source.
+replace("main/audio/audio_service.cc",
+        "        codec_->OutputData(task.pcm);",
+        "        extern void EspenPlaybackLevel(const int16_t*, size_t);\n"
+        "        EspenPlaybackLevel(task.pcm.data(), task.pcm.size());\n"
+        "        codec_->OutputData(task.pcm);")
+
 # Retain server activation and protocol credentials, but never auto-flash an
 # upstream image onto our custom hardware.
 replace("main/application.cc", "if (ota_->HasNewVersion()) {",
