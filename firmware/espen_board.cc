@@ -62,6 +62,10 @@ static std::atomic<bool> espen_network_error{false};
 static std::atomic<uint32_t> espen_local_wake_seq{0},espen_sleep_seq{0};
 void EspenLocalWakePulse() {espen_local_wake_seq.fetch_add(1,std::memory_order_relaxed);}
 void EspenSleepNow() {espen_sleep_seq.fetch_add(1,std::memory_order_relaxed);}
+bool EspenNetworkAvailable() {
+    auto& wifi=WifiManager::GetInstance();
+    return wifi.IsInitialized()&&wifi.IsConnected();
+}
 void EspenAmbientPeak(int peak) {
     if (peak > 11000) espen_ambient_ms.store(
         static_cast<uint32_t>(esp_timer_get_time()/1000),std::memory_order_relaxed);

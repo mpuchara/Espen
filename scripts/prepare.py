@@ -441,8 +441,6 @@ app.write_text(src)
 # so its model list is never freed/replaced while it is active. A pending
 # remote assets download is deliberately completed before arming.
 shutil.copyfile(root / "firmware/conversation_timeout.h", up / "main/conversation_timeout.h")
-replace("main/application.h", '#define MAIN_EVENT_VAD_CHANGE',
-        '#define MAIN_EVENT_VAD_CHANGE')  # pinned source guard
 replace("main/application.h", '#include "audio_service.h"',
         '#include "audio_service.h"\n#include "conversation_timeout.h"')
 replace("main/application.h", '    bool assets_version_checked_ = false;',
@@ -484,12 +482,16 @@ replace("main/application.cc",
         'void Application::HandleWakeWordDetectedEvent() {\n    if (!protocol_) {\n        return;\n    }\n\n    auto state = GetDeviceState();',
         'extern void EspenLocalWakePulse();\n'
         'extern void EspenSleepNow();\n'
+        'extern bool EspenNetworkAvailable();\n'
         'void Application::EspenEnsureWake() {\n'
         '    if (!espen_wake_ready_) return;\n'
         '    const auto state = GetDeviceState();\n'
         '    const bool allowed = state == kDeviceStateStarting || state == kDeviceStateActivating || state == kDeviceStateIdle;\n'
         '    if (!allowed) return;\n'
-        '    if (!audio_service_.IsPlaybackIdle()) return; // no self-trigger from TTS/alerts\n'
+        '    if (!audio_service_.IsPlaybackIdle()) {\n'
+        '        if (audio_service_.IsWakeWordRunning()) audio_service_.EnableWakeWordDetection(false);\n'
+        '        return; // no self-trigger from TTS/alerts\n'
+        '    }\n'
         '    if (!audio_service_.IsWakeWordRunning() || !EspenWake().Get().running) {\n'
         '        audio_service_.EnableWakeWordDetection(true);\n'
         '        auto profile = EspenWake().Get();\n'
@@ -518,7 +520,9 @@ replace("main/application.cc",
         '        EspenEnsureWake();\n'
         '        return;\n'
         '    }\n'
-        '    if (!protocol_) { EspenLocalWakePulse(); EspenEnsureWake(); return; }\n'
+        '    if (!protocol_ || (state == kDeviceStateIdle && !EspenNetworkAvailable())) {\n'
+        '        EspenLocalWakePulse(); EspenEnsureWake(); return;\n'
+        '    }\n'
         '    if (state == kDeviceStateIdle && !audio_service_.IsPlaybackIdle()) {\n'
         '        // Playback is not a user wake invocation. Periodic recovery\n'
         '        // will restore the detector after the sound has drained.\n'
@@ -538,7 +542,6 @@ replace("main/application.cc",
 replace("main/application.cc",
         '            audio_service_.EnableVoiceProcessing(false);\n            audio_service_.EnableWakeWordDetection(true);\n            if (last_error_message_.empty()) {',
         '            audio_service_.EnableVoiceProcessing(false);\n'
-        '            espen_wake_ready_ = true;\n'
         '            EspenEnsureWake();\n'
         '            if (last_error_message_.empty()) {')
 replace("main/application.cc",
