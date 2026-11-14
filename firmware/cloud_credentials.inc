@@ -12,14 +12,16 @@
     has_test_credentials_ = mqtt_test || ws_test;
     has_mqtt_config_ = cJSON_IsObject(mqtt) &&
         cJSON_IsString(endpoint) && endpoint->valuestring[0] &&
-        cJSON_IsString(client) && client->valuestring[0] && !mqtt_test;
+        cJSON_IsString(client) && client->valuestring[0];
     has_websocket_config_ = cJSON_IsObject(websocket) &&
-        cJSON_IsString(ws_url) && ws_url->valuestring[0] && !ws_test;
+        cJSON_IsString(ws_url) && ws_url->valuestring[0];
     ESP_LOGI(TAG, "Espen credentials: mqtt_present=%d mqtt_test=%d ws_present=%d ws_test=%d",
              cJSON_IsObject(mqtt), mqtt_test, cJSON_IsObject(websocket), ws_test);
-    // Only store a complete usable protocol section, never test credentials.
-    // Do not initialize a session from cached settings if the server has
-    // not authorized it in the current response.
+    // The official client uses the credentials returned by the OTA server,
+    // including the open-source developer credentials. The "test" marker
+    // is diagnostic, not an indication that a bound device cannot connect.
+    // Never fall back to old credentials when the current response has no
+    // usable configuration. Do not infer the selected agent from the token.
     auto save_config = [](const char* ns, cJSON* section) {
         Settings settings(ns, true);
         cJSON* item = nullptr;
@@ -33,5 +35,9 @@
             }
         }
     };
-    if (has_mqtt_config_) save_config("mqtt", mqtt);
-    if (has_websocket_config_) save_config("websocket", websocket);
+    // Do not write transport settings while the console still requests binding.
+    // A fresh post-activation response supplies the configuration for chat.
+    if (!has_activation_code_ && !has_activation_challenge_) {
+        if (has_mqtt_config_) save_config("mqtt", mqtt);
+        if (has_websocket_config_) save_config("websocket", websocket);
+    }

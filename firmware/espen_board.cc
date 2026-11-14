@@ -157,7 +157,7 @@ class EspenDisplay : public LcdDisplay {
             if (state.find("SDIO") == std::string::npos) state = "Inicjalizacja Wi-Fi / C6";
         } else if (!WifiManager::GetInstance().IsConnected()) state = "Brak Wi-Fi";
         lv_label_set_text(cloud_state_, state.c_str());
-        lv_label_set_text(cloud_code_, code.empty() ? "Brak kodu od serwera" : code.c_str());
+        lv_label_set_text(cloud_code_, code.empty() ? "Kod nie jest wymagany" : code.c_str());
         auto id = CloudDeviceId();
         lv_label_set_text_fmt(cloud_device_, "Device-ID (C6): %s", id.empty() ? "oczekiwanie..." : id.c_str());
     }
@@ -202,11 +202,17 @@ class EspenDisplay : public LcdDisplay {
             auto* hint = lv_label_create(cloud_);
             lv_obj_set_width(hint, lv_pct(100));
             lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
-            lv_label_set_text(hint, "Zaloguj się na xiaozhi.me. W konsoli wybierz agenta i Add Device, następnie wpisz kod. Jeśli brak kodu, sprawdź stan powyżej.");
+            lv_label_set_text(hint, "Jeśli wyświetla się kod, wpisz go w konsoli Xiaozhi. Po aktywacji wróć do rozmowy i naciśnij Mów.");
             cloud_device_ = lv_label_create(cloud_);
             lv_obj_set_width(cloud_device_, lv_pct(100));
             lv_label_set_long_mode(cloud_device_, LV_LABEL_LONG_WRAP);
             lv_label_set_text(cloud_device_, "Device-ID (C6): oczekiwanie...");
+            MakeButton(cloud_, "Wróć do rozmowy", [](lv_event_t* e) {
+                auto* self = static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                if (self->cloud_keyboard_) lv_keyboard_set_textarea(self->cloud_keyboard_, nullptr);
+                lv_obj_add_flag(self->cloud_, LV_OBJ_FLAG_HIDDEN);
+                if (self->settings_) lv_obj_add_flag(self->settings_, LV_OBJ_FLAG_HIDDEN);
+            }, this, 350);
             MakeButton(cloud_, "Ponów parowanie (restart)", [](lv_event_t*) {
                 Application::GetInstance().Schedule([]() { esp_restart(); });
             }, this, 350);
@@ -618,7 +624,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.1.15 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.1.16 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();

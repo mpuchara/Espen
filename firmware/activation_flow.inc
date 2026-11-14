@@ -32,16 +32,20 @@ void Application::CheckNewVersion() {
         const bool usable = ota_->HasMqttConfig() || ota_->HasWebsocketConfig();
         const bool code = ota_->HasActivationCode();
         const bool challenge = ota_->HasActivationChallenge();
-        // An explicit successful /activate response plus fresh usable
-        // configuration also completes the handshake if a challenge lingers.
-        if (usable && ((!code && !challenge) || activation_confirmed)) {
+        // Match upstream: binding is complete when the fresh OTA response
+        // no longer requires a code/challenge. Open-source test credentials
+        // are a server-provided transport option, not a local veto.
+        if (usable && !code && !challenge) {
             shown_code.clear();
-            EspenCloudInfo("Sparowano. Uruchamiam protokół rozmowy.", "");
+            EspenCloudInfo("Konfiguracja odebrana. Uruchamiam rozmowę Xiaozhi.", "");
             display->SetStatus("Xiaozhi: uruchamianie");
-            ESP_LOGI(TAG, "Espen activation: ready; mqtt=%d websocket=%d confirmed=%d",
-                     ota_->HasMqttConfig(), ota_->HasWebsocketConfig(), activation_confirmed);
+            ESP_LOGI(TAG, "Espen activation: ready; mqtt=%d websocket=%d confirmed=%d test=%d",
+                     ota_->HasMqttConfig(), ota_->HasWebsocketConfig(), activation_confirmed,
+                     ota_->HasTestCredentials());
             break;
         }
+        // A new pending challenge after confirmation must be polled again.
+        if (code || challenge) activation_confirmed = false;
 
         if (code) {
             const auto& current = ota_->GetActivationCode();
@@ -53,13 +57,7 @@ void Application::CheckNewVersion() {
             EspenCloudInfo("Wpisz kod w Xiaozhi Console. Sprawdzam przypisanie.", shown_code.c_str());
         } else {
             shown_code.clear();
-            if (ota_->HasTestCredentials() && !challenge && !usable) {
-                EspenCloudInfo("Xiaozhi: konto testowe, brak kodu. Sprawdź przypisanie urządzenia w konsoli. Ponawiam za 30 s.", "");
-                display->SetStatus("Xiaozhi: konto testowe");
-                ESP_LOGW(TAG, "Espen activation: test credentials only; no binding code; see xiaozhi-esp32 issue #1785; retry in 30 s");
-                vTaskDelay(pdMS_TO_TICKS(30000));
-                continue;
-            } else if (challenge) {
+            if (challenge) {
                 EspenCloudInfo("Potwierdzam aktywację urządzenia.", "");
                 display->SetStatus("Xiaozhi: aktywacja");
             } else {

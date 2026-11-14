@@ -291,12 +291,31 @@ replace("main/application.cc",
 # Allow the remote endpoint more time on high-latency Internet connections.
 replace("main/ota.cc", "    http->SetTimeout(10000);", "    http->SetTimeout(20000);")
 
-# Never persist test credentials over a previously provisioned account.
-# The two flags HasMqttConfig/HasWebsocketConfig describe usable personal
-# credentials, not whether the server included the JSON sections.
+# Use the current server-provided protocol credentials after activation.
+# The test marker is diagnostic only, as in the official open-source client.
 ota_src = up / "main/ota.cc"
 src = ota_src.read_text()
 start = src.index("    has_test_credentials_ = false;")
 end = src.index("    has_server_time_ = false;", start)
 src = src[:start] + (root / "firmware/cloud_credentials.inc").read_text() + "\n" + src[end:]
 ota_src.write_text(src)
+
+# Do not claim that transport credentials prove the agent identity.
+replace("main/application.cc",
+        'EspenCloudInfo("Sparowano, ale połączenie rozmowy nie powiodło się. Spróbuj Mów.", "");',
+        'EspenCloudInfo("Konfiguracja odebrana, ale połączenie rozmowy nie powiodło się. Spróbuj Mów.", "");')
+replace("main/application.cc",
+        'EspenCloudInfo("Sparowano. Naciśnij Mów, aby połączyć WebSocket.", "");',
+        'EspenCloudInfo("Gotowy. Naciśnij Mów, aby rozpocząć sesję WebSocket.", "");')
+replace("main/application.cc",
+        '    protocol_->OnAudioChannelOpened([this, codec, &board]() {\n        board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);',
+        '    protocol_->OnAudioChannelOpened([this, codec, &board]() {\n'
+        '        ESP_LOGI(TAG, "Espen conversation: server hello accepted; audio channel opened");\n'
+        '        EspenCloudInfo("Sesja Xiaozhi aktywna", "");\n'
+        '        board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);')
+replace("main/application.cc",
+        '    protocol_->OnNetworkError([this](const std::string& message) {\n        last_error_message_ = message;',
+        '    protocol_->OnNetworkError([this](const std::string& message) {\n'
+        '        ESP_LOGW(TAG, "Espen conversation: protocol network error");\n'
+        '        EspenCloudInfo("Błąd sesji Xiaozhi. Sprawdź log USB; spróbuj Mów ponownie.", "");\n'
+        '        last_error_message_ = message;')
