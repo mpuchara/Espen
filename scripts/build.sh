@@ -19,6 +19,7 @@ git -C upstream/local_components/esp-wifi-connect fetch --depth 1 origin "$wifi_
 git -C upstream/local_components/esp-wifi-connect reset --hard "$wifi_ref"
 python3 scripts/prepare.py upstream
 python3 scripts/prepare_wifi.py upstream
+python3 scripts/prepare_wifi_reliability.py upstream
 cd upstream
 python3 scripts/build.py --list-boards --json > /tmp/espen-board-list.json
 python3 scripts/build.py guition/espen-guition-jc4880p443 --name espen-guition-jc4880p443 --language pl-PL --wake-word disabled

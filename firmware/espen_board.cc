@@ -70,37 +70,13 @@ static void ConversationClick() {
     }
 }
 
-// Stage credentials in a private device-local NVS namespace. At next boot,
- // consume them before the upstream Wi-Fi manager starts any station scans.
+// Both screen and phone use the same verified, durable provisioning path.
 static esp_err_t StageWifi(const char* ssid, const char* password) {
-    nvs_handle_t handle;
-    esp_err_t err = nvs_open("espen_wifi", NVS_READWRITE, &handle);
-    if (err != ESP_OK) return err;
-    if ((err = nvs_set_str(handle, "ssid", ssid)) == ESP_OK &&
-        (err = nvs_set_str(handle, "password", password)) == ESP_OK)
-        err = nvs_commit(handle);
-    nvs_close(handle);
-    return err;
+    return SsidManager::StageCredentials(ssid, password);
 }
 
 static void ImportStagedWifi() {
-    nvs_handle_t handle;
-    if (nvs_open("espen_wifi", NVS_READWRITE, &handle) != ESP_OK) return;
-    char ssid[33] = {};
-    char password[65] = {};
-    size_t ssid_len = sizeof(ssid), password_len = sizeof(password);
-    if (nvs_get_str(handle, "ssid", ssid, &ssid_len) == ESP_OK &&
-        nvs_get_str(handle, "password", password, &password_len) == ESP_OK &&
-        ssid[0]) {
-        SsidManager::GetInstance().AddSsid(ssid, password);
-        nvs_erase_key(handle, "ssid");
-        nvs_erase_key(handle, "password");
-        nvs_commit(handle);
-    }
-    nvs_close(handle);
-    // Do not retain or print passwords in memory beyond provisioning.
-    volatile char* wipe = password;
-    for (size_t i = 0; i < sizeof(password); ++i) wipe[i] = 0;
+    SsidManager::GetInstance().ImportStagedCredentials();
 }
 
 // Native 480x800 framebuffers, independent of the generic Xiaozhi DSI flush.
@@ -333,8 +309,8 @@ class EspenDisplay : public LcdDisplay {
         const char* ssid = lv_textarea_get_text(ssid_);
         const char* password = lv_textarea_get_text(password_);
         const size_t sn = strlen(ssid), pn = strlen(password);
-        if (sn == 0 || sn > 32 || (pn != 0 && (pn < 8 || pn > 63))) {
-            lv_label_set_text(settings_status_, "SSID: 1–32 bajty. Hasło: 8–63 znaki.");
+        if (sn == 0 || sn > 32 || (pn != 0 && (pn < 8 || pn > 64))) {
+            lv_label_set_text(settings_status_, "SSID: 1–32 bajty. Hasło: 8–64 znaki.");
             return;
         }
         if (StageWifi(ssid, password) != ESP_OK) {
@@ -378,7 +354,7 @@ class EspenDisplay : public LcdDisplay {
             password_ = lv_textarea_create(settings_);
             lv_obj_set_width(password_, lv_pct(100));
             lv_textarea_set_one_line(password_, true);
-            lv_textarea_set_max_length(password_, 63);
+            lv_textarea_set_max_length(password_, 64);
             lv_textarea_set_password_mode(password_, true);
             lv_textarea_set_password_show_time(password_, 0);
             lv_textarea_set_placeholder_text(password_, "Hasło Wi-Fi");
@@ -427,7 +403,8 @@ class EspenDisplay : public LcdDisplay {
             lv_textarea_set_text(ssid_, name.c_str());
         } else {
             lv_label_set_text(settings_status_, "Brak połączenia z Wi-Fi");
-            lv_textarea_set_text(ssid_, "");
+            auto name = wifi.GetSsid();
+            lv_textarea_set_text(ssid_, name.c_str());
         }
         lv_textarea_set_text(password_, "");
         lv_keyboard_set_textarea(keyboard_, ssid_);
@@ -622,7 +599,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.1.9 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.1.10 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();
