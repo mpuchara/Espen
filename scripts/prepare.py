@@ -1109,3 +1109,47 @@ replace("main/audio/audio_service.cc",
         '            if (input_resampler_ != nullptr) esp_ae_rate_cvt_reset(input_resampler_);\n'
         '        }\n'
         '        audio_engine_->EnableVoiceProcessing(true);')
+
+# 0.1.36: tag each incoming TTS audio packet with the sentence cue known
+# at reception. Carry this tag all the way to the actual output task.
+# No LVGL access from protocol, decoder or output tasks.
+replace("main/protocols/protocol.h",
+        '    uint32_t media_position_ms = 0;',
+        '    uint32_t media_position_ms = 0;\n    uint32_t espen_visual_cue = 0;')
+replace("main/audio/audio_service.h",
+        '    uint32_t media_position_ms = 0;',
+        '    uint32_t media_position_ms = 0;\n    uint32_t espen_visual_cue = 0;')
+replace("main/audio/audio_service.cc",
+        '            task.media_position_ms = packet->media_position_ms;',
+        '            task.media_position_ms = packet->media_position_ms;\n'
+        '            task.espen_visual_cue = packet->espen_visual_cue;')
+replace("main/audio/audio_service.cc",
+        '        EspenPlaybackLevel(task.pcm.data(), task.pcm.size());',
+        '        extern void EspenVisualPlayback(uint32_t);\n'
+        '        EspenVisualPlayback(task.espen_visual_cue);\n'
+        '        EspenPlaybackLevel(task.pcm.data(), task.pcm.size());')
+replace("main/application.cc",
+        '    protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {\n'
+        '        if (GetDeviceState() == kDeviceStateSpeaking) {\n'
+        '            audio_service_.PushPacketToDecodeQueue(std::move(packet));',
+        '    protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {\n'
+        '        if (GetDeviceState() == kDeviceStateSpeaking) {\n'
+        '            extern uint32_t EspenVisualPacketTag();\n'
+        '            packet->espen_visual_cue = EspenVisualPacketTag();\n'
+        '            audio_service_.PushPacketToDecodeQueue(std::move(packet));')
+replace("main/application.cc",
+        '            if (strcmp(state->valuestring, "start") == 0) {\n'
+        '                Schedule([this]() {\n                    aborted_ = false;',
+        '            if (strcmp(state->valuestring, "start") == 0) {\n'
+        '                extern void EspenVisualBegin(); EspenVisualBegin();\n'
+        '                Schedule([this]() {\n                    aborted_ = false;')
+replace("main/application.cc",
+        '                    ESP_LOGI(TAG, "<< %s", text->valuestring);',
+        '                    extern void EspenVisualSentence(const char*);\n'
+        '                    EspenVisualSentence(text->valuestring);\n'
+        '                    ESP_LOGI(TAG, "<< %s", text->valuestring);')
+replace("main/application.cc",
+        '                ESP_LOGI(TAG, ">> %s", text->valuestring);',
+        '                extern void EspenVisualQuestion(const char*);\n'
+        '                EspenVisualQuestion(text->valuestring);\n'
+        '                ESP_LOGI(TAG, ">> %s", text->valuestring);')

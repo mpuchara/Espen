@@ -139,6 +139,8 @@ inline Cue Equation(std::string_view text) {
         if(!digit(normalized[i])||(i&&digit(normalized[i-1])))continue;
         // Reject fragments of decimals, negative numbers, and larger expressions.
         if(i&&(normalized[i-1]=='.'||normalized[i-1]==','||normalized[i-1]=='-'||normalized[i-1]=='+'||normalized[i-1]=='*'||normalized[i-1]=='/'))continue;
+        size_t before=i;while(before&&normalized[before-1]==' ')--before;
+        if(before&&(normalized[before-1]=='+'||normalized[before-1]=='-'||normalized[before-1]=='*'||normalized[before-1]=='/'||normalized[before-1]=='='||normalized[before-1]==':'))continue;
         size_t j=i;int a,b,c;
         if(!read(j,a)||a>99)continue;
         skip(j);if(j>=normalized.size())continue;
@@ -162,7 +164,7 @@ inline Cue ClassifyScene(std::string_view text,bool allow_equation=true) {
     struct Rule{Scene scene;const char* words;};
     static constexpr Rule rules[]={
     {Scene::Saturn,"saturn*"},
-    {Scene::Earth,"planeta ziemia|ziemia|ziemię|ziemi|ziemią"},
+    {Scene::Earth,"planeta ziemia|ziemia|ziemie|ziemi|ziemia"},
     {Scene::Mars,"mars|marsa|marsie|marsem"},
     {Scene::Moon,"ksiezyc*"},
     {Scene::Sun,"slonce|slonca|sloncu|sloneczn*"},
@@ -171,7 +173,7 @@ inline Cue ClassifyScene(std::string_view text,bool allow_equation=true) {
     {Scene::Space,"kosmos*|galaktyk*|gwiazd*|uklad sloneczny|planet*"},
     {Scene::Dino,"dinozaur*|tyranozaur*|triceratops*|jurajsk*"},
     {Scene::Asteroid,"asteroid*|meteoryt*|meteor*"},
-    {Scene::Volcano,"wulkan*|law*"},
+    {Scene::Volcano,"wulkan*|lawa|lawy|lawe|lawie"},
     {Scene::Cat,"kot|kota|koty|kotem|kotku|kotek|kotki|kocie"},
     {Scene::Dog,"pies|psa|psu|psy|psem|piesek|pieski|szczeniak*"},
     {Scene::Rabbit,"krolik*|zajac*"},
@@ -307,7 +309,7 @@ inline void DrawFlag(VisualFrame& f,Scene scene,uint32_t t){
         case Scene::France:f.Box(x,y,33,65,0x3564C7);f.Box(x+67,y,33,65,0xE84759);break;
         case Scene::Italy:f.Box(x,y,33,65,0x43B879);f.Box(x+67,y,33,65,0xE84759);break;
         case Scene::Japan:f.Circle(x+50,y+32,36,0xE84759);break;
-        case Scene::USA:for(int i=0;i<7;++i)f.Box(x,y+i*9,100,5,0xE84759);f.Box(x,y,43,35,0x365DA7);for(int i=0;i<3;++i)for(int j=0;j<4;++j)f.Circle(x+5+j*10,y+5+i*10,3,0xFFFFFF);break;
+        case Scene::USA:for(int i=0;i<7;++i)f.Box(x,y+i*10,100,5,0xE84759);f.Box(x,y,43,35,0x365DA7);for(int i=0;i<9;++i)for(int j=0;j<(i%2?5:6);++j)f.Circle(x+4+(i%2?3:0)+j*7,y+3+i*3,2,0xFFFFFF);break;
         default:break;
     }
     f.Line(x,y-3,x,111,0xB9D0DB,3);f.Circle(x,y-4,7,0xFFD66B);
@@ -330,7 +332,7 @@ inline VisualFrame DrawVisual(const Cue& cue,uint32_t t){
         case Scene::Moon:
             f.Circle(60,57+bob,78,0xE1E9EE);f.Circle(43,41+bob,16,0xB0C3D0);f.Circle(78,68+bob,21,0xB0C3D0);f.Circle(42,83+bob,10,0xB0C3D0);f.Star(108,18,7,yellow);break;
         case Scene::Sun:
-            f.Circle(63,63,65,yellow);for(int i=0;i<4;++i){int d=Wave(t+static_cast<uint32_t>(i*180),1000,5);f.Line(63,12-d,63,24,yellow,4);f.Line(63,102,63,114+d,yellow,4);f.Line(12-d,63,24,63,yellow,4);f.Line(102,63,114+d,63,yellow,4);break;}f.Line(26,26,35,35,orange,4);f.Line(91,91,100,100,orange,4);f.Line(26,100,35,91,orange,4);f.Line(91,35,100,26,orange,4);break;
+            f.Circle(63,63,65,yellow);{int d=Wave(t,1000,5);f.Line(63,12-d,63,24,yellow,4);f.Line(63,102,63,114+d,yellow,4);f.Line(12-d,63,24,63,yellow,4);f.Line(102,63,114+d,63,yellow,4);}f.Line(26,26,35,35,orange,4);f.Line(91,91,100,100,orange,4);f.Line(26,100,35,91,orange,4);f.Line(91,35,100,26,orange,4);break;
         case Scene::Rocket:{
             int y=19+Wave(t,1800,15);
             f.Box(48,y+22,30,52,white,12);f.Triangle(48,y,30,27,red);f.Circle(63,y+39,16,blue);f.Triangle(30,y+55,22,21,red);f.Triangle(75,y+55,22,21,red);

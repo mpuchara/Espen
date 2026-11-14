@@ -14,6 +14,8 @@ int main(){
     assert(Equation("3 × 4 = 12").op=='*');
     assert(Equation("12 ÷ 3 = 4").op=='/');
     assert(Equation("2 + 3 = 5.5").scene==Scene::None);
+    assert(Equation("1 + 2 + 3 = 5").scene==Scene::None);
+    assert(ClassifyScene("To jest ławka").scene==Scene::None);
     assert(!ClassifyScene("7 + 8 = 15",false).op);
     VisualContext context;context.Question("Co to jest Saturn?");context.Begin();
     assert(context.Sentence("To ciekawa planeta.").scene==Scene::Space);

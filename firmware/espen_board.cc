@@ -5,6 +5,7 @@
 #include "config.h"
 #include "face_engine.h"
 #include "speech_quality.h"
+#include "visual_world.h"
 #include "dirty_rect.h"
 #include "display/lcd_display.h"
 #include "wifi_board.h"
@@ -60,6 +61,41 @@ static const lv_font_t* EspenUiFont() {
 // Small audio feature meter: no raw audio retained, no LVGL calls from audio tasks.
 // 22-bit time, 2-bit mouth shape, 8-bit level, one atomic publication.
 static std::atomic<uint32_t> espen_playback_meter{0};
+// Protocol sentence mailbox: bounded immutable cues. Only the producer and
+// LVGL lookup use the mutex; audio output publishes a tag without locking.
+namespace {
+struct VisualEntry {uint32_t id=0;espen::Cue cue{};};
+std::mutex visual_mutex;
+espen::VisualContext visual_context;
+VisualEntry visual_entries[32]{};
+uint32_t visual_next=0;
+std::atomic<uint32_t> visual_packet_tag{0},visual_played_tag{0},visual_played_ms{0};
+}
+void EspenVisualQuestion(const char* text){
+    std::lock_guard<std::mutex> l(visual_mutex);
+    visual_context.Question(text?text:"");
+}
+void EspenVisualBegin(){
+    std::lock_guard<std::mutex> l(visual_mutex);
+    visual_context.Begin();visual_packet_tag.store(0,std::memory_order_release);
+}
+void EspenVisualSentence(const char* text){
+    std::lock_guard<std::mutex> l(visual_mutex);
+    auto cue=visual_context.Sentence(text?text:"");
+    if(++visual_next==0)++visual_next;
+    visual_entries[visual_next%32]={visual_next,cue};
+    visual_packet_tag.store(visual_next,std::memory_order_release);
+}
+uint32_t EspenVisualPacketTag(){return visual_packet_tag.load(std::memory_order_acquire);}
+void EspenVisualPlayback(uint32_t tag){
+    visual_played_ms.store(static_cast<uint32_t>(esp_timer_get_time()/1000),std::memory_order_relaxed);
+    visual_played_tag.store(tag,std::memory_order_release);
+}
+static espen::Cue EspenVisualLookup(uint32_t tag){
+    std::lock_guard<std::mutex> l(visual_mutex);
+    auto& e=visual_entries[tag%32];
+    return e.id==tag?e.cue:espen::Cue{espen::Scene::Talk};
+}
 static std::atomic<uint32_t> espen_ambient_ms{0},espen_mic_meter{0};
 void EspenMicLevel(int rms) {
     uint32_t level=static_cast<uint32_t>(std::clamp((rms-80)/12,0,100));
@@ -512,7 +548,7 @@ class EspenDisplay : public LcdDisplay {
                 auto* self = static_cast<EspenDisplay*>(lv_event_get_user_data(e));
                 lv_keyboard_set_textarea(self->cloud_keyboard_, nullptr);
                 lv_obj_add_flag(self->cloud_, LV_OBJ_FLAG_HIDDEN);
-                self->OpenSettings();
+                // Return to the home; settings require a fresh 5-second hold.
             }, this, 145);
             MakeButton(cloud_, "Domyślny serwer Xiaozhi", [](lv_event_t* e) {
                 auto* self = static_cast<EspenDisplay*>(lv_event_get_user_data(e));
@@ -830,6 +866,14 @@ class EspenDisplay : public LcdDisplay {
             },this,420);
             speech_mode_label_=lv_obj_get_child(mode,0);
             lv_label_set_text(speech_mode_label_,auto_speech_?"Wybudzanie: mowa":"Wybudzanie: hasło");
+            auto* visuals=MakeButton(settings_,"Visual World",[](lv_event_t* e){
+                auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                self->visual_enabled_=!self->visual_enabled_;
+                {Settings cfg("espen_ui",true);cfg.SetBool("visual_world",self->visual_enabled_);}
+                auto* label=lv_obj_get_child(static_cast<lv_obj_t*>(lv_event_get_target(e)),0);
+                lv_label_set_text(label,self->visual_enabled_?"Visual World: WŁ":"Visual World: WYŁ");
+            },this,420);
+            lv_label_set_text(lv_obj_get_child(visuals,0),visual_enabled_?"Visual World: WŁ":"Visual World: WYŁ");
             MakeButton(settings_, "Diagnostyka mowy", [](lv_event_t* e) {
                 auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
                 self->CloseSettings();self->OpenSpeechDiag();
@@ -936,6 +980,34 @@ class EspenDisplay : public LcdDisplay {
     int touch_distance_=0;
     lv_point_t touch_prev_{};
     lv_obj_t* face_=nullptr;
+    espen::HoldGate hold_gate_;
+    lv_obj_t* hold_target_=nullptr;
+    lv_obj_t* hold_progress_=nullptr;
+    int hold_width_=-1;
+    lv_obj_t* visual_panel_=nullptr;
+    lv_obj_t* visual_caption_=nullptr;
+    bool visual_enabled_=true;
+    int visual_mix_=0;
+    uint32_t visual_id_=0,visual_started_=0,visual_last_draw_=0;
+    espen::Cue visual_cue_{};
+    std::string visual_caption_text_;
+    // A scene never exceeds 72 primitives total. Separate fixed pools
+    // avoid allocating/deleting widgets during speech.
+    static constexpr int kVisualRects=64,kVisualLines=48;
+    struct VisualSlot {
+        lv_obj_t* obj=nullptr;
+        espen::Primitive last{};
+        bool used=false,valid=false;
+        lv_point_precise_t points[2]{};
+    };
+    VisualSlot visual_rects_[kVisualRects]{},visual_lines_[kVisualLines]{};
+    int VisualX(int x) const {
+        return 192-66*visual_mix_/100+(x-192)*(100-30*visual_mix_/100)/100;
+    }
+    int VisualW(int w) const{return std::max(1,w*(100-30*visual_mix_/100)/100);}
+    static bool SamePrimitive(const espen::Primitive& a,const espen::Primitive& b){
+        return a.x==b.x&&a.y==b.y&&a.w==b.w&&a.h==b.h&&a.r==b.r&&a.color==b.color&&a.line==b.line;
+    }
     lv_obj_t* shapes_[14]={};
     lv_obj_t* symbols_[2]={};
     lv_obj_t* sleep_label_=nullptr;
@@ -965,6 +1037,7 @@ class EspenDisplay : public LcdDisplay {
         else lv_obj_clear_flag(obj,LV_OBJ_FLAG_HIDDEN);
     }
     void Shape(int i,int x,int y,int w,int h,int angle=0) {
+        if(visual_mix_){x=VisualX(x);w=VisualW(w);}
         auto* o=shapes_[i];auto& g=geometry_[i];
         if(g.w!=w||g.h!=h) {
             lv_obj_set_size(o,w,h);
@@ -986,25 +1059,50 @@ class EspenDisplay : public LcdDisplay {
             if(panel&&!lv_obj_has_flag(panel,LV_OBJ_FLAG_HIDDEN))return true;
         return false;
     }
+    void CancelHold(lv_obj_t* target) {
+        if(hold_target_!=target)return;
+        hold_gate_.Cancel();hold_target_=nullptr;
+    }
+    void StartHold(lv_obj_t* target,lv_point_t p,uint32_t now) {
+        if(OverlayVisible())return;
+        hold_target_=target;hold_gate_.Begin(p.x,p.y,now);
+    }
+    bool UpdateHold(lv_obj_t* target,lv_point_t p,uint32_t now,lv_indev_t* indev) {
+        if(hold_target_!=target||OverlayVisible())return false;
+        hold_gate_.Move(p.x,p.y);
+        if(!hold_gate_.Ready(now))return false;
+        hold_target_=nullptr;
+        if(target==face_) {touch_long_=true;touch_active_=false;engine_.Touch(false,0,0,now);}
+        if(indev)lv_indev_wait_release(indev);
+        OpenSettings();
+        return true;
+    }
     void SettingsGesture(lv_obj_t* obj) {
         lv_obj_add_flag(obj,LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(obj,[](lv_event_t* e){
             auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
-            if(!self->OverlayVisible()) self->OpenSettings();
-        },LV_EVENT_LONG_PRESSED,this);
+            auto* target=static_cast<lv_obj_t*>(lv_event_get_current_target(e));
+            if(lv_event_get_target(e)!=target)return; // never treat a child's press as a new hold
+            auto code=lv_event_get_code(e);
+            if(code==LV_EVENT_RELEASED||code==LV_EVENT_PRESS_LOST||code==LV_EVENT_SCROLL_BEGIN) {
+                self->CancelHold(target);return;
+            }
+            if(code!=LV_EVENT_PRESSED&&code!=LV_EVENT_PRESSING)return;
+            auto* indev=lv_indev_active();if(!indev)return;
+            lv_point_t p;lv_indev_get_point(indev,&p);
+            uint32_t now=lv_tick_get();
+            if(code==LV_EVENT_PRESSED)self->StartHold(target,p,now);
+            else self->UpdateHold(target,p,now,indev);
+        },LV_EVENT_ALL,this);
     }
     void FaceTouch(lv_event_t* e) {
         auto code=lv_event_get_code(e);
         uint32_t now=lv_tick_get();
-        if(code==LV_EVENT_LONG_PRESSED) {
-            // Movement is a gesture, not a settings request.
-            if(touch_active_ && touch_distance_<18) {
-                touch_long_=true;touch_active_=false;engine_.Touch(false,0,0,now);
-                if(!OverlayVisible()) OpenSettings();
-            }
-            return;
-        }
+        // Ignore LVGL's default short long-press event. Only our 5-second
+        // hold gate can open settings.
+        if(code==LV_EVENT_LONG_PRESSED||code==LV_EVENT_LONG_PRESSED_REPEAT)return;
         if(code==LV_EVENT_PRESS_LOST || code==LV_EVENT_RELEASED) {
+            CancelHold(face_);
             if(touch_active_&&!touch_long_&&code==LV_EVENT_RELEASED) {
                 if(pet_kind_==espen::Motion::Tickle)engine_.React(espen::Gesture::Tickle,now);
                 else if(pet_kind_==espen::Motion::Stroke)engine_.React(espen::Gesture::Stroke,now);
@@ -1012,7 +1110,9 @@ class EspenDisplay : public LcdDisplay {
                     tap_count_=(last_tap_&&now-last_tap_<380)?tap_count_+1:1;
                     last_tap_=now;
                     lv_area_t a;lv_obj_get_coords(face_,&a);
-                    int x=touch_prev_.x-a.x1-listening_layout_.shift,y=touch_prev_.y-a.y1;
+                    int x=touch_prev_.x-a.x1,y=touch_prev_.y-a.y1;
+                    if(visual_mix_)x=192+(x-(192-66*visual_mix_/100))*100/(100-30*visual_mix_/100);
+                    x-=listening_layout_.shift;
                     if(tap_count_>=3){engine_.React(espen::Gesture::TripleTap,now);tap_count_=0;last_tap_=0;}
                     else if(tap_count_==2)engine_.React(espen::Gesture::DoubleTap,now);
                     else engine_.React(x>=155&&x<=230&&y>=125&&y<=185?
@@ -1027,12 +1127,15 @@ class EspenDisplay : public LcdDisplay {
         if(code==LV_EVENT_PRESSED) {
             touch_active_=true;touch_long_=false;touch_started_=now;touch_distance_=0;touch_prev_=p;
             pet_motion_.Begin(p.x,p.y,now);pet_kind_=espen::Motion::None;last_pet_=now;
+            StartHold(face_,p,now);
         }
         if(!touch_active_)return;
         touch_prev_=p;
         const int before=pet_motion_.Distance();
         auto motion=pet_motion_.Move(p.x,p.y,now);
         touch_distance_=pet_motion_.Distance();
+        if(touch_distance_>=18)CancelHold(face_);
+        if(UpdateHold(face_,p,now,indev))return;
         lv_area_t a;lv_obj_get_coords(face_,&a);
         engine_.Touch(true,(p.x-(a.x1+a.x2)/2)/6,(p.y-(a.y1+a.y2)/2)/6,now);
         // React during motion, not only at release. Once tickling is
@@ -1051,6 +1154,7 @@ class EspenDisplay : public LcdDisplay {
         Settings cfg("espen_ui",false);
         engine_.SetPersona(static_cast<espen::Persona>(std::clamp<int32_t>(cfg.GetInt("persona",0),0,static_cast<int32_t>(espen::Persona::Count)-1)));
         auto_speech_=cfg.GetBool("auto_speech",true);
+        visual_enabled_=cfg.GetBool("visual_world",true);
         EspenWake().SetAutoSpeech(auto_speech_);
         face_=lv_obj_create(container_);Solid(face_,0x09141D,36);
         lv_obj_set_size(face_,384,294);
@@ -1082,6 +1186,7 @@ class EspenDisplay : public LcdDisplay {
             lv_obj_set_style_line_width(icon,3,0);
             lv_obj_set_style_line_rounded(icon,true,0);Hide(icon,true);
         }
+        BuildVisualPanel();
         // Six reusable vector particles. No per-frame heap allocation or
         // full-screen animation layer; dirty rectangles remain local.
         static const lv_point_precise_t little_heart[]={{2,8},{3,4},{7,2},{11,6},{15,2},{19,4},{20,8},{17,13},{11,19},{5,13},{2,8}};
@@ -1105,6 +1210,8 @@ class EspenDisplay : public LcdDisplay {
         lv_label_set_long_mode(wake_indicator_,LV_LABEL_LONG_DOT);
         lv_obj_set_pos(wake_indicator_,15,264);
         Passive(wake_indicator_);RefreshWake();
+        hold_progress_=lv_obj_create(face_);Solid(hold_progress_,0xFFD66B,3);
+        lv_obj_set_pos(hold_progress_,16,257);lv_obj_set_size(hold_progress_,1,4);Hide(hold_progress_,true);
         lv_obj_add_flag(face_,LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(face_,[](lv_event_t* e){
             static_cast<EspenDisplay*>(lv_event_get_user_data(e))->FaceTouch(e);
@@ -1113,6 +1220,55 @@ class EspenDisplay : public LcdDisplay {
         face_timer_=lv_timer_create([](lv_timer_t* t){
             static_cast<EspenDisplay*>(lv_timer_get_user_data(t))->TickFace();
         },50,this);
+    }
+    void BuildVisualPanel() {
+        visual_panel_=lv_obj_create(face_);Solid(visual_panel_,0x102638,14);
+        lv_obj_set_size(visual_panel_,132,190);lv_obj_set_pos(visual_panel_,246,55);
+        lv_obj_set_style_pad_all(visual_panel_,0,0);
+        for(auto& v:visual_rects_){v.obj=lv_obj_create(visual_panel_);Solid(v.obj,0xFFFFFF,0);Hide(v.obj,true);}
+        for(auto& v:visual_lines_){v.obj=lv_line_create(visual_panel_);Passive(v.obj);lv_obj_set_style_line_rounded(v.obj,true,0);Hide(v.obj,true);}
+        visual_caption_=lv_label_create(visual_panel_);Passive(visual_caption_);
+        lv_obj_set_style_text_font(visual_caption_,EspenUiFont(),0);
+        lv_obj_set_style_text_color(visual_caption_,lv_color_hex(0xE5F7FF),0);
+        lv_obj_set_style_text_align(visual_caption_,LV_TEXT_ALIGN_CENTER,0);
+        lv_label_set_long_mode(visual_caption_,LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(visual_caption_,126);lv_obj_set_pos(visual_caption_,3,133);
+        Hide(visual_panel_,true);
+    }
+    void DrawVisualPanel(const espen::Cue& cue,uint32_t age) {
+        auto frame=espen::DrawVisual(cue,age);
+        int nr=0,nl=0;
+        for(int i=0;i<frame.count;++i){
+            auto p=frame.items[i];
+            if(p.line?nl>=kVisualLines:nr>=kVisualRects)continue;
+            auto& v=p.line?visual_lines_[nl++]:visual_rects_[nr++];
+            Hide(v.obj,false);
+            if(!v.valid||!SamePrimitive(v.last,p)) {
+                if(p.line) {
+                    int x=std::min(p.x,p.w),y=std::min(p.y,p.h);
+                    v.points[0]={p.x-x,p.y-y};v.points[1]={p.w-x,p.h-y};
+                    lv_line_set_points(v.obj,v.points,2);
+                    lv_obj_set_pos(v.obj,x+3,y+3);
+                    if(!v.valid||v.last.r!=p.r)lv_obj_set_style_line_width(v.obj,p.r,0);
+                    if(!v.valid||v.last.color!=p.color)lv_obj_set_style_line_color(v.obj,lv_color_hex(p.color),0);
+                }else{
+                    lv_obj_set_pos(v.obj,p.x+3,p.y+3);lv_obj_set_size(v.obj,p.w,p.h);
+                    if(!v.valid||v.last.r!=p.r)lv_obj_set_style_radius(v.obj,p.r,0);
+                    if(!v.valid||v.last.color!=p.color)lv_obj_set_style_bg_color(v.obj,lv_color_hex(p.color),0);
+                }
+                v.last=p;v.valid=true;
+            }
+            v.used=true;
+        }
+        for(int i=nr;i<kVisualRects;++i)if(visual_rects_[i].used){Hide(visual_rects_[i].obj,true);visual_rects_[i].used=false;}
+        for(int i=nl;i<kVisualLines;++i)if(visual_lines_[i].used){Hide(visual_lines_[i].obj,true);visual_lines_[i].used=false;}
+        char eq[48];const char* title=espen::Caption(cue.scene);
+        if(cue.op){
+            if(age<1400)snprintf(eq,sizeof(eq),"%d %c %d",cue.a,cue.op,cue.b);
+            else snprintf(eq,sizeof(eq),"%d %c %d =\n%d",cue.a,cue.op,cue.b,cue.result);
+            title=eq;
+        }
+        if(visual_caption_text_!=title){visual_caption_text_=title;lv_label_set_text(visual_caption_,title);}
     }
     void TickFace() {
         if(!face_||OverlayVisible())return;
@@ -1143,10 +1299,34 @@ class EspenDisplay : public LcdDisplay {
         if(loud)last_ambient_=ambient;
         auto f=engine_.Tick(now,phase,speech.level,speech.shape,loud);
         auto& p=f.pose;
-        const bool listening=phase==Phase::Listening||phase==Phase::Wake;
+        uint32_t tag=visual_played_tag.load(std::memory_order_acquire);
+        const bool recent_audio=tag&&wall-visual_played_ms.load(std::memory_order_relaxed)<350;
+        const bool scene_on=visual_enabled_&&recent_audio&&
+            (phase==Phase::Speaking||(phase==Phase::Listening&&!Application::GetInstance().GetAudioService().IsAudioProcessorRunning()));
+        if(scene_on&&tag!=visual_id_){
+            auto next=EspenVisualLookup(tag);
+            // Keep motion continuous across consecutive sentences on the same subject.
+            if(!(next==visual_cue_)||!visual_id_){visual_cue_=next;visual_started_=now;visual_last_draw_=0;}
+            visual_id_=tag;
+        }
+        if(!scene_on)visual_id_=0;
+        visual_mix_=espen::Approach(visual_mix_,scene_on?100:0,20);
+        const bool show_visual=scene_on&&visual_mix_>=80;
+        Hide(visual_panel_,!show_visual);
+        if(show_visual&&(!visual_last_draw_||now-visual_last_draw_>=100)){
+            DrawVisualPanel(visual_cue_,now-visual_started_);visual_last_draw_=now;
+        }
+        const bool listening=(phase==Phase::Listening||phase==Phase::Wake)&&!scene_on;
         listening_layout_.Tick(listening,EspenMicMeter(),now);
         const int shift=listening_layout_.shift;
-        const int gaze_x=shift?std::clamp(f.gaze_x,-12,12):f.gaze_x;
+        int gaze_x=shift?std::clamp(f.gaze_x,-12,12):f.gaze_x;
+        if(scene_on&&!touch_active_&&((now-visual_started_)%2600)<1500)gaze_x=std::clamp(gaze_x+15,-12,22);
+        const bool hold_visible=hold_gate_.Active()&&hold_gate_.Elapsed(now)>=700;
+        Hide(hold_progress_,!hold_visible);
+        if(hold_visible){
+            int w=std::clamp(static_cast<int>(hold_gate_.Elapsed(now)*350/espen::HoldGate::kHoldMs),1,350);
+            if(w!=hold_width_){lv_obj_set_width(hold_progress_,w);hold_width_=w;}
+        }
         for(int i=0;i<5;++i) {
             const bool visible=listening&&shift<=-32;
             Hide(waves_[i],!visible);
@@ -1198,7 +1378,7 @@ class EspenDisplay : public LcdDisplay {
                 lv_obj_set_style_line_color(symbols_[i],lv_color_hex(0x09141D),0);
             }
             if(show) {
-                int x=(i==0?111:273)+gaze_x+shift-20,y=104+f.gaze_y+f.bob-17;
+                int x=VisualX((i==0?111:273)+gaze_x+shift)-20,y=104+f.gaze_y+f.bob-17;
                 if(x!=symbol_x_[i]||y!=symbol_y_[i]) {lv_obj_set_pos(symbols_[i],x,y);symbol_x_[i]=x;symbol_y_[i]=y;}
             }
         }
@@ -1215,6 +1395,7 @@ class EspenDisplay : public LcdDisplay {
             bool visible=f.hearts&&h.visible;
             Hide(hearts_[i],!visible);
             if(!visible)continue;
+            h.x=VisualX(h.x+10)-10;
             if(h.x!=heart_px_[i]||h.y!=heart_py_[i]) {
                 lv_obj_set_pos(hearts_[i],h.x,h.y);heart_px_[i]=h.x;heart_py_[i]=h.y;
             }
@@ -1238,7 +1419,7 @@ class EspenDisplay : public LcdDisplay {
                 effect_y_[i]=-1;
             }
             int y=9+static_cast<int>((f.effect_age/80+i*3)%9);
-            int x=176+shift+(i==0?0:i==1?-40:40);
+            int x=VisualX(176+shift+(i==0?0:i==1?-40:40)+15)-15;
             if(y!=effect_y_[i]||x!=effect_x_[i]) {
                 lv_obj_set_pos(effect_icons_[i],x,y);
                 effect_x_[i]=x;effect_y_[i]=y;
@@ -1567,7 +1748,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.1.35 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.1.36 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();
