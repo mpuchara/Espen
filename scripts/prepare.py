@@ -358,3 +358,53 @@ replace("main/display/lcd_display.cc",
         '    if (child_count >= MAX_MESSAGES) {',
         '    if (strlen(content) > 0 && child_count >= MAX_MESSAGES) {')
 replace("main/display/lcd_display.cc", "#define MAX_MESSAGES 40", "#define MAX_MESSAGES 80")
+
+# Use local keyword recognition only, not wake-word audio upload.
+# Upstream starts an encoder even when SEND_WAKE_WORD_DATA is off.
+replace("main/application.cc",
+        '    audio_service_.EncodeWakeWord();\n\n    // Always pass through the connecting state',
+        '#if CONFIG_SEND_WAKE_WORD_DATA\n'
+        '    audio_service_.EncodeWakeWord();\n'
+        '#endif\n\n'
+        '    // Always pass through the connecting state')
+# Keep local recognition armed only in idle, not during playback/listening.
+# Explicitly disable during the transition to a cloud session as well.
+replace("main/application.cc",
+        '    ESP_LOGI(TAG, "Wake word detected: %s (state: %d)", wake_word.c_str(), (int)state);',
+        '    ESP_LOGI(TAG, "Wake word detected: %s (state: %d)", wake_word.c_str(), (int)state);\n'
+        '    if (state == kDeviceStateIdle) {\n'
+        '        EspenCloudInfo("Hej Ala wykryte. Łączę sesję rozmowy.", "");\n'
+        '    }')
+replace("main/application.cc",
+        '            audio_service_.EnableWakeWordDetection(true);\n            break;\n        case kDeviceStateConnecting:',
+        '            audio_service_.EnableWakeWordDetection(true);\n'
+        '            if (last_error_message_.empty()) display->SetStatus("Powiedz: Hej Ala");\n'
+        '            break;\n        case kDeviceStateConnecting:')
+# No silent initialization failure or out-of-bounds result ID. MultiNet7
+# uses English graphemes with its own G2P; our phrase is a phonetic spelling.
+replace("main/audio/wake_words/custom_wake_word.cc",
+        '    multinet_model_data_ = multinet_->create(mn_name_, duration_);\n    multinet_->set_det_threshold',
+        '    if (multinet_ == nullptr) return false;\n'
+        '    multinet_model_data_ = multinet_->create(mn_name_, duration_);\n'
+        '    if (multinet_model_data_ == nullptr) return false;\n'
+        '    multinet_->set_det_threshold')
+replace("main/audio/wake_words/custom_wake_word.cc",
+        '        esp_mn_commands_add(i + 1, commands_[i].command.c_str());',
+        '        if (esp_mn_commands_add(i + 1, commands_[i].command.c_str()) != ESP_OK) {\n'
+        '            ESP_LOGE(TAG, "Espen wake: phrase registration failed");\n'
+        '            return false;\n'
+        '        }')
+replace("main/audio/wake_words/custom_wake_word.cc",
+        '    multinet_->print_active_speech_commands(multinet_model_data_);',
+        '    multinet_->print_active_speech_commands(multinet_model_data_);\n'
+        '    ESP_LOGI(TAG, "Espen wake: MultiNet initialized; phrase Hej Ala; threshold=%.2f", threshold_);')
+replace("main/audio/wake_words/custom_wake_word.cc",
+        '                auto& command = commands_[mn_result->command_id[i] - 1];',
+        '                const int id = mn_result->command_id[i];\n'
+        '                if (id < 1 || static_cast<size_t>(id) > commands_.size()) continue;\n'
+        '                auto& command = commands_[id - 1];')
+# Failed wake-word initialization must not disable manual conversations.
+replace("main/audio/engines/afe_audio_engine.cc",
+        '            custom_wake_word_.reset();\n            wake_detector_ = WakeDetector::kNone;\n            return false;',
+        '            custom_wake_word_.reset();\n            wake_detector_ = WakeDetector::kNone;\n'
+        '            ESP_LOGW(TAG, "Espen wake unavailable; continuing with manual voice processing");')

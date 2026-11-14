@@ -210,7 +210,7 @@ class EspenDisplay : public LcdDisplay {
             auto* hint = lv_label_create(cloud_);
             lv_obj_set_width(hint, lv_pct(100));
             lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
-            lv_label_set_text(hint, "Jeśli wyświetla się kod, wpisz go w konsoli Xiaozhi. Po aktywacji wróć do rozmowy i naciśnij Mów.");
+            lv_label_set_text(hint, "Jeśli wyświetla się kod, wpisz go w konsoli Xiaozhi. Po aktywacji wróć do rozmowy i powiedz: Hej Ala.");
             cloud_device_ = lv_label_create(cloud_);
             lv_obj_set_width(cloud_device_, lv_pct(100));
             lv_label_set_long_mode(cloud_device_, LV_LABEL_LONG_WRAP);
@@ -418,6 +418,11 @@ class EspenDisplay : public LcdDisplay {
                 self->CloseSettings();
                 self->OpenCloud();
             }, this, 340);
+            MakeButton(settings_, "Mów / Stop (ręcznie)", [](lv_event_t* e) {
+                auto* self = static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                self->CloseSettings();
+                ConversationClick();
+            }, this, 340);
             MakeButton(settings_, "Wyczyść rozmowę", [](lv_event_t* e) {
                 auto* self = static_cast<EspenDisplay*>(lv_event_get_user_data(e));
                 self->CloseSettings();
@@ -506,9 +511,11 @@ public:
             lv_obj_set_style_border_width(footer, 0, 0);
             lv_obj_set_style_radius(footer, 0, 0);
             if (!container_) lv_obj_align(footer, LV_ALIGN_BOTTOM_MID, 0, 0);
-            MakeButton(footer, "Mów / Stop", [](lv_event_t*) {
-                ConversationClick();
-            }, this, 156);
+            auto* wake_hint = lv_label_create(footer);
+            lv_obj_set_width(wake_hint, 156);
+            lv_label_set_long_mode(wake_hint, LV_LABEL_LONG_WRAP);
+            lv_obj_set_style_text_align(wake_hint, LV_TEXT_ALIGN_CENTER, 0);
+            lv_label_set_text(wake_hint, "Powiedz:\nHej Ala");
             MakeButton(footer, "Xiaozhi", [](lv_event_t* e) {
                 static_cast<EspenDisplay*>(lv_event_get_user_data(e))->OpenCloud();
             }, this, 136);
@@ -644,7 +651,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.1.17 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.1.18 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();
