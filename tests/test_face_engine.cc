@@ -1,0 +1,49 @@
+#include "../firmware/face_engine.h"
+#include "../firmware/dirty_rect.h"
+#include <cassert>
+#include <array>
+#include <iostream>
+using namespace espen;
+int main() {
+    assert(ParseMood("laughing")==Mood::Laugh);
+    assert(ParseMood("loving")==Mood::Love);
+    assert(ParseMood("confused")==Mood::Confused);
+    assert(ParseMood("unknown")==Mood::Neutral);
+    for(int m=0;m<static_cast<int>(Mood::Count);++m) {
+        auto p=Expression(static_cast<Mood>(m)); assert(p.eye_h>0&&p.eye_w>0&&p.mouth_w>0);
+    }
+    FaceEngine e;
+    e.Tick(100,Phase::Idle,0,MouthShape::Closed);
+    e.Tick(200,Phase::Wake,0,MouthShape::Closed);
+    assert(e.Tick(250,Phase::Wake,0,MouthShape::Closed).mood==Mood::Happy);
+    e.Tick(400,Phase::Listening,0,MouthShape::Closed);
+    assert(e.Tick(1500,Phase::Thinking,0,MouthShape::Closed).mood==Mood::Thinking);
+    e.Emotion(Mood::Excited,1600);
+    Frame f;
+    for(uint32_t t=1600;t<2400;t+=50) f=e.Tick(t,Phase::Speaking,120,MouthShape::Round);
+    assert(f.mood==Mood::Excited&&f.pose.mouth_h>25&&f.pose.mouth_w<75);
+    for(uint32_t t=2400;t<2800;t+=50) f=e.Tick(t,Phase::Speaking,0,MouthShape::Closed);
+    assert(f.pose.mouth_h<=8);
+    e.Tick(3000,Phase::Idle,0,MouthShape::Closed);
+    assert(e.Tick(603001,Phase::Idle,0,MouthShape::Closed).asleep);
+    e.Touch(true,15,0,603002);
+    assert(!e.Tick(603052,Phase::Idle,0,MouthShape::Closed).asleep);
+    e.Touch(false,0,0,603060); e.React(Gesture::Tickle,603061);
+    assert(e.Tick(603100,Phase::Idle,0,MouthShape::Closed).mood==Mood::Laugh);
+    assert(e.Tick(604900,Phase::Offline,0,MouthShape::Closed).mood==Mood::Sad);
+    for(int p=0;p<static_cast<int>(Persona::Count);++p) {
+        e.SetPersona(static_cast<Persona>(p)); assert(e.GetPersona()==static_cast<Persona>(p));
+    }
+    // Disjoint tiles and padded tile stride; after each swap both buffers agree.
+    std::array<uint16_t,48> a{},b{};
+    const uint16_t tile[]={10,11,99,20,21,99};
+    DirtyRect d, r{2,1,3,2}; assert(r.Valid(8,6)); assert(!d.Valid(8,6));
+    r.CopyFromTile(b.data(),8,reinterpret_cast<const uint8_t*>(tile),6);d.Include(r);
+    DirtyRect r2{6,4,6,4};const uint16_t val=77;
+    r2.CopyFromTile(b.data(),8,reinterpret_cast<const uint8_t*>(&val),2);d.Include(r2);
+    d.Mirror(a.data(),b.data(),8);
+    assert(a==b&&a[10]==10&&a[11]==11&&a[18]==20&&a[19]==21&&a[38]==77&&a[0]==0);
+    DirtyRect r3{0,0,0,0};r3.CopyFromTile(a.data(),8,reinterpret_cast<const uint8_t*>(&val),2);
+    r3.Mirror(b.data(),a.data(),8);assert(a==b&&b[0]==77&&b[38]==77);
+    std::cout<<"Espen face and dirty rectangle tests passed\n";
+}
