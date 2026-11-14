@@ -1007,8 +1007,8 @@ replace("main/audio/engines/afe_audio_engine.cc",
         '    afe_config_free(afe_config);\n\n    if (afe_iface_ == nullptr || afe_data_ == nullptr) {')
 # Improve encoder quality without changing the protocol frame duration.
 replace("main/audio/audio_service.h",
-        '            .complexity = 0,',
-        '            .complexity = 2,')
+        '.complexity = 0,',
+        '.complexity = 2,')
 replace("main/audio/audio_service.h",
         '#define MAX_ENCODE_TASKS_IN_QUEUE 2',
         '#define MAX_ENCODE_TASKS_IN_QUEUE 6')
