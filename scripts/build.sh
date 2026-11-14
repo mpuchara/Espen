@@ -17,21 +17,30 @@ if [ ! -d upstream/local_components/esp-wifi-connect/.git ]; then
 fi
 git -C upstream/local_components/esp-wifi-connect fetch --depth 1 origin "$wifi_ref"
 git -C upstream/local_components/esp-wifi-connect reset --hard "$wifi_ref"
+hosted_ref=0e8d0e3f0c2723deaf15441200cb4d8c53fea230
+if [ ! -d upstream/local_components/esp-hosted/.git ]; then
+  git clone --depth 1 --branch v2.13.1 https://github.com/espressif/esp-hosted-mcu.git upstream/local_components/esp-hosted
+fi
+git -C upstream/local_components/esp-hosted fetch --depth 1 origin "$hosted_ref"
+git -C upstream/local_components/esp-hosted reset --hard "$hosted_ref"
 python3 scripts/prepare.py upstream
 python3 scripts/prepare_wifi.py upstream
 python3 scripts/prepare_wifi_reliability.py upstream
+python3 scripts/prepare_hosted.py upstream
 cd upstream
 python3 scripts/build.py --list-boards --json > /tmp/espen-board-list.json
 python3 scripts/build.py guition/espen-guition-jc4880p443 --name espen-guition-jc4880p443 --language pl-PL --wake-word disabled
 # Verify the actual generated configuration, not only the requested defaults.
 for setting in \
   CONFIG_ESP_HOSTED_MEMPOOL_PREFER_SPIRAM=y \
-  CONFIG_ESP_HOSTED_SDIO_CLOCK_FREQ_KHZ=20000 \
+  CONFIG_ESP_HOSTED_SDIO_CLOCK_FREQ_KHZ=10000 \
+  CONFIG_ESP_HOSTED_SDIO_RESET_DELAY_MS=2500 \
   CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE=10 \
   CONFIG_ESP_HOSTED_SDIO_TX_Q_SIZE=10; do
   grep -Fx "$setting" sdkconfig || { echo "Missing required setting: $setting"; exit 1; }
 done
 grep -Fx '# CONFIG_ESP_HOSTED_SDIO_RX_DOUBLE_BUFFERING is not set' sdkconfig
+grep -Fx '# CONFIG_ESP_HOSTED_TRANSPORT_RESTART_ON_FAILURE is not set' sdkconfig
 test -s build/merged-binary.bin
 # Full image is for P4 rev1 and must fit its 16 MiB flash.
 test "$(stat -c %s build/merged-binary.bin)" -le 16777216

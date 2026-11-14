@@ -152,7 +152,9 @@ class EspenDisplay : public LcdDisplay {
         if (!cloud_ || lv_obj_has_flag(cloud_, LV_OBJ_FLAG_HIDDEN)) return;
         std::string state, code;
         CloudSnapshot(state, code);
-        if (!WifiManager::GetInstance().IsConnected()) state = "Brak Wi-Fi";
+        if (!WifiManager::GetInstance().IsInitialized()) {
+            if (state.find("SDIO") == std::string::npos) state = "Inicjalizacja Wi-Fi / C6";
+        } else if (!WifiManager::GetInstance().IsConnected()) state = "Brak Wi-Fi";
         lv_label_set_text(cloud_state_, state.c_str());
         lv_label_set_text(cloud_code_, code.empty() ? "Kod nie jest wymagany lub jeszcze nie dostępny" : code.c_str());
         auto id = CloudDeviceId();
@@ -599,7 +601,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.1.10 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.1.11 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();

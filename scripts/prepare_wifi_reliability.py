@@ -184,7 +184,9 @@ edit("wifi_configuration_ap.cc",
             // path as the local screen imports and verifies the profile.
             if (xTaskCreate([](void*) {
                     vTaskDelay(pdMS_TO_TICKS(3500));
-                    ESP_LOGI(TAG, "Espen provisioning: reboot into station");
+                    ESP_LOGI(TAG, "Espen provisioning: stop AP before reboot into station");
+                    auto stopped = esp_wifi_stop();
+                    ESP_LOGI(TAG, "Espen provisioning: Wi-Fi stop %s", esp_err_to_name(stopped));
                     esp_restart();
                 }, "wifi_provision", 3072, nullptr, 3, nullptr) != pdPASS) {
                 cJSON_Delete(json);
