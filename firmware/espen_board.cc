@@ -696,7 +696,14 @@ class EspenDisplay : public LcdDisplay {
     std::atomic<uint32_t> mood_seq_{0};
     uint32_t seen_mood_=0,last_stt_=0,last_ambient_=0,last_audio_=0;
     bool waiting_answer_=false,button_added_=false,touch_active_=false,touch_long_=false;
-    uint32_t touch_started_=0,last_tap_=0;
+    uint32_t touch_started_=0,last_tap_=0,last_pet_=0;
+    int tap_count_=0;
+    espen::PetMotion pet_motion_;
+    espen::Motion pet_kind_=espen::Motion::None;
+    int heart_x_=192,heart_y_=185;
+    lv_obj_t* hearts_[6]={};
+    int heart_px_[6]={-1,-1,-1,-1,-1,-1},heart_py_[6]={-1,-1,-1,-1,-1,-1};
+    int heart_opa_[6]={-1,-1,-1,-1,-1,-1};
     int preview_index_=0;
     bool wifi_offline_=false,wifi_online_=false,was_online_=false;
     uint32_t seen_local_wake_=0,seen_sleep_=0;
@@ -779,12 +786,17 @@ class EspenDisplay : public LcdDisplay {
         }
         if(code==LV_EVENT_PRESS_LOST || code==LV_EVENT_RELEASED) {
             if(touch_active_&&!touch_long_&&code==LV_EVENT_RELEASED) {
-                if(touch_distance_>105) engine_.React(espen::Gesture::Tickle,now);
-                else if(touch_distance_>24) engine_.React(espen::Gesture::Stroke,now);
+                if(pet_kind_==espen::Motion::Tickle)engine_.React(espen::Gesture::Tickle,now);
+                else if(pet_kind_==espen::Motion::Stroke)engine_.React(espen::Gesture::Stroke,now);
                 else if(now-touch_started_<450) {
-                    bool dbl=last_tap_!=0&&now-last_tap_<380;
-                    engine_.React(dbl?espen::Gesture::DoubleTap:espen::Gesture::Tap,now);
-                    last_tap_=dbl?0:now;
+                    tap_count_=(last_tap_&&now-last_tap_<380)?tap_count_+1:1;
+                    last_tap_=now;
+                    lv_area_t a;lv_obj_get_coords(face_,&a);
+                    int x=touch_prev_.x-a.x1,y=touch_prev_.y-a.y1;
+                    if(tap_count_>=3){engine_.React(espen::Gesture::TripleTap,now);tap_count_=0;last_tap_=0;}
+                    else if(tap_count_==2)engine_.React(espen::Gesture::DoubleTap,now);
+                    else engine_.React(x>=155&&x<=230&&y>=125&&y<=185?
+                        espen::Gesture::Boop:espen::Gesture::Tap,now);
                 }
             }
             touch_active_=false;engine_.Touch(false,0,0,now);return;
@@ -794,11 +806,25 @@ class EspenDisplay : public LcdDisplay {
         lv_point_t p;lv_indev_get_point(indev,&p);
         if(code==LV_EVENT_PRESSED) {
             touch_active_=true;touch_long_=false;touch_started_=now;touch_distance_=0;touch_prev_=p;
+            pet_motion_.Begin(p.x,p.y,now);pet_kind_=espen::Motion::None;last_pet_=now;
         }
         if(!touch_active_)return;
-        touch_distance_+=std::abs(p.x-touch_prev_.x)+std::abs(p.y-touch_prev_.y);touch_prev_=p;
+        touch_prev_=p;
+        auto motion=pet_motion_.Move(p.x,p.y,now);
+        touch_distance_=pet_motion_.Distance();
         lv_area_t a;lv_obj_get_coords(face_,&a);
         engine_.Touch(true,(p.x-(a.x1+a.x2)/2)/6,(p.y-(a.y1+a.y2)/2)/6,now);
+        // React during motion, not only at release. Once tickling is
+        // recognized keep that classification until this touch ends.
+        if(pet_kind_==espen::Motion::Tickle)motion=pet_kind_;
+        if(motion!=espen::Motion::None&&(motion!=pet_kind_||now-last_pet_>=600)) {
+            if(pet_kind_==espen::Motion::None) {
+                heart_x_=std::clamp<int>(p.x-a.x1,65,310);
+                heart_y_=std::clamp<int>(p.y-a.y1,125,225);
+            }
+            pet_kind_=motion;last_pet_=now;tap_count_=0;last_tap_=0;
+            engine_.React(motion==espen::Motion::Tickle?espen::Gesture::Tickle:espen::Gesture::Stroke,now);
+        }
     }
     void BuildFace() {
         Settings cfg("espen_ui",false);
@@ -838,6 +864,17 @@ class EspenDisplay : public LcdDisplay {
             lv_obj_set_style_line_rounded(ear_[i],true,0);
             lv_obj_set_style_line_color(ear_[i],lv_color_hex(0x7CF6DA),0);
             lv_obj_set_pos(ear_[i],xs[i],ys[i]);Hide(ear_[i],true);
+        }
+        // Six reusable vector particles. No per-frame heap allocation or
+        // full-screen animation layer; dirty rectangles remain local.
+        static const lv_point_precise_t little_heart[]={{2,8},{3,4},{7,2},{11,6},{15,2},{19,4},{20,8},{17,13},{11,19},{5,13},{2,8}};
+        for(auto& h:hearts_) {
+            h=lv_line_create(face_);Passive(h);
+            lv_line_set_points(h,little_heart,11);
+            lv_obj_set_style_line_width(h,3,0);
+            lv_obj_set_style_line_rounded(h,true,0);
+            lv_obj_set_style_line_color(h,lv_color_hex(0xFF91C6),0);
+            Hide(h,true);
         }
         sleep_label_=lv_label_create(face_);
         lv_obj_set_style_text_font(sleep_label_,EspenUiFont(),0);
@@ -954,6 +991,19 @@ class EspenDisplay : public LcdDisplay {
             face_color_=p.color;
             for(int i=0;i<14;++i) lv_obj_set_style_bg_color(shapes_[i],lv_color_hex(p.color),0);
         }
+        for(int i=0;i<6;++i) {
+            auto h=espen::HeartAt(f.heart_age,i,heart_x_,heart_y_);
+            bool visible=f.hearts&&h.visible;
+            Hide(hearts_[i],!visible);
+            if(!visible)continue;
+            if(h.x!=heart_px_[i]||h.y!=heart_py_[i]) {
+                lv_obj_set_pos(hearts_[i],h.x,h.y);heart_px_[i]=h.x;heart_py_[i]=h.y;
+            }
+            if(h.opacity!=heart_opa_[i]) {
+                lv_obj_set_style_line_opa(hearts_[i],static_cast<lv_opa_t>(h.opacity),0);
+                heart_opa_[i]=h.opacity;
+            }
+        }
         last_accent_=p.accent;
     }
     void StyleHome() {
@@ -1002,7 +1052,17 @@ class EspenDisplay : public LcdDisplay {
             }
         }
         if (!*message) return;
-        if(user) {waiting_answer_=true;last_stt_=lv_tick_get();}
+        if(user) {
+            waiting_answer_=true;last_stt_=lv_tick_get();
+            // Only recognized USER speech, never assistant/system text.
+            // This does not consume the request or alter the AI reply.
+            auto reaction=espen::ClassifySocial(message);
+            if(reaction!=espen::Social::None) {
+                heart_x_=192;heart_y_=190;
+                engine_.SocialReact(reaction,last_stt_);
+                ESP_LOGI(TAG,"Local social reaction=%d",static_cast<int>(reaction));
+            }
+        }
         else if(!system) waiting_answer_=false;
         lv_obj_update_layout(content_);
         const bool follow = lv_obj_get_scroll_bottom(content_) <= 30;
@@ -1266,7 +1326,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.1.31 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.1.32 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();

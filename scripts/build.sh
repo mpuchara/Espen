@@ -11,6 +11,8 @@ c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_face_engine.cc -o /tmp/espen
 /tmp/espen-face-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_speech_onset.cc -o /tmp/espen-speech-test
 /tmp/espen-speech-test
+c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_social_reactions.cc -o /tmp/espen-social-test
+/tmp/espen-social-test
 ref=49b4380b3faa0ceadd28a3e78aaf0f311c46c57e
 if [ ! -d upstream/.git ]; then
   git clone --depth 1 --branch v2.5.2 https://github.com/78/xiaozhi-esp32.git upstream

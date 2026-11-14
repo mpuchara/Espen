@@ -2,13 +2,14 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include "social_reactions.h"
 
 namespace espen {
 enum class Mood { Neutral, Happy, Laugh, Sad, Surprise, Angry, Thinking, Sleepy,
                   Love, Confident, Shy, Confused, Fear, Wink, Bored, Excited, Count };
 enum class Phase { Idle, Wake, Listening, Thinking, Speaking, Offline, Startup };
 enum class Persona { Friendly, Energetic, Calm, Playful, Shy, Robotic, Count };
-enum class Gesture { Tap, DoubleTap, Stroke, Tickle };
+enum class Gesture { Tap, DoubleTap, Stroke, Tickle, TripleTap, Boop };
 enum class MouthShape { Closed, Open, Round, Wide };
 enum class Accent { None, Heart, Star, Tear, Blush, Dots, Sleep };
 struct Pose {
@@ -80,7 +81,8 @@ inline Traits Personality(Persona p) {
 struct Frame {
     Pose pose{};
     int eye_left=44,eye_right=44,gaze_x=0,gaze_y=0,bob=0;
-    bool asleep=false;
+    bool asleep=false,hearts=false;
+    uint32_t heart_age=0;
     Mood mood=Mood::Neutral;
 };
 class FaceEngine {
@@ -89,6 +91,8 @@ class FaceEngine {
     uint32_t last_tick_=0,wake_anim_at_=0,celebrate_at_=0,local_wake_at_=0;
     bool celebrating_=false,local_waking_=false,force_sleep_=false;
     bool wake_anim_=false;
+    Social social_=Social::None;
+    uint32_t social_at_=0,social_until_=0;
     bool initialized_=false, blink_active_=false, double_blink_=false, second_blink_=false;
     bool gesture_active_=false, micro_active_=false, touch_=false;
     int target_x_=0,target_y_=0, touch_x_=0,touch_y_=0;
@@ -124,7 +128,21 @@ public:
         force_sleep_=false;
         if(phase_==Phase::Idle||phase_==Phase::Offline||phase_==Phase::Startup) ResetIdle(now);
     }
+    void SocialReact(Social reaction,uint32_t now) {
+        if(reaction==Social::None)return;
+        // Sustained petting extends the effect without restarting each frame.
+        if(social_!=reaction||Due(now,social_until_))social_at_=now;
+        social_=reaction;
+        social_until_=now+(reaction==Social::Affection?3200:
+            reaction==Social::Celebration?2400:reaction==Social::Tickle?1700:2600);
+        force_sleep_=false;
+        if(phase_==Phase::Idle||phase_==Phase::Offline||phase_==Phase::Startup)ResetIdle(now);
+    }
     void React(Gesture g,uint32_t now) {
+        if(g==Gesture::Stroke){SocialReact(Social::Affection,now);return;}
+        if(g==Gesture::Tickle){SocialReact(Social::Tickle,now);return;}
+        if(g==Gesture::TripleTap){SocialReact(Social::Celebration,now);return;}
+        if(g==Gesture::Boop){SocialReact(Social::Boop,now);return;}
         gesture_=g==Gesture::DoubleTap?Mood::Surprise:g==Gesture::Tickle?Mood::Laugh:
                  g==Gesture::Stroke?Mood::Happy:Mood::Wink;
         gesture_until_=now+(g==Gesture::Tickle?1700:1300); gesture_active_=true;
@@ -152,13 +170,14 @@ public:
             }
         }
         if(gesture_active_ && Due(now,gesture_until_)) gesture_active_=false;
+        if(social_!=Social::None&&Due(now,social_until_))social_=Social::None;
         if(micro_active_ && Due(now,micro_until_)) micro_active_=false;
         if(celebrating_ && now-celebrate_at_>=2200) celebrating_=false;
         if(local_waking_ && now-local_wake_at_>=1600) local_waking_=false;
         bool quiet=phase==Phase::Idle||phase==Phase::Offline||phase==Phase::Startup;
         bool dance=celebrating_&&quiet;
         uint32_t idle=quiet?now-idle_since_:0;
-        bool asleep=quiet && (force_sleep_||idle>=kSleepMs) && !touch_ && !gesture_active_ && !dance && !local_waking_;
+        bool asleep=quiet && (force_sleep_||idle>=kSleepMs) && !touch_ && !gesture_active_ && social_==Social::None && !dance && !local_waking_;
         if(loud && phase==Phase::Idle && !asleep && !gesture_active_) {
             gesture_=Mood::Surprise; gesture_active_=true; gesture_until_=now+750;
         }
@@ -187,8 +206,24 @@ public:
         if(gesture_active_ && phase!=Phase::Wake) mood=gesture_;
         if(local_waking_&&quiet) mood=Mood::Happy;
         if(dance) mood=Mood::Excited;
+        if(social_!=Social::None) {
+            switch(social_) {
+                case Social::Affection:mood=Mood::Love;break;
+                case Social::Praise:case Social::Thanks:case Social::Greeting:mood=Mood::Happy;break;
+                case Social::Celebration:mood=Mood::Excited;break;
+                case Social::Tickle:mood=Mood::Laugh;break;
+                case Social::Boop:mood=Mood::Shy;break;
+                case Social::Goodnight:mood=Mood::Sleepy;break;
+                default:break;
+            }
+        }
         if(asleep) mood=Mood::Sleepy;
         Pose p=Expression(mood);
+        // A goodnight wish is a friendly sleepy face, not a command to
+        // interrupt ongoing speech or listening.
+        if(social_==Social::Goodnight && phase==Phase::Speaking) {
+            p.eye_h=20;p.accent=Accent::None;
+        }
         if(phase==Phase::Listening && mood==Mood::Neutral) {p.eye_h=54;p.color=0x7CF6DA;}
         if(phase==Phase::Wake) {p.eye_h=58;p.mouth_w=111;}
         if(mood==Mood::Sleepy && !asleep) {p.mouth_h=38;p.mouth_w=42;}
@@ -227,8 +262,8 @@ public:
         if(mood==Mood::Thinking) {gx=17;gy=-12;}
         if(mood==Mood::Shy) {gx=-20;gy=7;}
         if(mood==Mood::Confused) {gx=12;gy=-4;}
-        if(dance) {
-            uint32_t t=now-celebrate_at_;
+        if(dance||social_==Social::Celebration) {
+            uint32_t t=now-(social_==Social::Celebration?social_at_:celebrate_at_);
             int swing=static_cast<int>((t/35)%32);
             gx=(swing<16?swing:32-swing)*2-16;
             gy=-5;
@@ -266,14 +301,16 @@ public:
         f.eye_right=Approach(f.eye_right,std::max(4,(p.eye_h-p.asym)*blink/100),speed*7);
         f.gaze_x=Approach(f.gaze_x,gx,speed);f.gaze_y=Approach(f.gaze_y,gy,speed);
         int bob=0;
-        if(dance) {
-            int step=static_cast<int>(((now-celebrate_at_)/40)%24);
+        if(dance||social_==Social::Celebration) {
+            int step=static_cast<int>(((now-(social_==Social::Celebration?social_at_:celebrate_at_))/40)%24);
             bob=(step<12?step:24-step)*2-12;
         } else if(mood==Mood::Laugh || mood==Mood::Excited) bob=static_cast<int>((now/45)%12)-6;
         else if(asleep) bob=static_cast<int>((now/250)%6)-3;
         else if(phase==Phase::Listening) bob=static_cast<int>((now/220)%4)-2;
         else if(mood==Mood::Fear) bob=static_cast<int>((now/60)%5)-2;
         f.bob=Approach(f.bob,bob,std::max(1,speed));f.mood=mood;f.asleep=asleep;
+        f.hearts=social_==Social::Affection;
+        f.heart_age=f.hearts?(now-social_at_)%1950:0;
         return f;
     }
 };
