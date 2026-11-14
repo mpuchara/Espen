@@ -22,7 +22,10 @@ class EspenWakeEngine {
     std::string message_="Naucz hasło, aby włączyć wybudzanie.";
     static constexpr const char* TAG="EspenWake";
     void LoadLocked() {
-        if(loaded_)return;loaded_=true;
+        if (loaded_) {
+            return;
+        }
+        loaded_ = true;
         nvs_handle_t h;
         if(nvs_open("espen_wake",NVS_READONLY,&h)==ESP_OK){
             size_t n=sizeof(active_);
@@ -103,7 +106,11 @@ public:
     Snapshot Get(){std::lock_guard<std::mutex> l(mutex_);LoadLocked();return {trained_,running_,recording_,count_,trained_?active_.name:"Hej Ala",message_};}
     void SetRunning(bool on){
         std::lock_guard<std::mutex> l(mutex_);LoadLocked();
-        if(on==running_)return;running_=on;ResetSegment();
+        if (on == running_) {
+            return;
+        }
+        running_ = on;
+        ResetSegment();
         if(on){noise_frames_=0;noise_=35.f;}
         if(!on&&recording_){recording_=false;message_="Nagranie przerwane. Wróć do trybu oczekiwania.";}
     }

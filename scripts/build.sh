@@ -3,8 +3,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 root="$PWD"
 # Host-side regression tests for the local wake feature extractor and DTW.
-c++ -std=c++17 -O2 tests/test_wake_features.cc -o /tmp/espen-wake-test
+c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_wake_features.cc -o /tmp/espen-wake-test
 /tmp/espen-wake-test
+c++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread -Itests/stubs tests/test_wake_engine.cc -o /tmp/espen-wake-engine-test
+/tmp/espen-wake-engine-test
 ref=49b4380b3faa0ceadd28a3e78aaf0f311c46c57e
 if [ ! -d upstream/.git ]; then
   git clone --depth 1 --branch v2.5.2 https://github.com/78/xiaozhi-esp32.git upstream
