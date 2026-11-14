@@ -314,8 +314,8 @@ inline void DrawFlag(VisualFrame& f,Scene scene,uint32_t t){
     }
     f.Line(x,y-3,x,111,0xB9D0DB,3);f.Circle(x,y-4,7,0xFFD66B);
 }
-inline VisualFrame DrawVisual(const Cue& cue,uint32_t t){
-    VisualFrame f;
+inline void DrawVisualInto(VisualFrame& f,const Cue& cue,uint32_t t){
+    f.count=0;f.overflow=false;
     const uint32_t cyan=0x76E5F7,blue=0x508EE7,green=0x64DCA0,yellow=0xFFD66B,pink=0xFF91C6,orange=0xFF9761,white=0xF5F7FA,dark=0x18354A,purple=0xB5A0FF,red=0xEF6978,brown=0xB78355;
     int bob=Wave(t,1100,7),sway=Wave(t,1800,14)-7;
     bool blink=(t%2300)<130;
@@ -370,7 +370,8 @@ inline VisualFrame DrawVisual(const Cue& cue,uint32_t t){
         case Scene::Shark:
             {bool shark=cue.scene==Scene::Shark;int x=60+sway;uint32_t c=shark?blue:orange;
             f.Box(x-33,48,66,35,c,18);f.Triangle(x-49,43,23,43,c);if(shark)f.Triangle(x-14,22,28,30,c);else f.Circle(x,50,21,yellow);f.Circle(x+23,59,7,dark);f.Line(x+21,73,x+31,69,dark,2);
-            for(int i=0;i<3;++i)f.Circle(102-i*10,90-Wave(t+i*300,1300,75),7+i*2,cyan);break;}
+            for(int i=0;i<3;++i){f.Circle(102-i*10,90-Wave(t+i*300,1300,75),7+i*2,cyan);}
+            break;}
         case Scene::Octopus:
             f.Circle(63,43+bob,56,pink);f.Circle(51,44+bob,7,dark);f.Circle(76,44+bob,7,dark);for(int i=0;i<8;++i){int x=28+i*10;f.Line(x,62+bob,x+sway/2,91+(i%2)*10,pink,6);f.Line(x+sway/2,91+(i%2)*10,x+5,107-Wave(t+i*140,800,13),pink,6);}break;
         case Scene::Penguin:
@@ -378,7 +379,8 @@ inline VisualFrame DrawVisual(const Cue& cue,uint32_t t){
         case Scene::Elephant:
             f.Circle(30,55,43,blue);f.Circle(96,55,43,blue);DrawFaceAnimal(f,63,61,0xAFC3DD,blink);f.Box(56,67,15,32+bob,0xAFC3DD,7);f.Line(63,98+bob,79+sway,92+bob,blue,8);break;
         case Scene::Snake:
-            for(int i=0;i<8;++i)f.Circle(17+i*12,72+Wave(t+i*170,1000,25)-12,24,green);f.Circle(104,54+bob,33,green);f.Circle(110,47+bob,6,dark);f.Line(117,62+bob,125,69+bob,red,3);break;
+            for(int i=0;i<8;++i){f.Circle(17+i*12,72+Wave(t+i*170,1000,25)-12,24,green);}
+            f.Circle(104,54+bob,33,green);f.Circle(110,47+bob,6,dark);f.Line(117,62+bob,125,69+bob,red,3);break;
         case Scene::Forest:
             DrawTree(f,4,35,58);DrawTree(f,42,12,74);DrawTree(f,75,48,47);for(int i=0;i<4;++i)f.Circle(12+i*31,106,6,yellow);break;
         case Scene::Flower:
@@ -447,7 +449,8 @@ inline VisualFrame DrawVisual(const Cue& cue,uint32_t t){
         case Scene::Sport:
             f.Circle(63,58+bob*3,66,white);f.Circle(63,58+bob*3,20,dark);for(int i=0;i<4;++i){int x=i<2?38:88,y=(i%2?78:38)+bob*3;f.Line(63,58+bob*3,x,y,dark,4);}f.Line(9,111,117,111,green,4);break;
         case Scene::Minecraft:
-            for(int i=0;i<3;++i)for(int j=0;j<3;++j)f.Box(12+j*34,27+i*29,32,27,i==0?((j+static_cast<int>(t/600))%2?green:0x3AA668):((i+j)%2?brown:0x98603E));f.Box(44,57,38,36,dark);f.Box(47,60,10,10,green);f.Box(69,60,10,10,green);f.Box(57,73,12,14,green);break;
+            for(int i=0;i<3;++i){for(int j=0;j<3;++j){f.Box(12+j*34,27+i*29,32,27,i==0?((j+static_cast<int>(t/600))%2?green:0x3AA668):((i+j)%2?brown:0x98603E));}}
+            f.Box(44,57,38,36,dark);f.Box(47,60,10,10,green);f.Box(69,60,10,10,green);f.Box(57,73,12,14,green);break;
         case Scene::Lego:
             for(int i=0;i<3;++i){int y=83-i*24-(i==2?bob:0);f.Box(22+i*4,y,82-i*8,23,i==0?red:i==1?blue:yellow,4);for(int j=0;j<3;++j)f.Box(30+i*4+j*22,y-6,14,8,i==0?red:i==1?blue:yellow,2);}break;
         case Scene::Clock:
@@ -476,12 +479,12 @@ inline VisualFrame DrawVisual(const Cue& cue,uint32_t t){
             f.Box(17,23,92,70,cyan,20);f.Triangle(33,82,23,23,cyan);for(int i=0;i<3;++i)f.Circle(39+i*24,56,11+Wave(t+i*190,850,8),dark);break;
         default:break;
     }
-    return f;
 }
+inline VisualFrame DrawVisual(const Cue& cue,uint32_t t){VisualFrame f;DrawVisualInto(f,cue,t);return f;}
 // Small original costumes above the actual speaking face. These are separate
 // from the illustration, and leave the eyes and mouth unobstructed.
-inline VisualFrame DrawCostume(Scene scene,uint32_t t){
-    VisualFrame f;
+inline void DrawCostumeInto(VisualFrame& f,Scene scene,uint32_t t){
+    f.count=0;f.overflow=false;
     const uint32_t cyan=0x76E5F7,blue=0x508EE7,green=0x64DCA0,yellow=0xFFD66B,pink=0xFF91C6,orange=0xFF9761,white=0xF5F7FA,purple=0xB5A0FF,red=0xEF6978,brown=0xB78355,dark=0x18354A;
     int bob=Wave(t,1200,4);
     switch(scene){
@@ -536,11 +539,12 @@ inline VisualFrame DrawCostume(Scene scene,uint32_t t){
             f.Line(30,44,30,26,cyan,6);f.Line(30,26,47,10,cyan,6);f.Line(47,10,79,10,cyan,6);f.Line(79,10,96,26,cyan,6);f.Line(96,26,96,44,cyan,6);
             f.Box(21,32,18,20,blue,8);f.Box(87,32,18,20,blue,8);break;
         case Scene::Success:case Scene::Love:
-            for(int i=0;i<3;++i)f.Star(23+i*40,16+Wave(t+i*250,900,17),7+i%2*3,scene==Scene::Love?pink:yellow);break;
+            for(int i=0;i<3;++i){f.Star(23+i*40,16+Wave(t+i*250,900,17),7+i%2*3,scene==Scene::Love?pink:yellow);}
+            break;
         default:break;
     }
-    return f;
 }
+inline VisualFrame DrawCostume(Scene scene,uint32_t t){VisualFrame f;DrawCostumeInto(f,scene,t);return f;}
 inline uint32_t SceneTint(Scene s){
     switch(s){
         case Scene::Cat:case Scene::Lion:case Scene::Sun:case Scene::Saturn:case Scene::Birthday:return 0xFFD66B;

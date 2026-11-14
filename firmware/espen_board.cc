@@ -990,6 +990,7 @@ class EspenDisplay : public LcdDisplay {
     int visual_mix_=0;
     uint32_t visual_id_=0,visual_started_=0,visual_last_draw_=0;
     espen::Cue visual_cue_{};
+    espen::VisualFrame visual_scratch_{};
     std::string visual_caption_text_;
     // A scene never exceeds 72 primitives total. Separate fixed pools
     // avoid allocating/deleting widgets during speech.
@@ -1272,10 +1273,11 @@ class EspenDisplay : public LcdDisplay {
         for(size_t i=nl;i<NL;++i)if(lines[i].used){Hide(lines[i].obj,true);lines[i].used=false;}
     }
     void DrawVisualPanel(const espen::Cue& cue,uint32_t age) {
-        RenderVisualSlots(espen::DrawVisual(cue,age),visual_rects_,visual_lines_,3);
-        auto costume=espen::DrawCostume(cue.scene,age);
-        RenderVisualSlots(costume,costume_rects_,costume_lines_,0);
-        Hide(costume_panel_,costume.count==0);
+        espen::DrawVisualInto(visual_scratch_,cue,age);
+        RenderVisualSlots(visual_scratch_,visual_rects_,visual_lines_,3);
+        espen::DrawCostumeInto(visual_scratch_,cue.scene,age);
+        RenderVisualSlots(visual_scratch_,costume_rects_,costume_lines_,0);
+        Hide(costume_panel_,visual_scratch_.count==0);
         char eq[48];const char* title=espen::Caption(cue.scene);
         if(cue.op){
             if(age<1400)snprintf(eq,sizeof(eq),"%d %c %d",cue.a,cue.op,cue.b);
