@@ -50,18 +50,25 @@ replace("main/audio/codecs/es8311_audio_codec.cc",
         static int peak = 0;
         int block_peak = 0;
         int64_t block_sq = 0;
+        int block_clipped = 0;
         for (int i = 0; i < samples; ++i) {
             const int v = dest[i];
             const int a = v < 0 ? -v : v;
             if (a > peak) peak = a;
             if (a > block_peak) block_peak = a;
+            if (a >= 32000) ++block_clipped;
             sum_sq += static_cast<int64_t>(v) * v;
             block_sq += static_cast<int64_t>(v) * v;
         }
         extern void EspenAmbientPeak(int);
         EspenAmbientPeak(block_peak);
         extern void EspenMicLevel(int);
-        if(samples>0) EspenMicLevel(static_cast<int>(std::sqrt(static_cast<double>(block_sq)/samples)));
+        if(samples>0) {
+            const int rms=static_cast<int>(std::sqrt(static_cast<double>(block_sq)/samples));
+            EspenMicLevel(rms);
+            extern void EspenMicStats(int,int,int);
+            EspenMicStats(rms,block_peak,block_clipped*1000/samples);
+        }
         count += samples;
         const int64_t now = esp_timer_get_time();
         if (now - last >= 1000000 && count > 0) {
@@ -1062,3 +1069,43 @@ replace("main/audio/audio_service.cc",
         '    playback_drained_notified_=false; audio_queue_cv_.notify_all(); return true;\n'
         '}\n\n'
         'bool AudioService::IsEspenUplinkDrained() {')
+
+# A stale wake event or physical button must not open a cloud conversation
+# over the explicitly requested local diagnostic playback.
+replace("main/application.cc",
+        'void Application::HandleWakeWordDetectedEvent() {\n    auto state = GetDeviceState();',
+        'void Application::HandleWakeWordDetectedEvent() {\n'
+        '    extern bool EspenDiagnosticBusy();\n'
+        '    if (EspenDiagnosticBusy()) return;\n'
+        '    auto state = GetDeviceState();')
+replace("main/application.cc",
+        'void Application::HandleToggleChatEvent() {\n    auto state = GetDeviceState();',
+        'void Application::HandleToggleChatEvent() {\n'
+        '    extern bool EspenDiagnosticBusy();\n'
+        '    if (EspenDiagnosticBusy()) return;\n'
+        '    auto state = GetDeviceState();')
+replace("main/application.cc",
+        'void Application::HandleStartListeningEvent() {\n    auto state = GetDeviceState();',
+        'void Application::HandleStartListeningEvent() {\n'
+        '    extern bool EspenDiagnosticBusy();\n'
+        '    if (EspenDiagnosticBusy()) return;\n'
+        '    auto state = GetDeviceState();')
+# The pre-roll is already buffered and the ADC is warm. A 120 ms delay and
+# resampler reset after starting a speech-triggered turn would lose live
+# input during AFE startup. Preserve the continuous stream in this case.
+replace("main/audio/audio_service.cc",
+        '        audio_input_need_warmup_ = true;\n'
+        '        {\n'
+        '            std::lock_guard<std::mutex> lock(input_resampler_mutex_);\n'
+        '            if (input_resampler_ != nullptr) {\n'
+        '                esp_ae_rate_cvt_reset(input_resampler_);\n'
+        '            }\n'
+        '        }\n'
+        '        audio_engine_->EnableVoiceProcessing(true);',
+        '        const bool continuous_capture = (xEventGroupGetBits(event_group_) & AS_EVENT_ESPEN_CAPTURE) != 0;\n'
+        '        audio_input_need_warmup_ = !continuous_capture && !codec_->input_enabled();\n'
+        '        if (!continuous_capture) {\n'
+        '            std::lock_guard<std::mutex> lock(input_resampler_mutex_);\n'
+        '            if (input_resampler_ != nullptr) esp_ae_rate_cvt_reset(input_resampler_);\n'
+        '        }\n'
+        '        audio_engine_->EnableVoiceProcessing(true);')

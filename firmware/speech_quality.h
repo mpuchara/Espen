@@ -6,6 +6,7 @@
 namespace espen {
 inline constexpr int kMicGains[]={24,30,36,42};
 inline int MicGain(int gain) {
+    gain=std::clamp(gain,24,42);
     int best=30;
     for(int g:kMicGains) if(std::abs(g-gain)<std::abs(best-gain))best=g;
     return best;

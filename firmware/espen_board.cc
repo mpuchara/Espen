@@ -31,6 +31,7 @@
 #include <ssid_manager.h>
 #include <wifi_manager.h>
 #include <cstring>
+#include <cstdio>
 #include <cstdlib>
 #include <algorithm>
 #include <atomic>
@@ -88,6 +89,7 @@ struct DiagCapture {
     std::mutex mutex;
     std::atomic<bool> busy{false};
     bool armed=false,active=false,truncated=false;
+    std::string note;
     int16_t* raw=nullptr;
     uint8_t* encoded=nullptr;
     size_t samples=0,bytes=0,packets=0;
@@ -106,7 +108,7 @@ void EspenDiagBegin(){
     std::lock_guard<std::mutex> l(diag.mutex);
     if(!diag.armed||diag.busy.load())return;
     diag.armed=false;diag.active=true;diag.samples=diag.bytes=diag.packets=0;
-    diag.stats={};diag.truncated=false;
+    diag.stats={};diag.truncated=false;diag.note.clear();
     ESP_LOGI(TAG,"Speech diagnostic: capturing next utterance");
 }
 void EspenDiagEnd(){
@@ -133,13 +135,13 @@ void EspenDiagOpus(const AudioStreamPacket& p){
 static bool EspenDiagArm(){
     std::lock_guard<std::mutex> l(diag.mutex);
     if(diag.busy.load()||diag.active||!diag.Allocate())return false;
-    diag.armed=true;diag.samples=diag.bytes=diag.packets=0;diag.stats={};diag.truncated=false;
+    diag.armed=true;diag.samples=diag.bytes=diag.packets=0;diag.stats={};diag.truncated=false;diag.note.clear();
     return true;
 }
 static void EspenDiagClear(){
     std::lock_guard<std::mutex> l(diag.mutex);
     if(diag.busy.load())return;
-    diag.armed=diag.active=false;diag.samples=diag.bytes=diag.packets=0;diag.stats={};diag.truncated=false;
+    diag.armed=diag.active=false;diag.samples=diag.bytes=diag.packets=0;diag.stats={};diag.truncated=false;diag.note.clear();
     if(diag.raw){heap_caps_free(diag.raw);diag.raw=nullptr;}
     if(diag.encoded){heap_caps_free(diag.encoded);diag.encoded=nullptr;}
 }
@@ -151,15 +153,20 @@ static std::string EspenDiagSummary(){
         diag.busy.load()?"Odtwarzam":diag.active?"Nagrywam":diag.armed?"Uzbrojone":"Gotowe",
         static_cast<double>(diag.samples)/16000.0,static_cast<unsigned>(diag.packets),
         diag.stats.peak,diag.stats.ClipPermille(),diag.truncated?" | limit 12 s":"");
-    return b;
+    return diag.note.empty()?std::string(b):std::string(b)+"\n"+diag.note;
 }
 static bool EspenDiagPlay(bool raw){
     auto& app=Application::GetInstance();
     auto& audio=app.GetAudioService();
-    if(app.GetDeviceState()!=kDeviceStateIdle||!audio.IsPlaybackIdle())return false;
+    if(app.GetDeviceState()!=kDeviceStateIdle||!audio.IsPlaybackIdle()){
+        std::lock_guard<std::mutex> l(diag.mutex);diag.note="Poczekaj, aż robot zakończy rozmowę.";return false;
+    }
     {
         std::lock_guard<std::mutex> l(diag.mutex);
-        if(diag.busy.load()||diag.armed||diag.active||!(raw?diag.samples:diag.packets))return false;
+        if(diag.busy.load()||diag.armed||diag.active||!(raw?diag.samples:diag.packets)){
+            diag.note="Brak gotowego nagrania; uzbrój test i zadaj pytanie.";return false;
+        }
+        diag.note.clear();
         diag.busy.store(true,std::memory_order_release);
     }
     audio.EnableWakeWordDetection(false);
@@ -187,7 +194,7 @@ static bool EspenDiagPlay(bool raw){
         while(a.GetDeviceState()==kDeviceStateIdle&&!service.IsPlaybackIdle())vTaskDelay(pdMS_TO_TICKS(40));
         diag.busy.store(false,std::memory_order_release);vTaskDelete(nullptr);
     },"espen_diag",4096,reinterpret_cast<void*>(static_cast<uintptr_t>(raw?1:2)),2,nullptr);
-    if(ok!=pdPASS){diag.busy.store(false,std::memory_order_release);return false;}
+    if(ok!=pdPASS){std::lock_guard<std::mutex> l(diag.mutex);diag.note="Brak pamięci na odtwarzanie.";diag.busy.store(false,std::memory_order_release);return false;}
     return true;
 }
 static std::atomic<bool> espen_network_error{false},espen_turn_waiting{false};
