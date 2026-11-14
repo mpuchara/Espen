@@ -276,3 +276,17 @@ replace("main/application.cc",
         '    } else if (ws) {\n'
         '        EspenCloudInfo("Sparowano. Naciśnij Mów, aby połączyć WebSocket.", "");\n'
         '    }\n}')
+
+# Network diagnostics and an explicit, reversible DNS override. Keep the
+# upstream HTTPS endpoint, activation handshake and TLS validation unchanged.
+replace("main/application.cc", "#include <arpa/inet.h>",
+        "#include <arpa/inet.h>\n#include <esp_netif.h>\n#include <lwip/sockets.h>\n#include <lwip/netdb.h>\n#include <fcntl.h>\n#include <cerrno>")
+app = up / "main/application.cc"
+src = app.read_text()
+pos = src.index("void Application::HandleNetworkConnectedEvent() {")
+app.write_text(src[:pos] + (root / "firmware/network_diagnostics.inc").read_text() + "\n" + src[pos:])
+replace("main/application.cc",
+        '    ESP_LOGI(TAG, "Network connected");\n    auto state = GetDeviceState();',
+        '    ESP_LOGI(TAG, "Network connected");\n    EspenConfigureNetwork();\n    auto state = GetDeviceState();')
+# Allow the remote endpoint more time on high-latency Internet connections.
+replace("main/ota.cc", "    http->SetTimeout(10000);", "    http->SetTimeout(20000);")

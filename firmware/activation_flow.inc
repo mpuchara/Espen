@@ -2,6 +2,7 @@
 // Keep the upstream identity and handshake; do not download remote firmware.
 void Application::CheckNewVersion() {
     int retry_delay = 2;
+    unsigned transport_failures = 0;
     bool activation_confirmed = false;
     std::string shown_code;
     auto display = Board::GetInstance().GetDisplay();
@@ -16,11 +17,17 @@ void Application::CheckNewVersion() {
             EspenCloudInfo(status.c_str(), shown_code.c_str());
             display->SetStatus("Xiaozhi: błąd połączenia");
             ESP_LOGW(TAG, "Espen activation: %s; retry in %d s", error.c_str(), retry_delay);
+            if (++transport_failures == 1 || transport_failures % 4 == 0) {
+                // Probe only when the HTTP layer reports DNS or timeout.
+                if (error.find("dns_failed") != std::string::npos || error.find("timeout") != std::string::npos)
+                    EspenProbeCloud(ota_->GetCheckVersionUrl());
+            }
             vTaskDelay(pdMS_TO_TICKS(retry_delay * 1000));
             retry_delay = std::min(retry_delay * 2, 15);
             continue;
         }
         retry_delay = 2;
+        transport_failures = 0;
         ota_->MarkCurrentVersionValid();
         const bool usable = ota_->HasMqttConfig() || ota_->HasWebsocketConfig();
         const bool code = ota_->HasActivationCode();

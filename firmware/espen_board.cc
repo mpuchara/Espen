@@ -142,6 +142,7 @@ class EspenDisplay : public LcdDisplay {
     lv_obj_t* cloud_ = nullptr;
     lv_obj_t* cloud_state_ = nullptr;
     lv_obj_t* cloud_code_ = nullptr;
+    lv_obj_t* cloud_dns_label_ = nullptr;
     lv_obj_t* cloud_device_ = nullptr;
     lv_obj_t* cloud_url_ = nullptr;
     lv_obj_t* cloud_keyboard_ = nullptr;
@@ -255,6 +256,20 @@ class EspenDisplay : public LcdDisplay {
                 auto* self = static_cast<EspenDisplay*>(lv_event_get_user_data(e));
                 lv_textarea_set_text(self->cloud_url_, CONFIG_OTA_URL);
             }, this, 350);
+            auto* dns_btn = MakeButton(cloud_, "DNS: DHCP", [](lv_event_t* e) {
+                auto* self = static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                {
+                    Settings net("espen_net", true);
+                    net.SetBool("public_dns", !net.GetBool("public_dns", false));
+                }
+                lv_label_set_text(self->cloud_state_, "Zmieniono DNS. Restart...");
+                Application::GetInstance().Schedule([]() { esp_restart(); });
+            }, this, 350);
+            cloud_dns_label_ = lv_obj_get_child(dns_btn, 0);
+            auto* dns_hint = lv_label_create(cloud_);
+            lv_obj_set_width(dns_hint, lv_pct(100));
+            lv_label_set_long_mode(dns_hint, LV_LABEL_LONG_WRAP);
+            lv_label_set_text(dns_hint, "DNS: wybór DHCP lub publiczny 1.1.1.1 / 1.0.0.1. Zmiana wymaga restartu.");
             cloud_keyboard_ = lv_keyboard_create(cloud_);
             lv_obj_set_size(cloud_keyboard_, lv_pct(100), 220);
             lv_obj_add_flag(cloud_keyboard_, LV_OBJ_FLAG_HIDDEN);
@@ -276,6 +291,8 @@ class EspenDisplay : public LcdDisplay {
                 lv_obj_add_flag(self->cloud_keyboard_, LV_OBJ_FLAG_HIDDEN);
             }, LV_EVENT_CANCEL, this);
         }
+        Settings net("espen_net", false);
+        lv_label_set_text(cloud_dns_label_, net.GetBool("public_dns", false) ? "DNS: publiczny (zmień)" : "DNS: DHCP (zmień)");
         Settings wifi("wifi", false);
         auto url = wifi.GetString("ota_url", CONFIG_OTA_URL);
         lv_textarea_set_text(cloud_url_, url.empty() ? CONFIG_OTA_URL : url.c_str());
@@ -601,7 +618,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.1.12 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.1.13 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();
