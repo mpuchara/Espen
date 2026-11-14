@@ -785,3 +785,33 @@ replace("main/audio/audio_service.cc",
 replace("main/audio/audio_service.cc",
         '    if (enable) {\n        if (!InitializeAudioEngine()) {\n            return;\n        }\n        ResetDecoder();',
         '    if (enable) {\n        if (!InitializeAudioEngine()) {\n            CancelEspenSpeechCapture();\n            return;\n        }\n        ResetDecoder();')
+
+# Do not feed the last capture block twice if the main task enables the
+# voice processor between unlocking the ring and feeding the AFE.
+replace("main/audio/audio_service.cc",
+        '                espen_read_failures = 0;\n                {',
+        '                espen_read_failures = 0;\n                bool feed_voice = false;\n                {')
+replace("main/audio/audio_service.cc",
+        '                    EventBits_t current = xEventGroupGetBits(event_group_);\n'
+        '                    if (current & AS_EVENT_ESPEN_CAPTURE) {',
+        '                    EventBits_t current = xEventGroupGetBits(event_group_);\n'
+        '                    feed_voice = (current & AS_EVENT_AUDIO_PROCESSOR_RUNNING) && !(current & AS_EVENT_ESPEN_CAPTURE);\n'
+        '                    if (current & AS_EVENT_ESPEN_CAPTURE) {')
+replace("main/audio/audio_service.cc",
+        '                if (xEventGroupGetBits(event_group_) & AS_EVENT_AUDIO_PROCESSOR_RUNNING)\n'
+        '                    audio_engine_->Feed(std::move(data));',
+        '                if (feed_voice && (xEventGroupGetBits(event_group_) & AS_EVENT_AUDIO_PROCESSOR_RUNNING))\n'
+        '                    audio_engine_->Feed(std::move(data));')
+replace("main/application.cc",
+        '                auto status = wake.trained ? "Powiedz: " + wake.name : std::string("Naucz hasło głosowe");',
+        '                auto status = wake.auto_speech ? std::string("Zacznij mówić") :\n'
+        '                    wake.trained ? "Powiedz: " + wake.name : std::string("Naucz hasło głosowe");')
+replace("main/application.cc",
+        '    audio_service_.EnableVoiceProcessing(true);\n    espen_timeout_.Start(esp_timer_get_time()/1000);',
+        '    audio_service_.EnableVoiceProcessing(true);\n'
+        '    if (!audio_service_.IsAudioProcessorRunning()) {\n'
+        '        ESP_LOGE(TAG, "Espen: voice processor failed to start; returning to wake");\n'
+        '        SetDeviceState(kDeviceStateIdle);\n'
+        '        return;\n'
+        '    }\n'
+        '    espen_timeout_.Start(esp_timer_get_time()/1000);')

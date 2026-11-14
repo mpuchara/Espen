@@ -465,8 +465,8 @@ class EspenDisplay : public LcdDisplay {
                     s.trained?"Hasło zapisane: "+s.name:"Naucz hasło w ustawieniach"):
                 !s.receiving?"Uruchamiam mikrofon...":
                 !s.signal?"Mikrofon: brak sygnału":
-                auto_speech_?"Nasłuch: zacznij mówić":
-                s.trained?"Nasłuch: "+s.name:"Naucz hasło w ustawieniach";
+                auto_speech_&&s.speech_allowed?"Nasłuch: zacznij mówić":
+                s.trained?"Nasłuch: "+s.name:auto_speech_?"Czekam na połączenie":"Naucz hasło w ustawieniach";
             if(status!=wake_indicator_text_) {
                 wake_indicator_text_=status;
                 lv_label_set_text(wake_indicator_,status.c_str());

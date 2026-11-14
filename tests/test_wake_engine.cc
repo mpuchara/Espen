@@ -60,8 +60,11 @@ int main() {
     assert(rebooted.Get().receiving && !rebooted.Get().signal);
     // Speech mode works without a trained keyword, keyword-only mode is
     // retained, and enrollment never starts an automatic conversation.
+    auto saved_profile=nvs_committed;
+    nvs_committed.clear();
     EspenWakeEngine voice_only;
     voice_only.SetAutoSpeech(true);voice_only.AllowSpeech(true);voice_only.SetRunning(true);
+    assert(!voice_only.Get().trained);
     for(int i=0;i<20;++i)voice_only.Feed(silence.data(),silence.size());
     std::string onset;
     for(int i=0;i<12;++i){
@@ -71,6 +74,7 @@ int main() {
     voice_only.Begin();
     for(int i=0;i<20;++i)assert(voice_only.Feed(silence.data(),silence.size()).empty());
     for(int i=0;i<12;++i)assert(voice_only.Feed(speech.data(),speech.size()).empty());
+    nvs_committed=saved_profile;
     nvs_committed[0]=0;
     EspenWakeEngine corrupt;
     assert(!corrupt.Get().trained);

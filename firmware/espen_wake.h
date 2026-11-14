@@ -133,6 +133,7 @@ public:
     struct Snapshot {
         bool trained,running,recording;int count;std::string name,message;
         bool receiving,signal;uint32_t frames;uint64_t armed_ms;int rms,noise,gate;
+        bool auto_speech,speech_allowed;
     };
     void Load(){std::lock_guard<std::mutex> l(mutex_);LoadLocked();}
     void SetAutoSpeech(bool on) {
@@ -150,7 +151,7 @@ public:
         return {trained_,running_,recording_,count_,trained_?active_.name:"Hej Ala",message_,
             receiving,receiving&&zero_frames_<50,frames_received_,running_?now-armed_at_:0,
             static_cast<int>(last_rms_),static_cast<int>(noise_),
-            static_cast<int>(std::max(45.f,noise_*2.6f))};
+            static_cast<int>(std::max(45.f,noise_*2.6f)),auto_speech_,speech_allowed_};
     }
     void SetRunning(bool on){
         std::lock_guard<std::mutex> l(mutex_);LoadLocked();
