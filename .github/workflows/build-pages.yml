@@ -27,6 +27,9 @@ jobs:
           path: |
             dist/espen.bin
             dist/espen.bin.sha256
+            dist/espen-app.bin
+            dist/espen-assets.bin
+            dist/espen-update.sha256
           if-no-files-found: error
       - name: Upload debug symbols and effective configuration
         uses: actions/upload-artifact@v4

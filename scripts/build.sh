@@ -38,7 +38,26 @@ test "$(stat -c %s build/merged-binary.bin)" -le 16777216
 cd "$root"
 mkdir -p dist
 cp -r web/. dist/
+# Guard the non-destructive update layout against future upstream changes.
+python3 - <<'PYLAYOUT'
+import json
+from pathlib import Path
+build = Path("upstream/build")
+flash = json.loads((build / "flasher_args.json").read_text())["flash_files"]
+offsets = {Path(name).name: int(address, 0) for address, name in flash.items()}
+assert offsets.get("xiaozhi.bin") == 0x20000, offsets
+assert offsets.get("generated_assets.bin") == 0x800000, offsets
+assert (build / "xiaozhi.bin").stat().st_size <= 0x3f0000
+assert (build / "generated_assets.bin").stat().st_size <= 0x800000
+manifest = json.loads(Path("web/manifest.json").read_text())
+assert manifest["builds"][0]["parts"] == [
+    {"path": "espen-app.bin", "offset": 0x20000},
+    {"path": "espen-assets.bin", "offset": 0x800000},
+]
+PYLAYOUT
 cp upstream/build/merged-binary.bin dist/espen.bin
+cp upstream/build/xiaozhi.bin dist/espen-app.bin
+cp upstream/build/generated_assets.bin dist/espen-assets.bin
 cp upstream/LICENSE dist/xiaozhi-LICENSE.txt
 cp firmware/vendor-LICENSE dist/panel-LICENSE.txt
-(cd dist && sha256sum espen.bin > espen.bin.sha256)
+(cd dist && sha256sum espen.bin > espen.bin.sha256 && sha256sum espen-app.bin espen-assets.bin > espen-update.sha256)

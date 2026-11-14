@@ -274,19 +274,18 @@ edit("wifi_station.cc",
      """            // Let the C6 find the AP directly. Never pin a stale BSSID/channel.
             record.channel = 0;
             connect_queue_.push_back(record);""",
-     """            // Fast attempt on the last successful channel, then all channels.
+     """            // Keep the successful v0.1.8 FAST_SCAN path for new profiles.
+            // Try last known channel first, then all channels without BSSID pinning.
             record.channel = saved.channel >= 1 && saved.channel <= 14 ? saved.channel : 0;
             connect_queue_.push_back(record);
-            if (record.channel != 0) {
-                record.channel = 0;
-                connect_queue_.push_back(record);
-            }""")
+            record.channel = -1; // internal sentinel for full driver scan
+            connect_queue_.push_back(record);""")
 edit("wifi_station.cc",
      """    wifi_config.sta.scan_method = WIFI_FAST_SCAN;
     wifi_config.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
     wifi_config.sta.failure_retry_cnt = 0;""",
-     """    wifi_config.sta.channel = ap_record.channel;
-    wifi_config.sta.scan_method = ap_record.channel ? WIFI_FAST_SCAN : WIFI_ALL_CHANNEL_SCAN;
+     """    wifi_config.sta.channel = ap_record.channel > 0 ? ap_record.channel : 0;
+    wifi_config.sta.scan_method = ap_record.channel < 0 ? WIFI_ALL_CHANNEL_SCAN : WIFI_FAST_SCAN;
     wifi_config.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
     wifi_config.sta.failure_retry_cnt = 0;""")
 edit("wifi_station.cc",
@@ -347,3 +346,10 @@ edit("wifi_station.cc",
 edit("wifi_station.cc", "    ESP_ERROR_CHECK(esp_wifi_start());",
      "    ESP_ERROR_CHECK(esp_wifi_start());\n"
      "    ESP_ERROR_CHECK_WITHOUT_ABORT(esp_wifi_set_band_mode(WIFI_BAND_MODE_2G_ONLY));")
+
+# Distinguish a profile actually read after a cold boot from one just staged.
+edit("ssid_manager.cc",
+     "    nvs_close(nvs_handle);\n}\n\nnamespace {",
+     '    nvs_close(nvs_handle);\n'
+     '    ESP_LOGI(TAG, "Espen Wi-Fi NVS: loaded %u profile(s)", static_cast<unsigned>(ssid_list_.size()));\n'
+     '}\n\nnamespace {')
