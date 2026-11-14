@@ -1114,8 +1114,8 @@ replace("main/audio/audio_service.cc",
 # at reception. Carry this tag all the way to the actual output task.
 # No LVGL access from protocol, decoder or output tasks.
 replace("main/protocols/protocol.h",
-        '    uint32_t media_position_ms = 0;',
-        '    uint32_t media_position_ms = 0;\n    uint32_t espen_visual_cue = 0;')
+        '    uint32_t media_position_ms = 0;\n    std::vector<uint8_t> payload;',
+        '    uint32_t media_position_ms = 0;\n    std::vector<uint8_t> payload;\n    uint32_t espen_visual_cue = 0;')
 replace("main/audio/audio_service.h",
         '    uint32_t media_position_ms = 0;',
         '    uint32_t media_position_ms = 0;\n    uint32_t espen_visual_cue = 0;')

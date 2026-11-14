@@ -993,7 +993,7 @@ class EspenDisplay : public LcdDisplay {
     std::string visual_caption_text_;
     // A scene never exceeds 72 primitives total. Separate fixed pools
     // avoid allocating/deleting widgets during speech.
-    static constexpr int kVisualRects=64,kVisualLines=48;
+    static constexpr int kVisualRects=64,kVisualLines=40,kCostumeRects=16,kCostumeLines=16;
     struct VisualSlot {
         lv_obj_t* obj=nullptr;
         espen::Primitive last{};
@@ -1001,6 +1001,8 @@ class EspenDisplay : public LcdDisplay {
         lv_point_precise_t points[2]{};
     };
     VisualSlot visual_rects_[kVisualRects]{},visual_lines_[kVisualLines]{};
+    VisualSlot costume_rects_[kCostumeRects]{},costume_lines_[kCostumeLines]{};
+    lv_obj_t* costume_panel_=nullptr;
     int VisualX(int x) const {
         return 192-66*visual_mix_/100+(x-192)*(100-30*visual_mix_/100)/100;
     }
@@ -1227,6 +1229,11 @@ class EspenDisplay : public LcdDisplay {
         lv_obj_set_style_pad_all(visual_panel_,0,0);
         for(auto& v:visual_rects_){v.obj=lv_obj_create(visual_panel_);Solid(v.obj,0xFFFFFF,0);Hide(v.obj,true);}
         for(auto& v:visual_lines_){v.obj=lv_line_create(visual_panel_);Passive(v.obj);lv_obj_set_style_line_rounded(v.obj,true,0);Hide(v.obj,true);}
+        costume_panel_=lv_obj_create(face_);lv_obj_remove_style_all(costume_panel_);Passive(costume_panel_);
+        lv_obj_set_size(costume_panel_,126,60);lv_obj_set_pos(costume_panel_,63,1);
+        for(auto& v:costume_rects_){v.obj=lv_obj_create(costume_panel_);Solid(v.obj,0xFFFFFF,0);Hide(v.obj,true);}
+        for(auto& v:costume_lines_){v.obj=lv_line_create(costume_panel_);Passive(v.obj);lv_obj_set_style_line_rounded(v.obj,true,0);Hide(v.obj,true);}
+        Hide(costume_panel_,true);
         visual_caption_=lv_label_create(visual_panel_);Passive(visual_caption_);
         lv_obj_set_style_text_font(visual_caption_,EspenUiFont(),0);
         lv_obj_set_style_text_color(visual_caption_,lv_color_hex(0xE5F7FF),0);
@@ -1235,24 +1242,25 @@ class EspenDisplay : public LcdDisplay {
         lv_obj_set_width(visual_caption_,126);lv_obj_set_pos(visual_caption_,3,133);
         Hide(visual_panel_,true);
     }
-    void DrawVisualPanel(const espen::Cue& cue,uint32_t age) {
-        auto frame=espen::DrawVisual(cue,age);
-        int nr=0,nl=0;
+    template<size_t NR,size_t NL>
+    void RenderVisualSlots(const espen::VisualFrame& frame,VisualSlot (&rects)[NR],VisualSlot (&lines)[NL],int pad) {
+        size_t nr=0,nl=0;
         for(int i=0;i<frame.count;++i){
             auto p=frame.items[i];
-            if(p.line?nl>=kVisualLines:nr>=kVisualRects)continue;
-            auto& v=p.line?visual_lines_[nl++]:visual_rects_[nr++];
+            if(p.line?nl>=NL:nr>=NR)continue;
+            auto& v=p.line?lines[nl++]:rects[nr++];
             Hide(v.obj,false);
             if(!v.valid||!SamePrimitive(v.last,p)) {
                 if(p.line) {
                     int x=std::min(p.x,p.w),y=std::min(p.y,p.h);
-                    v.points[0]={p.x-x,p.y-y};v.points[1]={p.w-x,p.h-y};
+                    v.points[0]={static_cast<decltype(v.points[0].x)>(p.x-x),static_cast<decltype(v.points[0].y)>(p.y-y)};
+                    v.points[1]={static_cast<decltype(v.points[1].x)>(p.w-x),static_cast<decltype(v.points[1].y)>(p.h-y)};
                     lv_line_set_points(v.obj,v.points,2);
-                    lv_obj_set_pos(v.obj,x+3,y+3);
+                    lv_obj_set_pos(v.obj,x+pad,y+pad);
                     if(!v.valid||v.last.r!=p.r)lv_obj_set_style_line_width(v.obj,p.r,0);
                     if(!v.valid||v.last.color!=p.color)lv_obj_set_style_line_color(v.obj,lv_color_hex(p.color),0);
                 }else{
-                    lv_obj_set_pos(v.obj,p.x+3,p.y+3);lv_obj_set_size(v.obj,p.w,p.h);
+                    lv_obj_set_pos(v.obj,p.x+pad,p.y+pad);lv_obj_set_size(v.obj,p.w,p.h);
                     if(!v.valid||v.last.r!=p.r)lv_obj_set_style_radius(v.obj,p.r,0);
                     if(!v.valid||v.last.color!=p.color)lv_obj_set_style_bg_color(v.obj,lv_color_hex(p.color),0);
                 }
@@ -1260,8 +1268,14 @@ class EspenDisplay : public LcdDisplay {
             }
             v.used=true;
         }
-        for(int i=nr;i<kVisualRects;++i)if(visual_rects_[i].used){Hide(visual_rects_[i].obj,true);visual_rects_[i].used=false;}
-        for(int i=nl;i<kVisualLines;++i)if(visual_lines_[i].used){Hide(visual_lines_[i].obj,true);visual_lines_[i].used=false;}
+        for(size_t i=nr;i<NR;++i)if(rects[i].used){Hide(rects[i].obj,true);rects[i].used=false;}
+        for(size_t i=nl;i<NL;++i)if(lines[i].used){Hide(lines[i].obj,true);lines[i].used=false;}
+    }
+    void DrawVisualPanel(const espen::Cue& cue,uint32_t age) {
+        RenderVisualSlots(espen::DrawVisual(cue,age),visual_rects_,visual_lines_,3);
+        auto costume=espen::DrawCostume(cue.scene,age);
+        RenderVisualSlots(costume,costume_rects_,costume_lines_,0);
+        Hide(costume_panel_,costume.count==0);
         char eq[48];const char* title=espen::Caption(cue.scene);
         if(cue.op){
             if(age<1400)snprintf(eq,sizeof(eq),"%d %c %d",cue.a,cue.op,cue.b);
@@ -1313,6 +1327,7 @@ class EspenDisplay : public LcdDisplay {
         visual_mix_=espen::Approach(visual_mix_,scene_on?100:0,20);
         const bool show_visual=scene_on&&visual_mix_>=80;
         Hide(visual_panel_,!show_visual);
+        if(!show_visual)Hide(costume_panel_,true);
         if(show_visual&&(!visual_last_draw_||now-visual_last_draw_>=100)){
             DrawVisualPanel(visual_cue_,now-visual_started_);visual_last_draw_=now;
         }
@@ -1321,6 +1336,12 @@ class EspenDisplay : public LcdDisplay {
         const int shift=listening_layout_.shift;
         int gaze_x=shift?std::clamp(f.gaze_x,-12,12):f.gaze_x;
         if(scene_on&&!touch_active_&&((now-visual_started_)%2600)<1500)gaze_x=std::clamp(gaze_x+15,-12,22);
+        // Context colors accent only neutral speech. Emotional reactions,
+        // blinking and actual audio-driven mouth shapes keep precedence.
+        if(scene_on&&f.mood==espen::Mood::Neutral){
+            p.color=espen::BlendColor(p.color,espen::SceneTint(visual_cue_.scene),50);
+            if(now-visual_started_<650&&!touch_active_){f.eye_left=std::min(64,f.eye_left+8);f.eye_right=std::min(64,f.eye_right+8);}
+        }
         const bool hold_visible=hold_gate_.Active()&&hold_gate_.Elapsed(now)>=700;
         Hide(hold_progress_,!hold_visible);
         if(hold_visible){

@@ -27,10 +27,16 @@ int main(){
     for(int i=1;i<static_cast<int>(Scene::Count);++i){
         auto scene=static_cast<Scene>(i);assert(*Caption(scene));
         for(uint32_t t=0;t<5000;t+=125){auto f=DrawVisual({scene},t);assert(f.count>0&&!f.overflow);
-            for(int j=0;j<f.count;++j){auto p=f.items[j];assert(p.x>=0&&p.y>=0&&p.x<=125&&p.y<=125);
+            int rects=0,lines=0;
+            for(int j=0;j<f.count;++j){auto p=f.items[j];if(p.line)++lines;else ++rects;assert(p.x>=0&&p.y>=0&&p.x<=125&&p.y<=125);
                 if(!p.line)assert(p.w>0&&p.h>0&&p.x+p.w<=126&&p.y+p.h<=126);
                 else assert(p.w>=0&&p.w<=125&&p.h>=0&&p.h<=125);
             }
+            assert(rects<=64&&lines<=40);
+            auto costume=DrawCostume(scene,t);int cr=0,cl=0;
+            assert(!costume.overflow);
+            for(int j=0;j<costume.count;++j){auto p=costume.items[j];if(p.line){++cl;assert(p.y<=59&&p.h<=59);}else{++cr;assert(p.y+p.h<=60);}}
+            assert(cr<=16&&cl<=16);
         }
     }
     assert(!DrawVisual({Scene::Math,6,6,36,'*'},1000).overflow);

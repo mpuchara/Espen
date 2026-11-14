@@ -478,4 +478,78 @@ inline VisualFrame DrawVisual(const Cue& cue,uint32_t t){
     }
     return f;
 }
+// Small original costumes above the actual speaking face. These are separate
+// from the illustration, and leave the eyes and mouth unobstructed.
+inline VisualFrame DrawCostume(Scene scene,uint32_t t){
+    VisualFrame f;
+    const uint32_t cyan=0x76E5F7,blue=0x508EE7,green=0x64DCA0,yellow=0xFFD66B,pink=0xFF91C6,orange=0xFF9761,white=0xF5F7FA,purple=0xB5A0FF,red=0xEF6978,brown=0xB78355,dark=0x18354A;
+    int bob=Wave(t,1200,4);
+    switch(scene){
+        case Scene::Cat:
+            f.Triangle(6,6,37,39,orange);f.Triangle(83,6,37,39,orange);
+            f.Triangle(15,18,20,24,pink);f.Triangle(91,18,20,24,pink);break;
+        case Scene::Dog:
+            f.Box(2,8+bob,29,48,brown,13);f.Box(95,8+bob,29,48,brown,13);
+            f.Box(9,14+bob,14,29,0xE8B77E,6);f.Box(102,14+bob,14,29,0xE8B77E,6);break;
+        case Scene::Rabbit:
+            f.Box(25,1,24,51,white,12);f.Box(77,1,24,51,white,12);
+            f.Box(32,8,10,32,pink,5);f.Box(84,8,10,32,pink,5);break;
+        case Scene::Lion:
+            for(int i=0;i<6;++i)f.Circle(15+i*19,35+(i%2)*8,22,orange);
+            f.Circle(28,22,23,brown);f.Circle(98,22,23,brown);break;
+        case Scene::Frog:
+            f.Circle(27,32,30,green);f.Circle(99,32,30,green);f.Circle(27,30,17,white);f.Circle(99,30,17,white);
+            f.Circle(27,30,8,dark);f.Circle(99,30,8,dark);break;
+        case Scene::Bee:
+        case Scene::Butterfly:
+            f.Line(43,48,27,14,green,4);f.Line(83,48,99,14,green,4);
+            f.Circle(27,14+bob,13,scene==Scene::Bee?yellow:purple);f.Circle(99,14+bob,13,scene==Scene::Bee?yellow:pink);break;
+        case Scene::Dino:case Scene::Dragon:
+            f.Triangle(8,7,31,39,green);f.Triangle(47,1,31,43,orange);f.Triangle(87,7,31,39,green);break;
+        case Scene::Rocket:case Scene::Space:case Scene::Saturn:case Scene::Moon:
+            // Helmet upper rim, visor shine and communication antenna.
+            f.Line(9,46,18,22,cyan,5);f.Line(18,22,43,8,cyan,5);f.Line(43,8,83,8,cyan,5);f.Line(83,8,108,22,cyan,5);f.Line(108,22,117,46,cyan,5);
+            f.Line(29,26,48,16,white,4);f.Line(106,20,106,5,blue,3);f.Circle(106,5,9,yellow);break;
+        case Scene::Crown:case Scene::Castle:
+            f.Box(23,29,80,24,yellow,5);f.Triangle(21,5,29,30,yellow);f.Triangle(49,0,28,35,yellow);f.Triangle(77,5,29,30,yellow);
+            f.Circle(63,40,12,pink);f.Circle(37,40,8,blue);f.Circle(89,40,8,blue);break;
+        case Scene::Magic:
+            f.Triangle(22,0,82,44,purple);f.Box(15,40,96,11,purple,5);
+            f.Star(63,24,7,yellow);f.Star(112,13+bob,6,cyan);break;
+        case Scene::Pirate:
+            f.Box(17,8,92,38,dark,15);f.Box(11,32,104,12,red,5);
+            f.Circle(63,23,15,white);f.Circle(59,21,4,dark);f.Circle(67,21,4,dark);
+            f.Line(50,30,76,39,white,3);f.Line(76,30,50,39,white,3);break;
+        case Scene::Detective:
+            f.Box(27,5,72,38,brown,8);f.Box(14,35,98,12,brown,6);f.Box(27,28,72,8,dark,2);break;
+        case Scene::Birthday:
+            f.Triangle(44,0,38,49,pink);f.Circle(63,6,11,yellow);
+            f.Line(51,31,75,31,cyan,5);f.Star(22,23+bob,7,yellow);f.Star(105,14+bob,7,cyan);break;
+        case Scene::Food:
+            f.Circle(43,23,35,white);f.Circle(63,17,39,white);f.Circle(83,23,35,white);f.Box(38,31,50,20,white,4);f.Box(38,45,50,7,0xB7CBD9,2);break;
+        case Scene::Snow:case Scene::Ice:case Scene::Sleep:
+            f.Box(26,9,74,37,blue,16);f.Box(20,33,86,15,white,7);f.Circle(63,8,19,white);break;
+        case Scene::Robot:case Scene::Engine:case Scene::Electric:
+            f.Line(63,45,63,13,cyan,5);f.Circle(63,11,18,blue);f.Circle(63,11,9,yellow);
+            f.Box(24,32,12,13,blue,3);f.Box(90,32,12,13,blue,3);break;
+        case Scene::Music:
+            f.Line(30,44,30,26,cyan,6);f.Line(30,26,47,10,cyan,6);f.Line(47,10,79,10,cyan,6);f.Line(79,10,96,26,cyan,6);f.Line(96,26,96,44,cyan,6);
+            f.Box(21,32,18,20,blue,8);f.Box(87,32,18,20,blue,8);break;
+        case Scene::Success:case Scene::Love:
+            for(int i=0;i<3;++i)f.Star(23+i*40,16+Wave(t+i*250,900,17),7+i%2*3,scene==Scene::Love?pink:yellow);break;
+        default:break;
+    }
+    return f;
+}
+inline uint32_t SceneTint(Scene s){
+    switch(s){
+        case Scene::Cat:case Scene::Lion:case Scene::Sun:case Scene::Saturn:case Scene::Birthday:return 0xFFD66B;
+        case Scene::Frog:case Scene::Dino:case Scene::Dragon:case Scene::Forest:case Scene::Flower:return 0x64DCA0;
+        case Scene::Magic:case Scene::Space:case Scene::BlackHole:case Scene::Moon:return 0xB5A0FF;
+        case Scene::Love:case Scene::Heart:return 0xFF91C6;
+        case Scene::Ice:case Scene::Snow:case Scene::Ocean:return 0x76D7FF;
+        default:return 0x63E6FF;
+    }
+}
+
 }
