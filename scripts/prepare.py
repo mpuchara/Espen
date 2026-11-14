@@ -359,52 +359,66 @@ replace("main/display/lcd_display.cc",
         '    if (strlen(content) > 0 && child_count >= MAX_MESSAGES) {')
 replace("main/display/lcd_display.cc", "#define MAX_MESSAGES 40", "#define MAX_MESSAGES 80")
 
-# Use local keyword recognition only, not wake-word audio upload.
-# Upstream starts an encoder even when SEND_WAKE_WORD_DATA is off.
+
+# Local speaker-dependent enrollment replaces the ineffective English MultiNet
+# phonetic spelling. Keep the existing AFE and cloud conversation pipeline.
+for name in ("wake_features.h", "espen_wake.h"):
+    shutil.copyfile(root / "firmware" / name, up / "main/audio" / name)
+replace("main/audio/engines/afe_audio_engine.h",
+        "        kMultiNet,",
+        "        kMultiNet,\n        kEspen,")
+replace("main/audio/engines/afe_audio_engine.cc",
+        '#include "afe_audio_engine.h"',
+        '#include "afe_audio_engine.h"\n#include "../espen_wake.h"')
+engine = up / "main/audio/engines/afe_audio_engine.cc"
+src = engine.read_text()
+a = src.index("    char* wakenet_model_name = nullptr;")
+b = src.index("    const bool needs_afe", a)
+src = src[:a] + '    wake_detector_ = WakeDetector::kEspen;\n    EspenWake().Load();\n\n' + src[b:]
+engine.write_text(src)
+replace("main/audio/engines/afe_audio_engine.cc",
+        '    // WakeNet enable/disable on the AFE instance',
+        '    if (wake_detector_ == WakeDetector::kEspen) EspenWake().SetRunning(enable);\n\n'
+        '    // WakeNet enable/disable on the AFE instance')
+replace("main/audio/engines/afe_audio_engine.cc",
+        'void AfeAudioEngine::HandleWakeWordResult(const afe_fetch_result_t* result) {',
+        'void AfeAudioEngine::HandleWakeWordResult(const afe_fetch_result_t* result) {\n'
+        '    if (wake_detector_ == WakeDetector::kEspen) {\n'
+        '        auto hit = EspenWake().Feed(result->data, result->data_size / sizeof(int16_t));\n'
+        '        if (!hit.empty()) {\n'
+        '            last_detected_wake_word_ = hit;\n'
+        '            EspenWake().SetRunning(false);\n'
+        '            xEventGroupClearBits(event_group_, kWakeWordEnabled);\n'
+        '            UpdateActiveState();\n'
+        '            if (wake_word_detected_callback_) wake_word_detected_callback_(hit);\n'
+        '        }\n'
+        '        return;\n'
+        '    }')
+replace("main/audio/engines/afe_audio_engine.cc",
+        '(wake_detector_ == WakeDetector::kMultiNet ? "MultiNet" : "none")',
+        '(wake_detector_ == WakeDetector::kEspen ? "Espen local templates" : "none")')
+replace("main/application.cc",
+        '#include "application.h"',
+        '#include "application.h"\n#include "audio/espen_wake.h"')
 replace("main/application.cc",
         '    audio_service_.EncodeWakeWord();\n\n    // Always pass through the connecting state',
-        '#if CONFIG_SEND_WAKE_WORD_DATA\n'
-        '    audio_service_.EncodeWakeWord();\n'
-        '#endif\n\n'
+        '#if CONFIG_SEND_WAKE_WORD_DATA\n    audio_service_.EncodeWakeWord();\n#endif\n\n'
         '    // Always pass through the connecting state')
-# Keep local recognition armed only in idle, not during playback/listening.
-# Explicitly disable during the transition to a cloud session as well.
-replace("main/application.cc",
-        '    ESP_LOGI(TAG, "Wake word detected: %s (state: %d)", wake_word.c_str(), (int)state);',
-        '    ESP_LOGI(TAG, "Wake word detected: %s (state: %d)", wake_word.c_str(), (int)state);\n'
-        '    if (state == kDeviceStateIdle) {\n'
-        '        EspenCloudInfo("Hej Ala wykryte. Łączę sesję rozmowy.", "");\n'
-        '    }')
 replace("main/application.cc",
         '            audio_service_.EnableWakeWordDetection(true);\n            break;\n        case kDeviceStateConnecting:',
         '            audio_service_.EnableWakeWordDetection(true);\n'
-        '            if (last_error_message_.empty()) display->SetStatus("Powiedz: Hej Ala");\n'
+        '            if (last_error_message_.empty()) {\n'
+        '                auto wake = EspenWake().Get();\n'
+        '                auto status = wake.trained ? "Powiedz: " + wake.name : std::string("Naucz hasło głosowe");\n'
+        '                display->SetStatus(status.c_str());\n'
+        '            }\n'
         '            break;\n        case kDeviceStateConnecting:')
-# No silent initialization failure or out-of-bounds result ID. MultiNet7
-# uses English graphemes with its own G2P; our phrase is a phonetic spelling.
-replace("main/audio/wake_words/custom_wake_word.cc",
-        '    multinet_model_data_ = multinet_->create(mn_name_, duration_);\n    multinet_->set_det_threshold',
-        '    if (multinet_ == nullptr) return false;\n'
-        '    multinet_model_data_ = multinet_->create(mn_name_, duration_);\n'
-        '    if (multinet_model_data_ == nullptr) return false;\n'
-        '    multinet_->set_det_threshold')
-replace("main/audio/wake_words/custom_wake_word.cc",
-        '        esp_mn_commands_add(i + 1, commands_[i].command.c_str());',
-        '        if (esp_mn_commands_add(i + 1, commands_[i].command.c_str()) != ESP_OK) {\n'
-        '            ESP_LOGE(TAG, "Espen wake: phrase registration failed");\n'
-        '            return false;\n'
-        '        }')
-replace("main/audio/wake_words/custom_wake_word.cc",
-        '    multinet_->print_active_speech_commands(multinet_model_data_);',
-        '    multinet_->print_active_speech_commands(multinet_model_data_);\n'
-        '    ESP_LOGI(TAG, "Espen wake: MultiNet initialized; phrase Hej Ala; threshold=%.2f", threshold_);')
-replace("main/audio/wake_words/custom_wake_word.cc",
-        '                auto& command = commands_[mn_result->command_id[i] - 1];',
-        '                const int id = mn_result->command_id[i];\n'
-        '                if (id < 1 || static_cast<size_t>(id) > commands_.size()) continue;\n'
-        '                auto& command = commands_[id - 1];')
-# Failed wake-word initialization must not disable manual conversations.
-replace("main/audio/engines/afe_audio_engine.cc",
-        '            custom_wake_word_.reset();\n            wake_detector_ = WakeDetector::kNone;\n            return false;',
-        '            custom_wake_word_.reset();\n            wake_detector_ = WakeDetector::kNone;\n'
-        '            ESP_LOGW(TAG, "Espen wake unavailable; continuing with manual voice processing");')
+replace("main/application.cc",
+        '        case kDeviceStateConnecting:\n            display->SetStatus',
+        '        case kDeviceStateConnecting:\n            audio_service_.EnableWakeWordDetection(false);\n            display->SetStatus')
+# Local enrollment is idle-only; never learn or trigger from speaker playback.
+app = up / "main/application.cc"
+src = app.read_text()
+src = src.replace("audio_service_.EnableWakeWordDetection(audio_service_.IsAfeWakeWord());",
+                  "audio_service_.EnableWakeWordDetection(false);")
+app.write_text(src)

@@ -1,4 +1,5 @@
 #include "application.h"
+#include "audio/espen_wake.h"
 #include "audio/codecs/es8311_audio_codec.h"
 #include "button.h"
 #include "config.h"
@@ -140,6 +141,11 @@ class EspenDisplay : public LcdDisplay {
         lv_display_flush_ready(disp);
     }
 
+    lv_obj_t* wake_panel_ = nullptr;
+    lv_obj_t* wake_name_ = nullptr;
+    lv_obj_t* wake_state_ = nullptr;
+    lv_obj_t* wake_keyboard_ = nullptr;
+    lv_obj_t* wake_footer_ = nullptr;
     lv_obj_t* settings_ = nullptr;
     lv_obj_t* ssid_ = nullptr;
     lv_obj_t* password_ = nullptr;
@@ -175,11 +181,13 @@ class EspenDisplay : public LcdDisplay {
         // Show a real, newly received code automatically, unless the user
         // is editing Wi-Fi. Never invent a code when the server has none.
         if (!code.empty() && code != last_auto_code_ &&
-            (!settings_ || lv_obj_has_flag(settings_, LV_OBJ_FLAG_HIDDEN))) {
+            (!settings_ || lv_obj_has_flag(settings_, LV_OBJ_FLAG_HIDDEN)) &&
+            (!wake_panel_ || lv_obj_has_flag(wake_panel_, LV_OBJ_FLAG_HIDDEN))) {
             last_auto_code_ = code;
             if (!cloud_ || lv_obj_has_flag(cloud_, LV_OBJ_FLAG_HIDDEN)) OpenCloud();
         }
         RefreshCloud();
+        RefreshWake();
     }
 
     void OpenCloud() {
@@ -210,7 +218,7 @@ class EspenDisplay : public LcdDisplay {
             auto* hint = lv_label_create(cloud_);
             lv_obj_set_width(hint, lv_pct(100));
             lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
-            lv_label_set_text(hint, "Jeśli wyświetla się kod, wpisz go w konsoli Xiaozhi. Po aktywacji wróć do rozmowy i powiedz: Hej Ala.");
+            lv_label_set_text(hint, "Jeśli wyświetla się kod, wpisz go w konsoli Xiaozhi. Po aktywacji wróć do rozmowy. Naucz hasło głosowe lub użyj trybu ręcznego.");
             cloud_device_ = lv_label_create(cloud_);
             lv_obj_set_width(cloud_device_, lv_pct(100));
             lv_label_set_long_mode(cloud_device_, LV_LABEL_LONG_WRAP);
@@ -358,6 +366,80 @@ class EspenDisplay : public LcdDisplay {
         // with the new saved credentials and retain previous networks.
         Application::GetInstance().Schedule([]() { esp_restart(); });
     }
+    void RefreshWake() {
+        auto s=EspenWake().Get();
+        if(wake_footer_) lv_label_set_text(wake_footer_,s.trained?"Hasło głosowe":"Naucz hasło");
+        if(!wake_panel_||lv_obj_has_flag(wake_panel_,LV_OBJ_FLAG_HIDDEN))return;
+        lv_label_set_text_fmt(wake_state_,"%d/3 | %s\n%s",s.count,s.running?"Mikrofon gotowy":"Oczekiwanie na tryb gotowości",s.message.c_str());
+    }
+    void CloseWake() {
+        EspenWake().Cancel();
+        if(wake_keyboard_)lv_keyboard_set_textarea(wake_keyboard_,nullptr);
+        lv_obj_add_flag(wake_panel_,LV_OBJ_FLAG_HIDDEN);
+    }
+    void OpenWake() {
+        if(!wake_panel_){
+            wake_panel_=lv_obj_create(lv_layer_top());
+            lv_obj_set_size(wake_panel_,DISPLAY_WIDTH,DISPLAY_HEIGHT);
+            lv_obj_center(wake_panel_);
+            lv_obj_set_style_bg_color(wake_panel_,lv_color_hex(0x102030),0);
+            lv_obj_set_style_bg_opa(wake_panel_,LV_OPA_COVER,0);
+            lv_obj_set_style_text_color(wake_panel_,lv_color_white(),0);
+            lv_obj_set_style_text_font(wake_panel_,EspenUiFont(),0);
+            lv_obj_set_style_pad_all(wake_panel_,14,0);
+            lv_obj_set_style_pad_row(wake_panel_,8,0);
+            lv_obj_set_flex_flow(wake_panel_,LV_FLEX_FLOW_COLUMN);
+            auto* title=lv_label_create(wake_panel_);
+            lv_label_set_text(title,"ESPEN / Naucz hasło głosowe");
+            auto* hint=lv_label_create(wake_panel_);
+            lv_obj_set_width(hint,lv_pct(100));lv_label_set_long_mode(hint,LV_LABEL_LONG_WRAP);
+            lv_label_set_text(hint,"Wpisz nazwę hasła. Nagraj trzy razy tę samą krótką frazę (np. Hej Ala), za każdym razem z przerwą. Nagrania są przetwarzane lokalnie.");
+            wake_name_=lv_textarea_create(wake_panel_);
+            lv_obj_set_width(wake_name_,lv_pct(100));lv_textarea_set_one_line(wake_name_,true);
+            lv_textarea_set_max_length(wake_name_,40);
+            wake_state_=lv_label_create(wake_panel_);
+            lv_obj_set_width(wake_state_,lv_pct(100));lv_label_set_long_mode(wake_state_,LV_LABEL_LONG_WRAP);
+            MakeButton(wake_panel_,"Nagraj próbkę",[](lv_event_t* e){
+                auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                lv_obj_add_flag(self->wake_keyboard_,LV_OBJ_FLAG_HIDDEN);
+                lv_keyboard_set_textarea(self->wake_keyboard_,nullptr);
+                EspenWake().Record();self->RefreshWake();
+            },this,350);
+            MakeButton(wake_panel_,"Zapisz nowe hasło",[](lv_event_t* e){
+                auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                if(EspenWake().Save(lv_textarea_get_text(self->wake_name_))){
+                    self->CloseWake();
+                    Application::GetInstance().Schedule([](){
+                        auto s=EspenWake().Get();
+                        if(Application::GetInstance().GetDeviceState()==kDeviceStateIdle){
+                            auto status="Powiedz: "+s.name;
+                            Board::GetInstance().GetDisplay()->SetStatus(status.c_str());
+                        }
+                    });
+                }
+                self->RefreshWake();
+            },this,350);
+            MakeButton(wake_panel_,"Od nowa / usuń próbki",[](lv_event_t* e){
+                EspenWake().Begin();static_cast<EspenDisplay*>(lv_event_get_user_data(e))->RefreshWake();
+            },this,350);
+            MakeButton(wake_panel_,"Anuluj / wróć",[](lv_event_t* e){
+                static_cast<EspenDisplay*>(lv_event_get_user_data(e))->CloseWake();
+            },this,350);
+            wake_keyboard_=lv_keyboard_create(wake_panel_);
+            lv_obj_set_size(wake_keyboard_,lv_pct(100),220);
+            lv_obj_add_event_cb(wake_name_,[](lv_event_t* e){
+                auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                lv_obj_clear_flag(self->wake_keyboard_,LV_OBJ_FLAG_HIDDEN);
+                lv_keyboard_set_textarea(self->wake_keyboard_,self->wake_name_);
+            },LV_EVENT_CLICKED,this);
+        }
+        auto s=EspenWake().Get();
+        EspenWake().Begin();
+        lv_textarea_set_text(wake_name_,s.name.c_str());
+        lv_obj_add_flag(wake_keyboard_,LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(wake_panel_,LV_OBJ_FLAG_HIDDEN);lv_obj_move_foreground(wake_panel_);
+        RefreshWake();
+    }
     void OpenSettings() {
         if (!settings_) {
             settings_ = lv_obj_create(lv_layer_top());
@@ -417,6 +499,10 @@ class EspenDisplay : public LcdDisplay {
                 auto* self = static_cast<EspenDisplay*>(lv_event_get_user_data(e));
                 self->CloseSettings();
                 self->OpenCloud();
+            }, this, 340);
+            MakeButton(settings_, "Naucz hasło głosowe", [](lv_event_t* e) {
+                auto* self = static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                self->CloseSettings(); self->OpenWake();
             }, this, 340);
             MakeButton(settings_, "Mów / Stop (ręcznie)", [](lv_event_t* e) {
                 auto* self = static_cast<EspenDisplay*>(lv_event_get_user_data(e));
@@ -511,11 +597,12 @@ public:
             lv_obj_set_style_border_width(footer, 0, 0);
             lv_obj_set_style_radius(footer, 0, 0);
             if (!container_) lv_obj_align(footer, LV_ALIGN_BOTTOM_MID, 0, 0);
-            auto* wake_hint = lv_label_create(footer);
-            lv_obj_set_width(wake_hint, 156);
-            lv_label_set_long_mode(wake_hint, LV_LABEL_LONG_WRAP);
-            lv_obj_set_style_text_align(wake_hint, LV_TEXT_ALIGN_CENTER, 0);
-            lv_label_set_text(wake_hint, "Powiedz:\nHej Ala");
+            auto* wake_button = MakeButton(footer, "Naucz hasło", [](lv_event_t* e) {
+                static_cast<EspenDisplay*>(lv_event_get_user_data(e))->OpenWake();
+            }, this, 156);
+            wake_footer_ = lv_obj_get_child(wake_button,0);
+            lv_obj_set_style_text_font(wake_footer_,EspenUiFont(),0);
+            RefreshWake();
             MakeButton(footer, "Xiaozhi", [](lv_event_t* e) {
                 static_cast<EspenDisplay*>(lv_event_get_user_data(e))->OpenCloud();
             }, this, 136);
@@ -651,7 +738,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.1.18 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.1.19 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();

@@ -39,9 +39,8 @@ python3 scripts/build.py --list-boards --json > /tmp/espen-board-list.json
 python3 scripts/build.py guition/espen-guition-jc4880p443 --name espen-guition-jc4880p443 --language pl-PL
 # Verify the actual generated configuration, not only the requested defaults.
 for setting in \
-  CONFIG_USE_CUSTOM_WAKE_WORD=y \
-  CONFIG_SR_MN_EN_MULTINET7_QUANT=y \
-  CONFIG_CUSTOM_WAKE_WORD_THRESHOLD=35 \
+  CONFIG_WAKE_WORD_DISABLED=y \
+  CONFIG_USE_AUDIO_PROCESSOR=y \
   CONFIG_ESP_HOSTED_MEMPOOL_PREFER_SPIRAM=y \
   CONFIG_ESP_HOSTED_SDIO_CLOCK_FREQ_KHZ=10000 \
   CONFIG_ESP_HOSTED_SDIO_RESET_DELAY_MS=2500 \
@@ -50,9 +49,6 @@ for setting in \
   CONFIG_ESP_HOSTED_SDIO_TX_Q_SIZE=10; do
   grep -Fx "$setting" sdkconfig || { echo "Missing required setting: $setting"; exit 1; }
 done
-grep -Fx '# CONFIG_SEND_WAKE_WORD_DATA is not set' sdkconfig
-grep -Fx 'CONFIG_CUSTOM_WAKE_WORD="hey ah lah"' sdkconfig
-grep -Fx 'CONFIG_CUSTOM_WAKE_WORD_DISPLAY="Hej Ala"' sdkconfig
 grep -Fx '# CONFIG_ESP_HOSTED_SDIO_RX_DOUBLE_BUFFERING is not set' sdkconfig
 grep -Fx '# CONFIG_ESP_HOSTED_TRANSPORT_RESTART_ON_FAILURE is not set' sdkconfig
 test -s build/merged-binary.bin
