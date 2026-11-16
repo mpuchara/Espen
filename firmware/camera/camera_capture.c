@@ -50,6 +50,10 @@ static float wb_red = 1.65f, wb_blue = 1.55f;
 static unsigned tuning_band;
 static atomic_uint sample_seconds = 5;
 static atomic_bool started;
+// ESP-IDF 6.1 private DW-GDMA IRQ groups are bound to the CPU that
+// registered their first handler; a second CPU gets ESP_ERR_INVALID_STATE.
+// Never migrate the camera capture owner while CSI is active.
+static atomic_bool secondary_core_attempted;
 static atomic_bool requested_pattern;
 static atomic_uint demand_until;
 static bool demanded(void) {
@@ -482,6 +486,8 @@ static void release_idle_storage(void) {
 static void worker(void *arg)
 {
     (void)arg;
+    const BaseType_t owner_core=xPortGetCoreID();
+    ESP_LOGI("EspenCamera","Camera owner pinned to CPU %d", (int)owner_core);
     hb_camera_health health;
     hb_camera_health_init(&health);
     // No sensor access on boot. Explicit preview/photo demand only.
@@ -490,6 +496,12 @@ static void worker(void *arg)
     {
         while(!demanded()) {release_idle_storage();vTaskDelay(pdMS_TO_TICKS(150));}
         esp_err_t e = initialize();
+        hb_camera_stage failed_stage=HB_CAM_IDLE;
+        if(e!=ESP_OK){
+            portENTER_CRITICAL(&lock);
+            failed_stage=status.stage;
+            portEXIT_CRITICAL(&lock);
+        }
         uint64_t started = (uint64_t)esp_timer_get_time() / 1000, last_light = 0;
         uint64_t last_control = 0, changed = started, last_wb = 0;
         bool pattern = false;
@@ -706,14 +718,29 @@ static void worker(void *arg)
             vTaskDelete(NULL);
         }
         if(e==ESP_OK){hb_camera_health_init(&health);camera_stage(HB_CAM_IDLE);continue;}
+        // The named private interrupt group "dw_gdma0" may be owned by
+        // CPU1. Retry exactly once on that core, after complete cleanup.
+#if (portNUM_PROCESSORS > 1)
+        if(e==ESP_ERR_INVALID_STATE && failed_stage==HB_CAM_CSI_CREATE &&
+           owner_core==0 && !atomic_exchange(&secondary_core_attempted,true)){
+            ESP_LOGW("EspenCamera","CSI DW-GDMA IRQ belongs to other CPU; retrying camera on core 1");
+            camera_stage(HB_CAM_RETRY);
+            if(xTaskCreatePinnedToCore(worker,"local_camera",6144,NULL,1,NULL,1)==pdPASS){
+                vTaskDelete(NULL);
+                return;
+            }
+            ESP_LOGE("EspenCamera","Cannot create core 1 camera worker; continuing retries on core 0");
+        }
+#endif
         camera_stage(HB_CAM_RETRY);
         uint32_t backoff = hb_camera_health_retry(&health);
         portENTER_CRITICAL(&lock);
-        status.retry_seconds = backoff;
+        status.retry_seconds = backoff>10?10:backoff;
         status.restarts++;
         portEXIT_CRITICAL(&lock);
-        ESP_LOGW("camera", "capture unavailable: %s; retry in %us", esp_err_to_name(e), backoff);
         uint32_t wait=backoff>10?10:backoff;
+        ESP_LOGW("camera", "capture unavailable on core %d: %s; retry in %us",
+                 (int)owner_core,esp_err_to_name(e),wait);
         vTaskDelay(pdMS_TO_TICKS(wait * 1000));
     }
 }
@@ -723,7 +750,9 @@ esp_err_t hb_camera_start(void)
         return ESP_ERR_INVALID_STATE;
     hb_frame_pool_init(&pool);
     camera_stage(HB_CAM_IDLE);
-    if (xTaskCreate(worker, "local_camera", 6144, NULL, 1, NULL) == pdPASS)
+    atomic_store(&secondary_core_attempted,false);
+    // The CSI owner must keep its CPU affinity for the interrupt lifetime.
+    if (xTaskCreatePinnedToCore(worker, "local_camera", 6144, NULL, 1, NULL, 0) == pdPASS)
         return ESP_OK;
     atomic_store(&started, false);
     return ESP_ERR_NO_MEM;
