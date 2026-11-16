@@ -143,7 +143,7 @@ public final class XiaozhiClient {
             .put("mac_address",identity.deviceId).put("uuid",identity.clientId)
             .put("chip_model_name","android")
             .put("application",new JSONObject().put("name","garett-espen")
-                .put("version","0.1.0").put("idf_version","android-"+Build.VERSION.SDK_INT)
+                .put("version","0.1.2").put("idf_version","android-"+Build.VERSION.SDK_INT)
                 .put("compile_time","").put("elf_sha256",""))
             .put("board",new JSONObject().put("type","garett-essa2-android")
                 .put("name",Build.MODEL).put("manufacturer",Build.MANUFACTURER)
