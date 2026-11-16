@@ -87,6 +87,16 @@ public final class WatchActivity extends Activity implements FaceView.Actions, X
             Toast.makeText(this,"Odtwarzam 660 Hz. Sprawdź głośność multimediów.",Toast.LENGTH_LONG).show();
         });
         form.addView(speakerTest);
+        Button microphoneTest=new Button(this);
+        microphoneTest.setText("🎤 Test mikrofonu i Opus (offline)");
+        microphoneTest.setOnClickListener(v->{
+            if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){
+                requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},PERM_MIC);
+                return;
+            }
+            xiaozhi.testMicrophone();
+        });
+        form.addView(microphoneTest);
         Button diagnostic=new Button(this);
         diagnostic.setText("Diagnostyka dźwięku i awarii");
         diagnostic.setOnClickListener(v->{
