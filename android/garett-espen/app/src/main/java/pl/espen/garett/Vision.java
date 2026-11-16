@@ -90,6 +90,7 @@ public final class Vision {
             Camera camera=null;
             SurfaceTexture surface=null;
             try{
+                if(Camera.getNumberOfCameras()==0)throw new IOException("Brak aparatu");
                 int id=0;
                 Camera.CameraInfo info=new Camera.CameraInfo();
                 for(int i=0;i<Camera.getNumberOfCameras();i++){
@@ -97,35 +98,68 @@ public final class Vision {
                     if(info.facing==Camera.CameraInfo.CAMERA_FACING_FRONT){id=i;break;}
                 }
                 camera=Camera.open(id);
-                if(camera==null) throw new IOException("Kamera jest zajęta");
+                if(camera==null)throw new IOException("Kamera zajęta");
                 Camera.Parameters params=camera.getParameters();
-                params.setJpegQuality(75);camera.setParameters(params);
+                params.setJpegQuality(75);
+                camera.setParameters(params);
                 surface=new SurfaceTexture(12);
                 camera.setPreviewTexture(surface);
                 camera.startPreview();
-                final Camera useCamera=camera;final SurfaceTexture useSurface=surface;
-                camera.takePicture(null,null,(bytes,c)->{
+                final Camera chosenCamera=camera;
+                final SurfaceTexture chosenSurface=surface;
+                // Android 8.1 camera HAL needs a short preview warm-up before capture.
+                main.postDelayed(()->{
                     try{
-                        Bitmap src=BitmapFactory.decodeByteArray(bytes,0,bytes.length);
-                        if(src==null)throw new IOException("Pusty obraz z aparatu");
-                        int max=Math.max(src.getWidth(),src.getHeight());
-                        float ratio=Math.min(1f,480f/max);
-                        Bitmap smaller=ratio<1f?Bitmap.createScaledBitmap(src,
-                            Math.max(1,Math.round(src.getWidth()*ratio)),
-                            Math.max(1,Math.round(src.getHeight()*ratio)),true):src;
-                        ByteArrayOutputStream out=new ByteArrayOutputStream();
-                        if(!smaller.compress(Bitmap.CompressFormat.JPEG,75,out)) throw new IOException("JPEG");
-                        jpeg=out.toByteArray();pictureAt=SystemClock.elapsedRealtime();
-                        if(smaller!=src)smaller.recycle();src.recycle();
-                        cb.done("Zrobiono zdjęcie. Możesz zapytać Alę, co widzi.",null);
-                    } catch(Exception ex){cb.done(null,"Błąd aparatu: "+ex.getClass().getSimpleName());}
-                    finally{
-                        try{useCamera.stopPreview();}catch(Exception ignored){}
-                        useCamera.release();useSurface.release();
+                        chosenCamera.takePicture(null,null,(bytes,c)->{
+                            try{chosenCamera.stopPreview();}catch(Throwable ignored){}
+                            try{chosenCamera.release();}catch(Throwable ignored){}
+                            try{chosenSurface.release();}catch(Throwable ignored){}
+                            if(bytes==null||bytes.length==0){
+                                cb.done(null,"Pusty obraz z aparatu");return;
+                            }
+                            // Do NOT decode a multi-megapixel JPEG on watch's UI thread.
+                            // Bound allocations by subsampling to ~480 px.
+                            network.execute(()->{
+                                Bitmap src=null,smaller=null;
+                                try{
+                                    BitmapFactory.Options opts=new BitmapFactory.Options();
+                                    opts.inJustDecodeBounds=true;
+                                    BitmapFactory.decodeByteArray(bytes,0,bytes.length,opts);
+                                    int max=Math.max(opts.outWidth,opts.outHeight);
+                                    if(max<=0)throw new IOException("Brak rozmiaru JPEG");
+                                    opts.inJustDecodeBounds=false;
+                                    opts.inSampleSize=1;
+                                    while(max/opts.inSampleSize>640)opts.inSampleSize*=2;
+                                    opts.inPreferredConfig=Bitmap.Config.RGB_565;
+                                    src=BitmapFactory.decodeByteArray(bytes,0,bytes.length,opts);
+                                    if(src==null)throw new IOException("JPEG decode");
+                                    int width=src.getWidth(),height=src.getHeight();
+                                    float ratio=Math.min(1f,480f/Math.max(width,height));
+                                    smaller=ratio<1f?Bitmap.createScaledBitmap(src,
+                                        Math.max(1,Math.round(width*ratio)),
+                                        Math.max(1,Math.round(height*ratio)),true):src;
+                                    ByteArrayOutputStream out=new ByteArrayOutputStream();
+                                    if(!smaller.compress(Bitmap.CompressFormat.JPEG,72,out))
+                                        throw new IOException("JPEG encode");
+                                    jpeg=out.toByteArray();pictureAt=SystemClock.elapsedRealtime();
+                                    cb.done("Zdjęcie gotowe. Zapytaj Alę, co widzi.",null);
+                                }catch(Throwable ex){
+                                    cb.done(null,"Zdjęcie: "+ex.getClass().getSimpleName());
+                                }finally{
+                                    if(smaller!=null&&smaller!=src)smaller.recycle();
+                                    if(src!=null)src.recycle();
+                                }
+                            });
+                        });
+                    }catch(Throwable e){
+                        try{chosenCamera.release();}catch(Throwable ignored){}
+                        try{chosenSurface.release();}catch(Throwable ignored){}
+                        cb.done(null,"Błąd aparatu: "+e.getClass().getSimpleName());
                     }
-                });
-            } catch(Exception e) {
-                if(camera!=null)camera.release();if(surface!=null)surface.release();
+                },450);
+            }catch(Throwable e){
+                if(camera!=null)try{camera.release();}catch(Throwable ignored){}
+                if(surface!=null)try{surface.release();}catch(Throwable ignored){}
                 cb.done(null,"Aparat niedostępny: "+e.getClass().getSimpleName());
             }
         });
