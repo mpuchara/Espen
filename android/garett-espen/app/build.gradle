@@ -6,10 +6,29 @@ android {
 
     defaultConfig {
         applicationId 'pl.espen.garett'
-        minSdk 26
-        targetSdk 28
-        versionCode 1
-        versionName '0.1.0'
+        minSdk 26                 // Android 8.0, compatible with Garett's 8.1
+        targetSdk 27              // Do not opt into modern Android package behavior
+        versionCode 2
+        versionName '0.1.1'
+    }
+
+    // The vendor's limited Android 8.1 installer may not handle v2-only APKs
+    // correctly. Produce a traditional JAR-signed v1 APK (Android 8.1 accepts it).
+    signingConfigs {
+        debug {
+            enableV1Signing = true
+            enableV2Signing = false
+            enableV3Signing = false
+            enableV4Signing = false
+        }
+    }
+    buildTypes {
+        debug {
+            minifyEnabled true
+            shrinkResources true
+            signingConfig signingConfigs.debug
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
     }
 
     compileOptions {
@@ -17,7 +36,6 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
 }
-
 dependencies {
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
     implementation 'io.github.jaredmdobson:concentus:1.0.2'
