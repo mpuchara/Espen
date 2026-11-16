@@ -1217,9 +1217,9 @@ replace("main/mcp_server.cc",
 # The command is matched ONLY on user STT and never on assistant TTS.
 # Close the actual cloud audio channel; the existing local wake engine is
 # then re-armed by the idle state as before (including auto-speech preference).
-shutil.copyfile(root / "firmware/voice_commands.h", up / "main/audio/voice_commands.h")
+shutil.copyfile(root / "firmware/voice_commands.h", board / "voice_commands.h")
 replace("main/application.cc", '#include "audio/espen_wake.h"',
-        '#include "audio/espen_wake.h"\n#include "audio/voice_commands.h"')
+        '#include "audio/espen_wake.h"\n#include "boards/guition/espen-guition-jc4880p443/voice_commands.h"')
 replace("main/application.h", '#include <vector>',
         '#include <vector>\n#include <atomic>')
 replace("main/application.h",
