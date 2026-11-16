@@ -56,6 +56,7 @@ public final class XiaozhiClient {
     private final Activity activity;
     private final Events events;
     private final Vision vision;
+    private final WatchAudio audio;
     private final ScheduledExecutorService worker=Executors.newSingleThreadScheduledExecutor();
     private final AtomicBoolean otaBusy=new AtomicBoolean();
     private final OkHttpClient http=new OkHttpClient.Builder()
@@ -66,18 +67,20 @@ public final class XiaozhiClient {
     private volatile WebSocket socket;
     private volatile boolean recording, closed, sessionStarting, sessionReady, talking;
     private Thread recordThread;
-    private volatile AudioTrack track;
     private volatile long lastAudioAt;
     private volatile String sessionId="";
     private String wsUrl, wsToken, legacyVisionUrl, legacyVisionToken;
     private int wsVersion=1, outRate=24000;
-    private OpusDecoder decoder;
     private long ttsStoppedAt=0;
     private final Identity identity;
 
     public XiaozhiClient(Activity a, Events listener) {
         activity=a;events=listener;identity=id(a);vision=new Vision(a,http);
-        vision.setEnabled(prefs(a).getBoolean("vision",false));
+        vision.setEnabled(prefs(a).getBoolean("vision",true)); // enabled by default, explicit voice request required before upload
+        audio=new WatchAudio(a,new WatchAudio.Reporter(){
+            @Override public void report(String message){events.status(message);}
+            @Override public void pcmLevel(int value){events.level(value,false);}
+        });
     }
     private static SharedPreferences prefs(Context c){return c.getSharedPreferences("espen_watch_v1",Context.MODE_PRIVATE);}
     public static Identity id(Context c){
@@ -105,6 +108,17 @@ public final class XiaozhiClient {
         prefs(activity).edit().putBoolean("vision",enable).apply();vision.setEnabled(enable);
     }
     public boolean isVisionEnabled(){return vision.isEnabled();}
+    public void testSpeaker(){
+        if(socket!=null||sessionStarting){events.status("Zakończ rozmowę przed testem dźwięku");return;}
+        WatchAudio.testSpeaker(activity,new WatchAudio.Reporter(){
+            @Override public void report(String message){events.status(message);}
+            @Override public void pcmLevel(int value){events.level(value,false);}
+        });
+    }
+    public String audioDiagnostics(){
+        return audio.route()+"\\nRamki audio: "+audio.packetsReceived()+
+            ", odtworzone: "+audio.packetsPlayed()+", pominięte: "+audio.packetsDropped();
+    }
     public void previewCamera(){
         vision.preview((message,error)->{
             if(error!=null)events.status(error);else events.status(message);
@@ -139,7 +153,7 @@ public final class XiaozhiClient {
             .header("Client-Id",identity.clientId)
             .header("Activation-Version","1")
             .header("Accept-Language","pl-PL")
-            .header("User-Agent","garett-espen/0.1.0")
+            .header("User-Agent","garett-espen/0.1.2")
             .post(RequestBody.create(JSON,body.toString())).build();
         JSONObject result;
         try(Response response=http.newCall(request).execute()){
@@ -217,8 +231,7 @@ public final class XiaozhiClient {
                 worker.execute(()->parseMessage(webSocket,text));
             }
             @Override public void onMessage(WebSocket webSocket,ByteString bytes){
-                byte[] b=bytes.toByteArray();
-                worker.execute(()->playAudio(b));
+                if(webSocket==socket&&sessionReady)audio.offer(bytes.toByteArray());
             }
             @Override public void onFailure(WebSocket webSocket,Throwable t,Response response){
                 if(webSocket==socket){socket=null;sessionStarting=false;endMic();events.state(FaceView.State.ERROR);events.status("Xiaozhi: "+brief(t));closeAudio();}
@@ -241,8 +254,7 @@ public final class XiaozhiClient {
                         o.optJSONObject("audio_params").optInt("sample_rate",24000):24000;
                     if(outRate!=16000&&outRate!=24000&&outRate!=48000)
                         throw new IOException("Nieobsługiwana częstotliwość TTS");
-                    makeAudioTrack();
-                    decoder=new OpusDecoder(outRate,1);
+                    audio.start(); // lazy dedicated audio thread, no audio HAL on network control loop
                     sessionStarting=false;sessionReady=true;talking=false;
                     events.state(FaceView.State.LISTENING);events.status("Słucham…");
                     send(new JSONObject().put("type","listen").put("state","start").put("mode","manual"));
@@ -253,27 +265,29 @@ public final class XiaozhiClient {
                     vision.noteUserSpeech(phrase);
                     events.caption(phrase);
                     events.state(FaceView.State.THINKING);
+                    events.status("Xiaozhi rozpoznało wypowiedź");
                     break;
                 case "llm":
                     events.emotion(o.optString("emotion","neutral"));
                     break;
                 case "tts":
                     String state=o.optString("state","");
-                    if("start".equals(state)){talking=true;ttsStoppedAt=0;endMic();events.state(FaceView.State.SPEAKING);}
+                    if("start".equals(state)){
+                        talking=true;ttsStoppedAt=0;endMic();
+                        events.state(FaceView.State.SPEAKING);
+                        events.status("Odbieram odpowiedź głosową…");
+                    }
                     else if("sentence_start".equals(state))events.caption(o.optString("text",""));
                     else if("stop".equals(state)){
                         talking=false;ttsStoppedAt=SystemClock.elapsedRealtime();
-                        worker.schedule(()->{
-                            if(ttsStoppedAt!=0 && SystemClock.elapsedRealtime()-ttsStoppedAt>=1100
-                                && !talking)finishSession();
-                        },1200,TimeUnit.MILLISECONDS);
+                        worker.schedule(this::finishAfterAudio,1200,TimeUnit.MILLISECONDS);
                     }
                     break;
                 case "mcp": handleMcp(o.optJSONObject("payload"));break;
                 case "alert":events.status(o.optString("message","Informacja od Xiaozhi"));break;
                 default:break;
             }
-        }catch(Exception ex){fail("Protokół: "+brief(ex));}
+        }catch(Throwable ex){fail("Protokół: "+brief(ex));}
     }
     private void send(JSONObject body){
         try{
@@ -333,7 +347,7 @@ public final class XiaozhiClient {
                 try{Thread.sleep(180);}catch(InterruptedException ignored){Thread.currentThread().interrupt();}
                 send(new JSONObject().put("type","listen").put("state","stop"));
             }
-        }catch(Exception e){
+        }catch(Throwable e){
             if(recording){events.status("Mikrofon: "+brief(e));events.state(FaceView.State.ERROR);}
         }finally{
             recording=false;
@@ -342,32 +356,17 @@ public final class XiaozhiClient {
         }
     }
     private void endMic(){recording=false;}
-    private void makeAudioTrack(){
-        closeAudio();
-        int min=AudioTrack.getMinBufferSize(outRate,AudioFormat.CHANNEL_OUT_MONO,AudioFormat.ENCODING_PCM_16BIT);
-        if(min<=0)throw new IllegalStateException("AudioTrack "+outRate+" Hz niedostępny");
-        track=new AudioTrack(AudioManager.STREAM_MUSIC,outRate,AudioFormat.CHANNEL_OUT_MONO,
-            AudioFormat.ENCODING_PCM_16BIT,Math.max(min,outRate*2/2),AudioTrack.MODE_STREAM);
-        if(track.getState()!=AudioTrack.STATE_INITIALIZED)throw new IllegalStateException("Głośnik niedostępny");
-        track.play();
-    }
-    private void playAudio(byte[] packet){
-        if(!sessionReady||decoder==null||track==null||packet.length==0)return;
-        try{
-            short[] pcm=new short[outRate/5]; // max 200 ms; regular packet 60 ms
-            int samples=decoder.decode(packet,0,packet.length,pcm,0,pcm.length,false);
-            if(samples>0){
-                long e=0;for(int i=0;i<samples;i++)e+=(long)pcm[i]*pcm[i];
-                events.level(Math.min(100,(int)(Math.sqrt(e/(double)samples)/100)),false);
-                AudioTrack t=track;if(t!=null)t.write(pcm,0,samples,AudioTrack.WRITE_BLOCKING);
-                lastAudioAt=SystemClock.elapsedRealtime();
-            }
-        }catch(Exception e){events.status("Odtwarzanie TTS: "+brief(e));}
-    }
-    private void closeAudio(){
-        AudioTrack t=track;track=null;decoder=null;
-        if(t!=null){try{t.pause();t.flush();t.release();}catch(Exception ignored){}}
-        events.level(0,false);
+    private void closeAudio(){audio.stop();}
+    private void finishAfterAudio(){
+        if(socket==null||ttsStoppedAt==0||talking)return;
+        long elapsed=SystemClock.elapsedRealtime()-ttsStoppedAt;
+        if(elapsed<13000 && !audio.drained()){
+            worker.schedule(this::finishAfterAudio,400,TimeUnit.MILLISECONDS);
+            return;
+        }
+        if(audio.packetsReceived()==0)
+            events.status("Xiaozhi zakończyło TTS bez ramek audio; sprawdź usługę");
+        finishSession();
     }
     private void finishSession(){
         if(closed)return;
@@ -375,7 +374,10 @@ public final class XiaozhiClient {
         endMic();
         if(s!=null)s.close(1000,"Done");
         closeAudio();
-        events.state(FaceView.State.IDLE);events.status("Dotknij mikrofonu, by porozmawiać");
+        events.state(FaceView.State.IDLE);
+        if(audio.packetsReceived()>0)
+            events.status("Dotknij mikrofonu, by porozmawiać");
+        else events.status("Sesja zakończona. Jeśli cisza: test głośnika w ustawieniach.");
     }
     public void stop(){worker.execute(this::finishSession);}
     private void fail(String why){
