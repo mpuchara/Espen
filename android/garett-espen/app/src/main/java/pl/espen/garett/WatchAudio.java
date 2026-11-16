@@ -106,7 +106,7 @@ final class WatchAudio {
             }
             // Decoding Opus at 48 kHz is supported even if Xiaozhi announces 24 kHz:
             // the decoded PCM duration is unchanged; avoids unsupported 24k audio HALs.
-            int[] choices={48000,24000,16000};
+            int[] choices={24000,48000,16000};
             int stream=AudioManager.STREAM_MUSIC;
             for(int hz:choices){
                 try{
