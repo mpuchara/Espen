@@ -3,17 +3,21 @@ package pl.espen.garett;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ClipboardManager;
+import android.content.ClipData;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
 import android.view.WindowManager;
+import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 /** Foreground-only watch UX. No accessibility, SMS, SOS or background service access. */
 public final class WatchActivity extends Activity implements FaceView.Actions, XiaozhiClient.Events {
@@ -24,6 +28,7 @@ public final class WatchActivity extends Activity implements FaceView.Actions, X
     private long lastLevelAt;
     @Override public void onCreate(Bundle state){
         super.onCreate(state);
+        CrashNotes.install(this);
         getWindow().setStatusBarColor(0xff000000);
         getWindow().setNavigationBarColor(0xff000000);
         immersive();
@@ -58,14 +63,14 @@ public final class WatchActivity extends Activity implements FaceView.Actions, X
         form.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(form);
         TextView info=new TextView(this);
-        info.setText("Ala / Espen 0.1.0\nZegarek ma własną aktywację w Xiaozhi.\n" +
+        info.setText("Ala / Espen 0.1.2\nZegarek ma własną aktywację w Xiaozhi.\n" +
             "Mikrofon działa wyłącznie podczas sesji.\n");
         info.setTextSize(14);form.addView(info);
         EditText ota=new EditText(this);ota.setSingleLine(false);ota.setMaxLines(3);
         ota.setText(XiaozhiClient.getOta(this));ota.setTextSize(13);ota.setHint("Adres OTA HTTPS");
         form.addView(ota);
         CheckBox vision=new CheckBox(this);vision.setChecked(xiaozhi.isVisionEnabled());
-        vision.setText("Zdjęcia dla AI (domyślnie wył.)");
+        vision.setText("Aparat i analiza zdjęć (domyślnie WŁ.)");
         vision.setTextSize(13);form.addView(vision);
         TextView privacy=new TextView(this);
         privacy.setText("Zdjęcie tylko na jawne pytanie lub dotknięcie ikony aparatu. " +
