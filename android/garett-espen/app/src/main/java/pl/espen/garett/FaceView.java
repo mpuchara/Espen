@@ -35,7 +35,7 @@ public final class FaceView extends View {
         nextBlink = SystemClock.uptimeMillis() + 2200;
     }
     public void setActions(Actions a) { actions = a; }
-    public void setState(State s) { state = s; invalidate(); }
+    public void setState(State s) { state = s; if(s==State.IDLE || s==State.CONNECTING) subtitle=""; invalidate(); }
     public State getState() { return state; }
     public void setStatus(String s) { status = s == null ? "" : s; invalidate(); }
     public void setSubtitle(String s) {
@@ -153,7 +153,7 @@ public final class FaceView extends View {
             round(c,18,278,324,51,13,0xff173041);
             text(c,"KOD XIAOZHI: "+activationCode,180,310,19,0xffd8efff,true);
         } else {
-            String visible=subtitle.length()>0?subtitle:status;
+            String visible=state==State.SPEAKING && subtitle.length()>0?subtitle:status;
             if(visible.length()>40) visible=visible.substring(0,39)+"…";
             text(c,visible,180,302,13,0xffbed3dd,false);
         }
@@ -170,7 +170,7 @@ public final class FaceView extends View {
         c.drawRoundRect(new RectF(283,342,318,364),4,4,p);c.drawCircle(301,353,7,p);
         text(c,"",180,393,8,0xff718b9c,false);
         real.restore();
-        if(getWindowVisibility()==VISIBLE && isAttachedToWindow()) postInvalidateDelayed(state==State.IDLE?90:48);
+        if(getWindowVisibility()==VISIBLE && isAttachedToWindow()) postInvalidateDelayed(state==State.IDLE?180:90);
     }
     private float logicalX(MotionEvent e){
         float s=Math.min(getWidth()/360f,getHeight()/400f);
