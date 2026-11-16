@@ -925,10 +925,10 @@ class EspenDisplay : public LcdDisplay {
                 lv_label_set_text_fmt(self->speech_gain_label_,"Mikrofon: %d dB (restart)",self->speech_gain_);
             },this,420);
             speech_gain_label_=lv_obj_get_child(gain,0);
-            auto* ns=MakeButton(speech_diag_,"Redukcja szumu",[](lv_event_t* e){
+            auto* ns=MakeButton(speech_diag_,"AGC (bez NSNet2)",[](lv_event_t* e){
                 auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));self->speech_enhance_=!self->speech_enhance_;
                 {Settings cfg("espen_audio",true);cfg.SetBool("enhance",self->speech_enhance_);}
-                lv_label_set_text(self->speech_enhance_label_,self->speech_enhance_?"NSNet2 + AGC: WŁ (restart)":"NSNet2 + AGC: WYŁ (restart)");
+                lv_label_set_text(self->speech_enhance_label_,self->speech_enhance_?"AGC: WŁ / NSNet2: WYŁ (ochrona)":"AGC: WYŁ / NSNet2: WYŁ (ochrona)");
             },this,420);
             speech_enhance_label_=lv_obj_get_child(ns,0);
             auto* perf=MakeButton(speech_diag_,"AFE",[](lv_event_t* e){
@@ -957,7 +957,7 @@ class EspenDisplay : public LcdDisplay {
             },this,420);
         }
         lv_label_set_text_fmt(speech_gain_label_,"Mikrofon: %d dB (restart)",speech_gain_);
-        lv_label_set_text(speech_enhance_label_,speech_enhance_?"NSNet2 + AGC: WŁ (restart)":"NSNet2 + AGC: WYŁ (restart)");
+        lv_label_set_text(speech_enhance_label_,speech_enhance_?"AGC: WŁ / NSNet2: WYŁ (ochrona)":"AGC: WYŁ / NSNet2: WYŁ (ochrona)");
         lv_label_set_text(speech_perf_label_,speech_perf_?"AFE: HIGH PERF (restart)":"AFE: LOW COST (restart)");
         lv_label_set_text(speech_diag_status_,EspenDiagSummary().c_str());
         lv_obj_clear_flag(speech_diag_,LV_OBJ_FLAG_HIDDEN);lv_obj_move_foreground(speech_diag_);
@@ -2069,7 +2069,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.2.5 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.2.6 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();
