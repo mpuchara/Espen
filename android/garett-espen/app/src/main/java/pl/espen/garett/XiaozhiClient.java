@@ -65,7 +65,7 @@ public final class XiaozhiClient {
         .writeTimeout(15,TimeUnit.SECONDS)
         .pingInterval(20,TimeUnit.SECONDS).build();
     private volatile WebSocket socket;
-    private volatile boolean recording, closed, sessionStarting, sessionReady, talking;
+    private volatile boolean recording, closed, sessionStarting, sessionReady, talking, audioActive;
     private Thread recordThread;
     private volatile long lastAudioAt;
     private volatile long micSentFrames;
@@ -307,7 +307,14 @@ public final class XiaozhiClient {
                 worker.execute(()->parseMessage(webSocket,text));
             }
             @Override public void onMessage(WebSocket webSocket,ByteString bytes){
-                if(webSocket==socket&&sessionReady)audio.offer(bytes.toByteArray());
+                byte[] packet=bytes.toByteArray();
+                // Run on the same control queue as TTS start to preserve WS frame order.
+                worker.execute(()->{
+                    if(webSocket==socket&&sessionReady){
+                        ensureAudio();
+                        audio.offer(packet);
+                    }
+                });
             }
             @Override public void onFailure(WebSocket webSocket,Throwable t,Response response){
                 if(webSocket==socket){socket=null;sessionStarting=false;endMic();events.state(FaceView.State.ERROR);events.status("Xiaozhi: "+brief(t));closeAudio();}
@@ -330,7 +337,9 @@ public final class XiaozhiClient {
                         o.optJSONObject("audio_params").optInt("sample_rate",24000):24000;
                     if(outRate!=16000&&outRate!=24000&&outRate!=48000)
                         throw new IOException("Nieobsługiwana częstotliwość TTS");
-                    audio.start(); // lazy dedicated audio thread, no audio HAL on network control loop
+                    // IMPORTANT for Garett's constrained audio HAL: do not open
+                    // AudioTrack while AudioRecord is active. Wait for actual TTS.
+                    audio.resetSession();audioActive=false;
                     sessionStarting=false;sessionReady=true;talking=false;
                     events.state(FaceView.State.LISTENING);events.status("Słucham…");
                     send(new JSONObject().put("type","listen").put("state","start").put("mode","manual"));
@@ -360,6 +369,12 @@ public final class XiaozhiClient {
                     if("start".equals(state)){
                         ttsResponses++;
                         talking=true;ttsStoppedAt=0;endMic();
+                        // Avoid simultaneous AudioRecord and AudioTrack initialization
+                        // on the vendor's Android 8.1 audio driver.
+                        Thread mic=recordThread;
+                        if(mic!=null&&mic.isAlive()&&mic!=Thread.currentThread()){
+                            try{mic.join(140);}catch(InterruptedException ex){Thread.currentThread().interrupt();}
+                        }
                         events.state(FaceView.State.SPEAKING);
                         events.status("Odbieram odpowiedź głosową…");
                     }
@@ -465,7 +480,12 @@ public final class XiaozhiClient {
         }
     }
     private void endMic(){recording=false;}
-    private void closeAudio(){audio.stop();}
+    private synchronized void ensureAudio(){
+        if(audioActive)return;
+        audioActive=true;
+        audio.start();
+    }
+    private void closeAudio(){audioActive=false;audio.stop();}
     private void finishAfterAudio(){
         if(socket==null||ttsStoppedAt==0||talking)return;
         long elapsed=SystemClock.elapsedRealtime()-ttsStoppedAt;
