@@ -259,6 +259,14 @@ public final class XiaozhiClient {
                     events.state(FaceView.State.LISTENING);events.status("Słucham…");
                     send(new JSONObject().put("type","listen").put("state","start").put("mode","manual"));
                     beginMic();
+                    // Bounded one-turn session: no perpetual listening/CPU drain
+                    // if the cloud never returns a TTS response.
+                    worker.schedule(()->{
+                        if(sender==socket&&sessionReady&&ttsStoppedAt==0&&!talking){
+                            finishSession();
+                            events.status("Xiaozhi nie odpowiedziało (45 s). Spróbuj ponownie.");
+                        }
+                    },45,TimeUnit.SECONDS);
                     break;
                 case "stt":
                     String phrase=o.optString("text","");
