@@ -80,6 +80,27 @@ public final class WatchActivity extends Activity implements FaceView.Actions, X
         XiaozhiClient.Identity id=XiaozhiClient.id(this);
         ids.setText("\nDevice-ID: "+id.deviceId+"\nClient-ID: "+id.clientId);
         ids.setTextSize(10);form.addView(ids);
+        Button speakerTest=new Button(this);
+        speakerTest.setText("🔊 Test głośnika (660 Hz)");
+        speakerTest.setOnClickListener(v->{
+            xiaozhi.testSpeaker();
+            Toast.makeText(this,"Odtwarzam 660 Hz. Sprawdź głośność multimediów.",Toast.LENGTH_LONG).show();
+        });
+        form.addView(speakerTest);
+        Button diagnostic=new Button(this);
+        diagnostic.setText("Diagnostyka dźwięku i awarii");
+        diagnostic.setOnClickListener(v->{
+            String infoText=xiaozhi.audioDiagnostics()+"\n\n"+CrashNotes.read(this);
+            new AlertDialog.Builder(this).setTitle("Ala: diagnostyka")
+                .setMessage(infoText)
+                .setPositiveButton("Kopiuj",(dialog,which)->{
+                    ClipboardManager clipboard=(ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
+                    if(clipboard!=null)clipboard.setPrimaryClip(ClipData.newPlainText("Ala logs",infoText));
+                    Toast.makeText(this,"Skopiowano diagnostykę",Toast.LENGTH_SHORT).show();
+                })
+                .setNegativeButton("Zamknij",null).show();
+        });
+        form.addView(diagnostic);
         new AlertDialog.Builder(this).setTitle("Ustawienia Ali").setView(scroll)
             .setPositiveButton("Zapisz",(d,w)->{
                 xiaozhi.setVisionEnabled(vision.isChecked());
