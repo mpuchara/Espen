@@ -1,0 +1,33 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'pl.espen.garett.facecheck'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'pl.espen.garett.facecheck'
+        minSdk 26
+        targetSdk 27
+        versionCode 1
+        versionName '0.1-facecheck'
+    }
+    signingConfigs {
+        debug {
+            enableV1Signing = true
+            enableV2Signing = false
+            enableV3Signing = false
+            enableV4Signing = false
+        }
+    }
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+            minifyEnabled false
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+// Intentionally ZERO dependencies and ZERO permissions. Should stay single-DEX.
