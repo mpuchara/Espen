@@ -6,6 +6,7 @@
 #include "face_engine.h"
 #include "speech_quality.h"
 #include "speaker_audio.h"
+#include "espen_camera.h"
 #include "visual_world.h"
 #include "dirty_rect.h"
 #include "display/lcd_display.h"
@@ -460,6 +461,17 @@ class EspenDisplay : public LcdDisplay {
     lv_obj_t* speech_gain_label_=nullptr;
     lv_obj_t* speech_enhance_label_=nullptr;
     lv_obj_t* speech_perf_label_=nullptr;
+    lv_obj_t* camera_panel_=nullptr;
+    lv_obj_t* camera_status_=nullptr;
+    lv_obj_t* camera_cloud_label_=nullptr;
+    lv_obj_t* camera_image_=nullptr;
+    lv_obj_t* camera_indicator_=nullptr;
+    lv_obj_t* camera_preview_label_=nullptr;
+    uint16_t* camera_preview_pixels_=nullptr;
+    lv_image_dsc_t camera_preview_desc_{};
+    uint32_t camera_preview_sequence_=0;
+    uint32_t camera_preview_draw_=0;
+    bool camera_preview_on_=false;
     lv_obj_t* speaker_panel_=nullptr;
     lv_obj_t* speaker_status_=nullptr;
     lv_obj_t* speaker_slider_=nullptr;
@@ -507,7 +519,8 @@ class EspenDisplay : public LcdDisplay {
             (!settings_ || lv_obj_has_flag(settings_, LV_OBJ_FLAG_HIDDEN)) &&
             (!wake_panel_ || lv_obj_has_flag(wake_panel_, LV_OBJ_FLAG_HIDDEN)) &&
             (!speaker_panel_ || lv_obj_has_flag(speaker_panel_,LV_OBJ_FLAG_HIDDEN)) &&
-            (!speech_diag_ || lv_obj_has_flag(speech_diag_,LV_OBJ_FLAG_HIDDEN))) {
+            (!speech_diag_ || lv_obj_has_flag(speech_diag_,LV_OBJ_FLAG_HIDDEN)) &&
+            (!camera_panel_ || lv_obj_has_flag(camera_panel_,LV_OBJ_FLAG_HIDDEN))) {
             last_auto_code_ = code;
             if (!cloud_ || lv_obj_has_flag(cloud_, LV_OBJ_FLAG_HIDDEN)) OpenCloud();
         }
@@ -949,6 +962,97 @@ class EspenDisplay : public LcdDisplay {
         lv_label_set_text(speech_diag_status_,EspenDiagSummary().c_str());
         lv_obj_clear_flag(speech_diag_,LV_OBJ_FLAG_HIDDEN);lv_obj_move_foreground(speech_diag_);
     }
+    void RefreshCameraPanel(uint32_t now){
+        if(!camera_panel_||lv_obj_has_flag(camera_panel_,LV_OBJ_FLAG_HIDDEN))return;
+        if(camera_preview_on_){
+            hb_camera_request();
+            if(now-camera_preview_draw_>=400){
+                camera_preview_draw_=now;
+                hb_camera_frame frame{};
+                if(hb_camera_acquire(&frame)){
+                    if(frame.settled&&frame.sequence!=camera_preview_sequence_&&camera_preview_pixels_){
+                        if(hb_rgb888_preview(frame.pixels,frame.width,frame.height,camera_preview_pixels_,180,320)){
+                            camera_preview_sequence_=frame.sequence;
+                            lv_obj_clear_flag(camera_image_,LV_OBJ_FLAG_HIDDEN);
+                            lv_obj_invalidate(camera_image_);
+                        }
+                    }
+                    hb_camera_release(&frame);
+                }
+            }
+        }
+        hb_camera_status st{};hb_camera_get_status(&st);
+        char buf[220];
+        snprintf(buf,sizeof(buf),"OV02C10 0x%04x | %s | klatki %lu\n%s | %s",
+            st.sensor_id,st.quarantined?"błąd sterownika — restart":st.running?"CSI aktywne":camera_preview_on_?"uruchamianie":"kamera uśpiona",
+            static_cast<unsigned long>(st.frames),
+            EspenVision().EndpointReady()?"Vision HTTPS: gotowe":"Vision HTTPS: brak adresu",
+            st.error==ESP_OK?"OK":esp_err_to_name(st.error));
+        lv_label_set_text(camera_status_,buf);
+    }
+    void StopCameraPreview(){
+        camera_preview_on_=false;camera_preview_sequence_=0;
+        if(camera_image_)lv_obj_add_flag(camera_image_,LV_OBJ_FLAG_HIDDEN);
+        if(camera_preview_pixels_)memset(camera_preview_pixels_,0,180*320*2);
+        if(camera_preview_label_)lv_label_set_text(camera_preview_label_,"Uruchom podgląd lokalny");
+        // No renewal: native CSI powers down within 3.5 seconds.
+    }
+    void OpenCameraPanel(){
+        if(!camera_panel_){
+            camera_panel_=lv_obj_create(lv_layer_top());
+            lv_obj_set_size(camera_panel_,DISPLAY_WIDTH,DISPLAY_HEIGHT);lv_obj_center(camera_panel_);
+            lv_obj_set_style_bg_color(camera_panel_,lv_color_hex(0x102030),0);
+            lv_obj_set_style_bg_opa(camera_panel_,LV_OPA_COVER,0);
+            lv_obj_set_style_text_color(camera_panel_,lv_color_white(),0);
+            lv_obj_set_style_text_font(camera_panel_,EspenUiFont(),0);
+            lv_obj_set_style_pad_all(camera_panel_,12,0);lv_obj_set_style_pad_row(camera_panel_,8,0);
+            lv_obj_set_flex_flow(camera_panel_,LV_FLEX_FLOW_COLUMN);
+            auto* title=lv_label_create(camera_panel_);lv_label_set_text(title,"ESPEN / Kamera");
+            camera_status_=lv_label_create(camera_panel_);lv_obj_set_width(camera_status_,lv_pct(100));
+            lv_label_set_long_mode(camera_status_,LV_LABEL_LONG_WRAP);
+            auto* cloud=MakeButton(camera_panel_,"Analiza obrazu",[](lv_event_t* e){
+                auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                bool enable=!EspenVision().CloudEnabled();
+                EspenVision().SetCloudEnabled(enable);
+                lv_label_set_text(self->camera_cloud_label_,enable?"Analiza Xiaozhi: WŁ":"Analiza Xiaozhi: WYŁ");
+            },this,420);
+            camera_cloud_label_=lv_obj_get_child(cloud,0);
+            auto* hint=lv_label_create(camera_panel_);lv_obj_set_width(hint,lv_pct(100));
+            lv_label_set_long_mode(hint,LV_LABEL_LONG_WRAP);
+            lv_label_set_text(hint,"Podgląd jest lokalny. Włącz analizę tylko jeśli zgadzasz się na wysłanie pojedynczego zdjęcia, gdy poprosisz Alę, by spojrzała.");
+            auto* preview=MakeButton(camera_panel_,"Uruchom podgląd lokalny",[](lv_event_t* e){
+                auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                if(self->camera_preview_on_){self->StopCameraPreview();return;}
+                if(!self->camera_preview_pixels_){
+                    self->camera_preview_pixels_=static_cast<uint16_t*>(heap_caps_calloc(180*320,2,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+                    if(!self->camera_preview_pixels_){lv_label_set_text(self->camera_status_,"Brak pamięci PSRAM");return;}
+                    self->camera_preview_desc_.header.magic=LV_IMAGE_HEADER_MAGIC;
+                    self->camera_preview_desc_.header.cf=LV_COLOR_FORMAT_RGB565;
+                    self->camera_preview_desc_.header.w=180;
+                    self->camera_preview_desc_.header.h=320;
+                    self->camera_preview_desc_.header.stride=180*2;
+                    self->camera_preview_desc_.data_size=180*320*2;
+                    self->camera_preview_desc_.data=reinterpret_cast<const uint8_t*>(self->camera_preview_pixels_);
+                    lv_image_set_src(self->camera_image_,&self->camera_preview_desc_);
+                }
+                if(!EspenVision().StartLocal()){lv_label_set_text(self->camera_status_,"Nie udało się uruchomić kamery");return;}
+                self->camera_preview_on_=true;self->camera_preview_sequence_=0;
+                lv_label_set_text(self->camera_preview_label_,"Zatrzymaj podgląd");
+            },this,420);
+            camera_preview_label_=lv_obj_get_child(preview,0);
+            camera_image_=lv_image_create(camera_panel_);
+            lv_obj_set_size(camera_image_,180,320);
+            lv_obj_set_style_align(camera_image_,LV_ALIGN_CENTER,0);
+            lv_obj_add_flag(camera_image_,LV_OBJ_FLAG_HIDDEN);
+            MakeButton(camera_panel_,"Wróć",[](lv_event_t* e){
+                auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                self->StopCameraPreview();lv_obj_add_flag(self->camera_panel_,LV_OBJ_FLAG_HIDDEN);
+            },this,420);
+        }
+        lv_label_set_text(camera_cloud_label_,EspenVision().CloudEnabled()?"Analiza Xiaozhi: WŁ":"Analiza Xiaozhi: WYŁ");
+        lv_obj_clear_flag(camera_panel_,LV_OBJ_FLAG_HIDDEN);lv_obj_move_foreground(camera_panel_);
+        RefreshCameraPanel(lv_tick_get());
+    }
     void OpenSettings() {
         if (!settings_) {
             settings_ = lv_obj_create(lv_layer_top());
@@ -964,6 +1068,10 @@ class EspenDisplay : public LcdDisplay {
             lv_obj_set_flex_flow(settings_, LV_FLEX_FLOW_COLUMN);
             auto* title = lv_label_create(settings_);
             lv_label_set_text(title, "ESPEN / Ustawienia");
+            MakeButton(settings_,"Kamera / Espen Vision",[](lv_event_t* e){
+                auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                self->CloseSettings();self->OpenCameraPanel();
+            },this,420);
             MakeButton(settings_,"Głośność / test głośnika",[](lv_event_t* e){
                 auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
                 self->CloseSettings();self->OpenSpeakerPanel();
@@ -1216,7 +1324,7 @@ class EspenDisplay : public LcdDisplay {
         g={x,y,w,h,angle};
     }
     bool OverlayVisible() const {
-        for(auto* panel:{settings_,wake_panel_,cloud_,speech_diag_,speaker_panel_})
+        for(auto* panel:{settings_,wake_panel_,cloud_,speech_diag_,speaker_panel_,camera_panel_})
             if(panel&&!lv_obj_has_flag(panel,LV_OBJ_FLAG_HIDDEN))return true;
         return false;
     }
@@ -1371,6 +1479,10 @@ class EspenDisplay : public LcdDisplay {
         lv_label_set_long_mode(wake_indicator_,LV_LABEL_LONG_DOT);
         lv_obj_set_pos(wake_indicator_,15,264);
         Passive(wake_indicator_);RefreshWake();
+        camera_indicator_=lv_label_create(face_);
+        lv_obj_set_style_text_font(camera_indicator_,EspenUiFont(),0);
+        lv_obj_set_style_text_color(camera_indicator_,lv_color_hex(0xFFD66B),0);
+        lv_obj_set_pos(camera_indicator_,15,8);Passive(camera_indicator_);Hide(camera_indicator_,true);
         hold_progress_=lv_obj_create(face_);Solid(hold_progress_,0xFFD66B,3);
         lv_obj_set_pos(hold_progress_,16,257);lv_obj_set_size(hold_progress_,1,4);Hide(hold_progress_,true);
         lv_obj_add_flag(face_,LV_OBJ_FLAG_CLICKABLE);
@@ -1445,8 +1557,15 @@ class EspenDisplay : public LcdDisplay {
         if(visual_caption_text_!=title){visual_caption_text_=title;lv_label_set_text(visual_caption_,title);}
     }
     void TickFace() {
-        if(!face_||OverlayVisible())return;
         uint32_t now=lv_tick_get();
+        RefreshCameraPanel(now);
+        if(!face_||OverlayVisible())return;
+        const int vision_activity=EspenVision().Activity();
+        Hide(camera_indicator_,vision_activity==0);
+        if(vision_activity){
+            const char* message=vision_activity==1?"Kamera: patrzę":"Kamera: wysyłam zdjęcie";
+            if(strcmp(lv_label_get_text(camera_indicator_),message)!=0)lv_label_set_text(camera_indicator_,message);
+        }
         uint32_t seq=mood_seq_.load(std::memory_order_acquire);
         if(seq!=seen_mood_) {seen_mood_=seq;engine_.Emotion(pending_mood_.load(std::memory_order_relaxed),now);}
         auto state=Application::GetInstance().GetDeviceState();
@@ -1929,7 +2048,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.1.38 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.2.0 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();
@@ -1949,6 +2068,7 @@ public:
         });
         GetBacklight()->RestoreBrightness();
     }
+    Camera* GetCamera() override {return &EspenVision();}
     AudioCodec* GetAudioCodec() override {
         // The on-board NS4150 is a BTL speaker amplifier, not a line output.
         // Leave it off by default until the user selects a safe connection.

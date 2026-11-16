@@ -19,6 +19,8 @@ c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_visual_world.cc -o /tmp/espe
 /tmp/espen-visual-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_speaker_audio.cc -o /tmp/espen-speaker-test
 /tmp/espen-speaker-test
+c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_vision_gate.cc -o /tmp/espen-vision-test
+/tmp/espen-vision-test
 ref=49b4380b3faa0ceadd28a3e78aaf0f311c46c57e
 if [ ! -d upstream/.git ]; then
   git clone --depth 1 --branch v2.5.2 https://github.com/78/xiaozhi-esp32.git upstream
@@ -48,6 +50,7 @@ test -s upstream/local_components/espressif__esp_hosted/common/protobuf-c/protob
 test -s upstream/local_components/espressif__esp_hosted/common/protobuf-c/protobuf-c/protobuf-c.h
 
 python3 scripts/prepare.py upstream
+python3 scripts/prepare_camera_idf.py upstream
 python3 scripts/prepare_wifi.py upstream
 python3 scripts/prepare_wifi_reliability.py upstream
 python3 scripts/prepare_hosted.py upstream
@@ -58,6 +61,7 @@ python3 scripts/build.py guition/espen-guition-jc4880p443 --name espen-guition-j
 for setting in \
   CONFIG_WAKE_WORD_DISABLED=y \
   CONFIG_USE_AUDIO_PROCESSOR=y \
+  CONFIG_CAM_CTLR_MIPI_CSI_ISR_CACHE_SAFE=y \
   CONFIG_SR_NSN_NSNET2=y \
   CONFIG_SR_VADN_VADNET1_MEDIUM=y \
   CONFIG_ESP_HOSTED_MEMPOOL_PREFER_SPIRAM=y \
@@ -99,4 +103,6 @@ cp upstream/build/generated_assets.bin dist/espen-assets.bin
 cp upstream/LICENSE dist/xiaozhi-LICENSE.txt
 cp firmware/vendor-LICENSE dist/panel-LICENSE.txt
 cp firmware/NOTO-OFL.txt dist/noto-LICENSE.txt
+cp firmware/camera/vendor/LICENSE dist/camera-LICENSE.txt
+cp firmware/camera/vendor/SOURCE.md dist/camera-SOURCE.md
 (cd dist && sha256sum espen.bin > espen.bin.sha256 && sha256sum espen-app.bin espen-assets.bin > espen-update.sha256)

@@ -12,8 +12,10 @@ for src, dst in [("config.h","config.h"),("config.json","config.json"),
                  ("espen_board.cc","espen_board.cc"),
                  ("board_p4_st7701_init.h","board_p4_st7701_init.h"),
                  ("face_engine.h","face_engine.h"),("dirty_rect.h","dirty_rect.h"),
-                 ("social_reactions.h","social_reactions.h"),("speech_quality.h","speech_quality.h"),("visual_world.h","visual_world.h"),("speaker_audio.h","speaker_audio.h")]:
+                 ("social_reactions.h","social_reactions.h"),("speech_quality.h","speech_quality.h"),("visual_world.h","visual_world.h"),("speaker_audio.h","speaker_audio.h"),
+                 ("espen_camera.h","espen_camera.h"),("espen_camera.cc","espen_camera.cc"),("vision_gate.h","vision_gate.h")]:
     shutil.copyfile(root / "firmware" / src, board / dst)
+shutil.copytree(root / "firmware/camera", up / "components/espen_camera", dirs_exist_ok=True)
 
 def replace(path, old, new):
     p = up / path
@@ -1196,3 +1198,20 @@ replace("main/audio/codecs/es8311_audio_codec.cc",
         '        ESP_ERROR_CHECK(esp_codec_dev_set_out_vol(dev_, output_volume_));',
         '        ESP_ERROR_CHECK(esp_codec_dev_set_out_vol(dev_, output_volume_));\n'
         '        ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_set_out_mute(dev_, output_volume_ == 0));')
+
+# Vision: native CSI owner, one MCP camera interface and one explicit user grant.
+replace("main/CMakeLists.txt", 'set(MAIN_PRIV_REQUIRES_EXTRA "")',
+        'set(MAIN_PRIV_REQUIRES_EXTRA "")\n'
+        'if(CONFIG_BOARD_TYPE_ESPEN_GUITION_P4)\n'
+        '    list(APPEND MAIN_PRIV_REQUIRES_EXTRA espen_camera)\n'
+        'endif()')
+replace("main/application.cc", '                EspenVisualQuestion(text->valuestring);',
+        '                EspenVisualQuestion(text->valuestring);\n'
+        '                extern void EspenVisionQuestion(const char*);\n'
+        '                EspenVisionQuestion(text->valuestring);')
+replace("main/mcp_server.cc",
+        '                "Always remember you have a camera. If the user asks you to see something, use "',
+        '                "The camera is private. Only use it when the user explicitly asks you to look at or describe something. "')
+replace("main/mcp_server.cc",
+        'return std::unexpected("Failed to capture photo");',
+        'return std::unexpected("Camera unavailable, or permission missing. Ask the user to enable cloud vision and explicitly ask you to look; never claim to see an image without a successful capture.");')
