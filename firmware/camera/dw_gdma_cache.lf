@@ -1,0 +1,7 @@
+# IDF 6.1 moved DW_GDMA from esp_hw_support to esp_driver_dma.
+# CSI ISR calls config_transfer, missing from the native IRAM control list.
+[mapping:espen_csi_dma_config_cache_safe]
+archive: libesp_driver_dma.a
+entries:
+    if CAM_CTLR_MIPI_CSI_ISR_CACHE_SAFE = y:
+        dw_gdma: dw_gdma_channel_config_transfer (noflash)
