@@ -8,8 +8,8 @@ android {
         applicationId 'pl.espen.garett'
         minSdk 26                 // Android 8.0, compatible with Garett's 8.1
         targetSdk 27              // Do not opt into modern Android package behavior
-        versionCode 2
-        versionName '0.1.1'
+        versionCode 3
+        versionName '0.1.2'
     }
 
     // The vendor's limited Android 8.1 installer may not handle v2-only APKs
