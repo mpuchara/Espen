@@ -271,3 +271,53 @@ void hb_camera_exposure_plan(float line_us, unsigned max_lines, unsigned old_lin
     *lines = n;
     *gain = (unsigned)fminf(2048, fmaxf(256, lroundf(total * 256 / n))) & ~1U;
 }
+
+/* The previous Espen view applied CCW90 to the OV02C10 sensor raster.
+ * Displaying the sensor raster in its native landscape orientation is
+ * equivalent to rotating that previous view 90 degrees clockwise.
+ * These functions do not affect Home Buddy's legacy upright/crop path.
+ * Source rows are packed BGR888; destination is RGB24 or RGB565.
+ */
+static bool sensor_rgb_bounds(const uint8_t *src, const void *dst,
+                              unsigned w, unsigned h, unsigned ow, unsigned oh)
+{
+    return src && dst && w >= 32 && h >= 32 && w <= 4096 && h <= 4096 &&
+           ow && oh && ow <= 800 && oh <= 800;
+}
+static void sample_sensor_rgb(const uint8_t *src, unsigned w, unsigned h,
+                              unsigned x, unsigned y, unsigned ow, unsigned oh, uint8_t rgb[3])
+{
+    unsigned sx = x * (w - 2) / ow;
+    unsigned sy = y * (h - 2) / oh;
+    const uint8_t *p = src + ((size_t)sy * w + sx) * 3;
+    const uint8_t *q = p + 3;
+    const uint8_t *r = p + (size_t)w * 3;
+    const uint8_t *s = r + 3;
+    for (unsigned c = 0; c < 3; ++c)
+        rgb[c] = (p[2 - c] + q[2 - c] + r[2 - c] + s[2 - c] + 2) / 4;
+}
+bool hb_rgb888_thumbnail_clockwise(const uint8_t *src, unsigned w, unsigned h,
+                                   uint8_t *dst, unsigned ow, unsigned oh)
+{
+    if (!sensor_rgb_bounds(src, dst, w, h, ow, oh))
+        return false;
+    for (unsigned y = 0; y < oh; ++y)
+        for (unsigned x = 0; x < ow; ++x)
+            sample_sensor_rgb(src, w, h, x, y, ow, oh,
+                              dst + ((size_t)y * ow + x) * 3);
+    return true;
+}
+bool hb_rgb888_preview_clockwise(const uint8_t *src, unsigned w, unsigned h,
+                                 uint16_t *dst, unsigned ow, unsigned oh)
+{
+    if (!sensor_rgb_bounds(src, dst, w, h, ow, oh))
+        return false;
+    for (unsigned y = 0; y < oh; ++y)
+        for (unsigned x = 0; x < ow; ++x) {
+            uint8_t rgb[3];
+            sample_sensor_rgb(src, w, h, x, y, ow, oh, rgb);
+            dst[(size_t)y * ow + x] =
+                ((rgb[0] >> 3) << 11) | ((rgb[1] >> 2) << 5) | (rgb[2] >> 3);
+        }
+    return true;
+}
