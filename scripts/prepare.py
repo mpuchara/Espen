@@ -1201,10 +1201,7 @@ replace("main/audio/codecs/es8311_audio_codec.cc",
 
 # Vision: native CSI owner, one MCP camera interface and one explicit user grant.
 replace("main/CMakeLists.txt", 'set(MAIN_PRIV_REQUIRES_EXTRA "")',
-        'set(MAIN_PRIV_REQUIRES_EXTRA "")\n'
-        'if(CONFIG_BOARD_TYPE_ESPEN_GUITION_P4)\n'
-        '    list(APPEND MAIN_PRIV_REQUIRES_EXTRA espen_camera)\n'
-        'endif()')
+        'set(MAIN_PRIV_REQUIRES_EXTRA "espen_camera")')
 replace("main/application.cc", '                EspenVisualQuestion(text->valuestring);',
         '                EspenVisualQuestion(text->valuestring);\n'
         '                extern void EspenVisionQuestion(const char*);\n'
