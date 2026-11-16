@@ -42,6 +42,11 @@ final class WatchAudio {
 
     WatchAudio(Activity a, Reporter r) { activity=a; reporter=r; }
 
+    void resetSession(){
+        stop();frames.clear();
+        received=played=dropped=0;lastWrittenMs=0;
+        soundConfigured=false;route="nie uruchomiony";
+    }
     void start() {
         stop();
         frames.clear();
