@@ -56,6 +56,9 @@ test -s upstream/local_components/espressif__esp_hosted/common/protobuf-c/protob
 test -s upstream/local_components/espressif__esp_hosted/common/protobuf-c/protobuf-c/protobuf-c.h
 
 python3 scripts/prepare.py upstream
+# Crash regression guard: no NSNet2 FFT path may be enabled by persisted NVS.
+grep -Fq 'afe_config->ns_init = false;' upstream/main/audio/engines/afe_audio_engine.cc
+grep -Fq 'Espen AFE safe mode: NSNet2 disabled' upstream/main/audio/engines/afe_audio_engine.cc
 python3 scripts/prepare_camera_idf.py upstream
 python3 scripts/prepare_wifi.py upstream
 python3 scripts/prepare_wifi_reliability.py upstream

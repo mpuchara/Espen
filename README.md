@@ -170,3 +170,10 @@ Z logu urządzenia: mikrofon, sieć, MQTT, tool MCP i podgląd kamery działają
 
 Nie zmieniano drivera kamery, rotacji, pamięci NVS, Wi-Fi, audio ani protokołu rozmów.
 
+## 0.2.6 — poprawka restartu po wybudzeniu mową (Illegal instruction / NSNet2 FFT)
+
+Na P4 rev1 log fizyczny wykazuje panic **Core 0 / Illegal instruction**, tuż po `AudioService: Espen speech: replay 630 ms buffered PCM`. Sprawdzono `MEPC=0x400fd9be`, `RA=0x400fcc5a` z ELF debug 0.2.5: lokalizacja `dl_fft_table_release` wywoływana przez `dl_rfft_f32_run` w `nsnet2_quantized.c:model_process` podczas AFE. Jest to błąd w ścieżce NSNet2/FFT, a nie dowód usterki kamery; należy potwierdzić na sprzęcie, czy samo jej wyłączenie eliminuje wyjątek. To jest świadomie zachowawcza poprawka, nie potwierdzona jeszcze naprawa samej biblioteki.
+
+**Stabilizacja:** w 0.2.6 NSNet2 jest bezwarunkowo wyłączony w konfiguracji AFE, nawet jeśli NVS wcześniej zapisał `enhance=true`. Aktywny pozostaje **VADNet1 (wykrywanie mowy)** i opcjonalny **AGC (automatyczne wzmocnienie)**; lokalne wybudzanie, pre-roll, Xiaozhi, kamera i jej analiza pozostają bez zmian. Przycisk w Diagnostyce mowy steruje teraz tylko AGC i pokazuje stan NSNet2 jako wyłączony. Kolejna próba rozmowy na P4 powinna potwierdzić brak ponownego panika. GitHub CI kontroluje wygenerowane ustawienie `afe_config->ns_init = false`.
+
+**Diagnostyka:** w logu szukaj `Espen AFE safe mode: NSNet2 disabled`, potem `Espen speech: replay`, a następnie przejścia STT/TTS bez `Guru Meditation`. Jeśli crash pozostaje, zebrać nowy dump z MEPC/RA i dokładnym SHA kompilacji. Pełna aktualizacja nie jest potrzebna; użyj aktualizacji aplikacji i zasobów bez kasowania NVS.

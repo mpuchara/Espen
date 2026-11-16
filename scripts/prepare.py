@@ -978,7 +978,13 @@ replace("main/audio/engines/afe_audio_engine.cc",
         '        high_perf ? AFE_MODE_HIGH_PERF : AFE_MODE_LOW_COST);')
 replace("main/audio/engines/afe_audio_engine.cc",
         '    afe_config->ns_init = false;',
-        '    afe_config->ns_init = enhance && ns_model != nullptr;\n'
+        '    // Espen 0.2.6: disable NSNet2 even with old NVS enhance=true.\n'
+        '    // P4 core0 illegal instruction at dl_fft_table_release during\n'
+        '    // nsnet2 model_process -> dl_rfft_f32_run -> release.\n'
+        '    // Keep VADNet1 and AGC; never enter the faulty FFT path.\n'
+        '    afe_config->ns_init = false;\n'
+        '    ESP_LOGW(TAG, "Espen AFE safe mode: NSNet2 disabled (FFT crash avoidance), AGC=%d, VAD=%s",\n'
+        '             enhance, vad_model_name ? vad_model_name : "WebRTC");\n'
         '    if (afe_config->ns_init) {\n'
         '        afe_config->ns_model_name = ns_model;\n'
         '        afe_config->afe_ns_mode = AFE_NS_MODE_NET;\n'
