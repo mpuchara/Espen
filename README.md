@@ -189,5 +189,13 @@ Zgłoszenie jest wcześniejsze niż kamera 0.2.x: już przy 0.1.36 brakowało s�
 - Log `Espen speaker PCM sent: ... peak=...` pojawia się z faktycznej ścieżki `esp_codec_dev_write`, a błędy zapisu są zgłaszane wprost. Jeśli PCM ma `peak > 0`, to strumień dochodzi do sterownika, ale bez testu na fizycznej płytce nie można jeszcze obiecać dźwięku z głośnika.
 - Zachowano test melodii 12 s w Ustawienia → Głośność / test głośnika; uruchom go przed testem rozmowy, aby rozdzielić sprzętowy tor głośnika od dekodowania TTS.
 
-Dla testu: po aktualizacji sprawdź log `Speaker defaults migrated: PA ON, volume 75%`; uruchom `Test melodii (12 s)`; następnie powiedz proste pytanie. Zapisz logi z `Es8311AudioCodec`, `AudioCodec`, `Application: <<`, `MCP`. **CI kompiluje kod, nie zastępuje fizycznego testu audio**. Jeśli status wykazuje PA=1, PCM peak>0 i write=OK bez dźwięku, trzeba sprawdzić połączenie pasywnego głośnika z dwoma wyjściami SPEAK BTL (nie z GND), zasilanie PA i wyjściowy kanał I2S. 
+Dla testu: po aktualizacji sprawdź log `Speaker defaults migrated: PA ON, volume 75%`; uruchom `Test melodii (12 s)`; następnie powiedz proste pytanie. Zapisz logi z `Es8311AudioCodec`, `AudioCodec`, `Application: <<`, `MCP`. **CI kompiluje kod, nie zastępuje fizycznego testu audio**. Jeśli status wykazuje PA=1, PCM peak>0 i write=OK bez dźwięku, trzeba sprawdzić połączenie pasywnego głośnika z dwoma wyjściami SPEAK BTL (nie z GND), zasilanie PA i wyjściowy kanał I2S.
+
+## 0.2.8 — pilna poprawka bootloop po aktualizacji 0.2.7
+
+W 0.2.7 nowa migracja ustawień głośnika wywoływała `Settings::SetBool("speaker_defaults_027", true)`. Ten klucz ma **20 bajtów**, a ESP-IDF NVS dopuszcza maksimum **15 bajtów**. Przy starcie, zaraz po `EspenWake: Local keyword templates loaded`, wywołanie `nvs_set_u8` kończyło się `ESP_ERR_NVS_KEY_TOO_LONG (0x1109)`, a `ESP_ERROR_CHECK` powodował ciągły restart. To jednoznacznie wyjaśnia przesłany log — nie jest to błąd mikrofonu ani głośnika. **Nie kasuj NVS ani nie wykonuj pełnej instalacji.**
+
+Poprawka: skrócono klucz migracji do `spk_init_v027` (13 bajtów); wartości `speaker_pa=true`, `output_volume=75` i jednorazowa migracja nadal pozostają. Dodano test CI wykrywający zbyt długie klucze `Settings::Get*/Set*` w katalogu firmware, łącznie z przypadkiem regresji. Aktualizacja **Espen 0.2.8** wgrywa tylko aplikację i zasoby i **zachowuje Wi‑Fi i parowanie Xiaozhi**.
+
+Po udanym flashowaniu sprawdź log `Speaker defaults migrated: PA ON, volume 75%`, `Audio: ... NS4150 PA GPIO11 enabled` i uruchom lokalny `Test melodii (12 s)`. Dopiero ten test pokaże, czy odtwarzanie na płytce działa; nie oznaczajmy braku dźwięku jako rozwiązany bez testu.
 
