@@ -3,7 +3,7 @@
 #include <cmath>
 #include <cstdint>
 namespace espen {
-inline constexpr int kSpeakerVolumeDefault=15;
+inline constexpr int kSpeakerVolumeDefault=75;
 inline constexpr int kSpeakerVolumeMax=80;
 inline constexpr int kSpeakerTestMs=12000;
 inline int SpeakerVolume(int value){return std::clamp(value,0,kSpeakerVolumeMax);}

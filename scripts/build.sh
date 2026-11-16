@@ -56,6 +56,10 @@ test -s upstream/local_components/espressif__esp_hosted/common/protobuf-c/protob
 test -s upstream/local_components/espressif__esp_hosted/common/protobuf-c/protobuf-c/protobuf-c.h
 
 python3 scripts/prepare.py upstream
+# Verify both hardware-unmute and 75% defaults in the generated source.
+grep -Fq 'int output_volume_ = 75;' upstream/main/audio/audio_codec.h
+grep -Fq 'Espen speaker: PA GPIO%d level=%d DAC volume=%d%% output=%d gpio_err=%s' upstream/main/audio/codecs/es8311_audio_codec.cc
+grep -Fq 'Espen speaker PCM sent:' upstream/main/audio/codecs/es8311_audio_codec.cc
 # Crash regression guard: no NSNet2 FFT path may be enabled by persisted NVS.
 grep -Fq 'afe_config->ns_init = false;' upstream/main/audio/engines/afe_audio_engine.cc
 grep -Fq 'Espen AFE safe mode: NSNet2 disabled' upstream/main/audio/engines/afe_audio_engine.cc
