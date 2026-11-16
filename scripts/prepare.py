@@ -13,7 +13,7 @@ for src, dst in [("config.h","config.h"),("config.json","config.json"),
                  ("board_p4_st7701_init.h","board_p4_st7701_init.h"),
                  ("face_engine.h","face_engine.h"),("dirty_rect.h","dirty_rect.h"),
                  ("social_reactions.h","social_reactions.h"),("speech_quality.h","speech_quality.h"),("visual_world.h","visual_world.h"),("speaker_audio.h","speaker_audio.h"),
-                 ("espen_camera.h","espen_camera.h"),("espen_camera.cc","espen_camera.cc"),("vision_gate.h","vision_gate.h")]:
+                 ("espen_camera.h","espen_camera.h"),("espen_camera.cc","espen_camera.cc"),("vision_gate.h","vision_gate.h"),("vision_endpoint.h","vision_endpoint.h")]:
     shutil.copyfile(root / "firmware" / src, board / dst)
 shutil.copytree(root / "firmware/camera", up / "components/espen_camera", dirs_exist_ok=True)
 
@@ -1212,6 +1212,18 @@ replace("main/mcp_server.cc",
 replace("main/mcp_server.cc",
         'return std::unexpected("Failed to capture photo");',
         'return std::unexpected("Camera unavailable, or permission missing. Ask the user to enable cloud vision and explicitly ask you to look; never claim to see an image without a successful capture.");')
+
+# Diagnose whether legacy Xiaozhi MCP actually provides the vision capability.
+# Never log the URL, token, device ID, MCP message body or user photo.
+replace("main/mcp_server.cc",
+        'void McpServer::ParseCapabilities(const cJSON* capabilities) {\n'
+        '    auto vision = cJSON_GetObjectItem(capabilities, "vision");',
+        'void McpServer::ParseCapabilities(const cJSON* capabilities) {\n'
+        '    auto vision = cJSON_GetObjectItem(capabilities, "vision");\n'
+        '    auto url = cJSON_GetObjectItem(vision, "url");\n'
+        '    ESP_LOGI(TAG, "Espen MCP vision negotiation: offered=%d url=%d",\n'
+        '             cJSON_IsObject(vision), cJSON_IsString(url));')
+
 
 # 0.2.4: stop an active Xiaozhi conversation with "Bez odbioru".
 # The command is matched ONLY on user STT and never on assistant TTS.
