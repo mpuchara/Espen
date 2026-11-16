@@ -1212,3 +1212,57 @@ replace("main/mcp_server.cc",
 replace("main/mcp_server.cc",
         'return std::unexpected("Failed to capture photo");',
         'return std::unexpected("Camera unavailable, or permission missing. Ask the user to enable cloud vision and explicitly ask you to look; never claim to see an image without a successful capture.");')
+
+# 0.2.4: stop an active Xiaozhi conversation with "Bez odbioru".
+# The command is matched ONLY on user STT and never on assistant TTS.
+# Close the actual cloud audio channel; the existing local wake engine is
+# then re-armed by the idle state as before (including auto-speech preference).
+shutil.copyfile(root / "firmware/voice_commands.h", up / "main/audio/voice_commands.h")
+replace("main/application.cc", '#include "audio/espen_wake.h"',
+        '#include "audio/espen_wake.h"\n#include "audio/voice_commands.h"')
+replace("main/application.h", '#include <vector>',
+        '#include <vector>\n#include <atomic>')
+replace("main/application.h",
+        '    bool espen_wake_ready_ = false; // main-loop owned',
+        '    bool espen_wake_ready_ = false; // main-loop owned\n'
+        '    std::atomic<bool> espen_standby_requested_{false};')
+# Guard every late TTS / audio event from the cancelled server turn.
+replace("main/application.cc",
+        '        if (GetDeviceState() == kDeviceStateSpeaking) {\n'
+        '            extern uint32_t EspenVisualPacketTag();',
+        '        if (GetDeviceState() == kDeviceStateSpeaking &&\n'
+        '            !espen_standby_requested_.load(std::memory_order_acquire)) {\n'
+        '            extern uint32_t EspenVisualPacketTag();')
+replace("main/application.cc",
+        '        } else if (strcmp(type->valuestring, "tts") == 0) {\n'
+        '            auto state = cJSON_GetObjectItem(root, "state");',
+        '        } else if (strcmp(type->valuestring, "tts") == 0) {\n'
+        '            if (espen_standby_requested_.load(std::memory_order_acquire)) return;\n'
+        '            auto state = cJSON_GetObjectItem(root, "state");')
+replace("main/application.cc",
+        '        } else if (strcmp(type->valuestring, "stt") == 0) {\n'
+        '            auto text = cJSON_GetObjectItem(root, "text");\n'
+        '            if (cJSON_IsString(text)) {',
+        '        } else if (strcmp(type->valuestring, "stt") == 0) {\n'
+        '            auto text = cJSON_GetObjectItem(root, "text");\n'
+        '            if (cJSON_IsString(text)) {\n'
+        '                if (espen::IsVoiceStandbyCommand(text->valuestring)) {\n'
+        '                    espen_standby_requested_.store(true, std::memory_order_release);\n'
+        '                    Schedule([this]() {\n'
+        '                        if (!espen_standby_requested_.load(std::memory_order_acquire)) return;\n'
+        '                        ESP_LOGI(TAG, "Espen: voice standby command, closing cloud conversation");\n'
+        '                        audio_service_.CancelEspenSpeechCapture();\n'
+        '                        audio_service_.EnableVoiceProcessing(false);\n'
+        '                        audio_service_.ResetDecoder();\n'
+        '                        EspenSleepNow();\n'
+        '                        if (protocol_ && protocol_->IsAudioChannelOpened())\n'
+        '                            protocol_->CloseAudioChannel();\n'
+        '                        SetDeviceState(kDeviceStateIdle);\n'
+        '                    });\n'
+        '                    return;\n'
+        '                }')
+replace("main/application.cc",
+        'void Application::SetListeningMode(ListeningMode mode) {\n    listening_mode_ = mode;',
+        'void Application::SetListeningMode(ListeningMode mode) {\n'
+        '    espen_standby_requested_.store(false, std::memory_order_release);\n'
+        '    listening_mode_ = mode;')
