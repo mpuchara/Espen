@@ -1220,9 +1220,9 @@ replace("main/mcp_server.cc",
         '    auto vision = cJSON_GetObjectItem(capabilities, "vision");',
         'void McpServer::ParseCapabilities(const cJSON* capabilities) {\n'
         '    auto vision = cJSON_GetObjectItem(capabilities, "vision");\n'
-        '    auto url = cJSON_GetObjectItem(vision, "url");\n'
+        '    auto offered_url = cJSON_IsObject(vision) ? cJSON_GetObjectItem(vision, "url") : nullptr;\n'
         '    ESP_LOGI(TAG, "Espen MCP vision negotiation: offered=%d url=%d",\n'
-        '             cJSON_IsObject(vision), cJSON_IsString(url));')
+        '             cJSON_IsObject(vision), cJSON_IsString(offered_url));')
 
 
 # 0.2.4: stop an active Xiaozhi conversation with "Bez odbioru".
