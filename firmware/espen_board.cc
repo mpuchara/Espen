@@ -2069,7 +2069,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.2.7 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.2.8 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();
@@ -2097,11 +2097,11 @@ public:
         static const bool speaker_enabled=[](){
             {
                 Settings migration("espen_audio",true);
-                if(!migration.GetBool("speaker_defaults_027",false)){
+                if(!migration.GetBool("spk_init_v027",false)){
                     migration.SetBool("speaker_pa",true);
                     Settings audio("audio",true);
                     audio.SetInt("output_volume",espen::kSpeakerVolumeDefault);
-                    migration.SetBool("speaker_defaults_027",true);
+                    migration.SetBool("spk_init_v027",true);
                     ESP_LOGI(TAG,"Speaker defaults migrated: PA ON, volume 75%%");
                 }
             }
