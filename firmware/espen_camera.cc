@@ -74,7 +74,7 @@ bool EspenCamera::Capture(){
     if(!EndpointReady()){ESP_LOGW(TAG,"No HTTPS vision endpoint from Xiaozhi");return false;}
     ActivityGuard active(activity_,1);
     if(!StartLocal())return false;
-    constexpr unsigned w=432,h=768;
+    constexpr unsigned w=768,h=432;
     constexpr size_t bytes=w*h*3;
     std::unique_ptr<uint8_t,decltype(&heap_caps_free)> rgb(
         static_cast<uint8_t*>(heap_caps_aligned_alloc(128,bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)),heap_caps_free);
@@ -89,7 +89,7 @@ bool EspenCamera::Capture(){
             if(hb_camera_acquire(&f.frame)&&f.frame.settled&&
                f.frame.timestamp_ms>=begin&&NowMs()-begin>=1200){
                 hb_camera_status status{};hb_camera_get_status(&status);
-                if(!status.test_pattern&&hb_rgb888_thumbnail(f.frame.pixels,f.frame.width,f.frame.height,rgb.get(),w,h)){
+                if(!status.test_pattern&&hb_rgb888_thumbnail_clockwise(f.frame.pixels,f.frame.width,f.frame.height,rgb.get(),w,h)){
                     converted=true;break;
                 }
             }
@@ -102,7 +102,7 @@ bool EspenCamera::Capture(){
         ClearPhoto();ESP_LOGW(TAG,"JPEG conversion failed");return false;
     }
     jpeg_at_=esp_timer_get_time();
-    ESP_LOGI(TAG,"Fresh portrait JPEG %ux%u, %u bytes",w,h,static_cast<unsigned>(jpeg_size_));
+    ESP_LOGI(TAG,"Fresh clockwise JPEG %ux%u, %u bytes",w,h,static_cast<unsigned>(jpeg_size_));
     return true;
 }
 std::expected<std::string,std::string> EspenCamera::Explain(const std::string& question){
