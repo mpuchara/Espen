@@ -21,6 +21,10 @@ c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_speaker_audio.cc -o /tmp/esp
 /tmp/espen-speaker-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_vision_gate.cc -o /tmp/espen-vision-test
 /tmp/espen-vision-test
+c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_voice_commands.cc -o /tmp/espen-voice-command-test
+/tmp/espen-voice-command-test
+cc -std=c11 -O2 -Wall -Wextra -Werror -Ifirmware/camera/include tests/test_camera_rotation.c firmware/camera/raw_frame.c firmware/camera/light_meter.c -lm -o /tmp/espen-camera-rotation-test
+/tmp/espen-camera-rotation-test
 ref=49b4380b3faa0ceadd28a3e78aaf0f311c46c57e
 if [ ! -d upstream/.git ]; then
   git clone --depth 1 --branch v2.5.2 https://github.com/78/xiaozhi-esp32.git upstream
