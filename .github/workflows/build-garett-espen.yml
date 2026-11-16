@@ -32,10 +32,19 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
-      - name: Build installable debug APK
-        run: gradle --no-daemon --stacktrace assembleDebug
-      - uses: actions/upload-artifact@v4
+      - name: Build Android 8.1 minimal face-test APK
+        run: gradle --no-daemon --stacktrace :lite:assembleDebug
+      - name: Upload independent face-test APK
+        uses: actions/upload-artifact@v4
         with:
-          name: garett-espen-debug-apk
+          name: garett-espen-android81-face-test-v1
+          path: android/garett-espen/lite/build/outputs/apk/debug/lite-debug.apk
+          if-no-files-found: error
+      - name: Build Android 8.1 full compatibility APK
+        run: gradle --no-daemon --stacktrace :app:assembleDebug
+      - name: Upload full APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: garett-espen-android81-full-v1
           path: android/garett-espen/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
