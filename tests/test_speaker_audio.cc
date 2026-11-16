@@ -3,7 +3,8 @@
 #include <iostream>
 int main(){
     using namespace espen;
-    assert(SpeakerVolume(-1)==0&&SpeakerVolume(101)==80&&SpeakerVolume(15)==15);
+    assert(kSpeakerVolumeDefault==75);
+    assert(SpeakerVolume(-1)==0&&SpeakerVolume(101)==80&&SpeakerVolume(75)==75);
     assert(SpeakerVolume(0)==0);
     constexpr int rate=24000;
     assert(SpeakerTestSample(0,rate)==0&&SpeakerTestSample(rate*12,rate)==0);
