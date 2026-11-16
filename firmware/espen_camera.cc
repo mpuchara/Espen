@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "espen_camera.h"
 #include "vision_gate.h"
+#include "vision_endpoint.h"
 #include "board.h"
 #include "system_info.h"
 #include "settings.h"
@@ -53,12 +54,17 @@ void EspenCamera::NoteQuestion(const char* text){
 }
 void EspenCamera::SetExplainUrl(const std::string& url,const std::string& token){
     std::lock_guard<std::mutex> lock(mutex_);
-    // Never send a child's camera image over an unencrypted HTTP endpoint.
-    if(url.rfind("https://",0)!=0||url.size()>2048){
-        url_.clear();token_.clear();endpoint_.store(false);return;
+    // The official Xiaozhi legacy MCP initialization may announce http://.
+    // Upgrade only its audited public vision URL to HTTPS; never send a
+    // child's camera image or bearer token over unencrypted transport.
+    auto secure=espen::SecureVisionEndpoint(url);
+    if(secure.empty()){
+        url_.clear();token_.clear();endpoint_.store(false,std::memory_order_release);
+        ESP_LOGW(TAG,"Xiaozhi vision endpoint missing or refused (HTTPS required); URL/token omitted");
+        return;
     }
-    url_=url;token_=token;endpoint_.store(true,std::memory_order_release);
-    ESP_LOGI(TAG,"HTTPS vision service configured (URL/token not logged)");
+    url_=std::move(secure);token_=token;endpoint_.store(true,std::memory_order_release);
+    ESP_LOGI(TAG,"Secure Xiaozhi vision endpoint configured (URL/token omitted)");
 }
 void EspenCamera::ClearPhoto(){
     if(jpeg_)heap_caps_free(jpeg_);
