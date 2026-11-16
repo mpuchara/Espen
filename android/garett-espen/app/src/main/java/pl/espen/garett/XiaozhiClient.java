@@ -70,6 +70,7 @@ public final class XiaozhiClient {
     private volatile long lastAudioAt;
     private volatile long micSentFrames;
     private volatile int peakMicRms, sttResponses, ttsResponses;
+    private volatile String micStage="idle";
     private volatile String sessionId="";
     private String wsUrl, wsToken, legacyVisionUrl, legacyVisionToken;
     private int wsVersion=1, outRate=24000;
@@ -119,7 +120,7 @@ public final class XiaozhiClient {
     }
     public String audioDiagnostics(){
         return "Mikrofon: pakiety Opus wysłane "+micSentFrames+
-            ", RMS max "+peakMicRms+
+            ", RMS max "+peakMicRms+", etap "+micStage+
             "\\nXiaozhi: STT "+sttResponses+", TTS "+ttsResponses+
             "\\nGłośnik: "+audio.route()+
             "\\nPakiety TTS: "+audio.packetsReceived()+
@@ -149,7 +150,7 @@ public final class XiaozhiClient {
             .put("mac_address",identity.deviceId).put("uuid",identity.clientId)
             .put("chip_model_name","android")
             .put("application",new JSONObject().put("name","garett-espen")
-                .put("version","0.1.2").put("idf_version","android-"+Build.VERSION.SDK_INT)
+                .put("version","0.1.3").put("idf_version","android-"+Build.VERSION.SDK_INT)
                 .put("compile_time","").put("elf_sha256",""))
             .put("board",new JSONObject().put("type","garett-essa2-android")
                 .put("name",Build.MODEL).put("manufacturer",Build.MANUFACTURER)
@@ -159,7 +160,7 @@ public final class XiaozhiClient {
             .header("Client-Id",identity.clientId)
             .header("Activation-Version","1")
             .header("Accept-Language","pl-PL")
-            .header("User-Agent","garett-espen/0.1.2")
+            .header("User-Agent","garett-espen/0.1.3")
             .post(RequestBody.create(JSON,body.toString())).build();
         JSONObject result;
         try(Response response=http.newCall(request).execute()){
@@ -206,7 +207,7 @@ public final class XiaozhiClient {
         if(activity.checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){
             events.status("Zezwól aplikacji na mikrofon");return;
         }
-        micSentFrames=0;peakMicRms=0;sttResponses=0;ttsResponses=0;
+        micSentFrames=0;peakMicRms=0;sttResponses=0;ttsResponses=0;micStage="start";
         sessionStarting=true;events.state(FaceView.State.CONNECTING);events.status("Łączę z Alą…");
         worker.execute(()->{
             try {
@@ -319,23 +320,33 @@ public final class XiaozhiClient {
         recordThread.setDaemon(true);recordThread.start();
     }
     private void recordLoop(){
-        AudioRecord record=null;AcousticEchoCanceler aec=null;NoiseSuppressor ns=null;
+        AudioRecord record=null;
         try{
             int rate=16000,samples=960;
+            micStage="audio.minBuffer";
             int min=AudioRecord.getMinBufferSize(rate,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT);
             if(min<=0)throw new IOException("Mikrofon 16 kHz niedostępny");
-            record=new AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION,rate,
+            // Android 8.1 watch HAL often rejects VOICE_COMMUNICATION + AEC/NS.
+            // The plain MIC input avoids that path and is enough for Xiaozhi.
+            micStage="audio.newRecord";
+            record=new AudioRecord(MediaRecorder.AudioSource.MIC,rate,
                 AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT,Math.max(min,samples*8));
-            if(record.getState()!=AudioRecord.STATE_INITIALIZED)throw new IOException("Nie można otworzyć mikrofonu");
-            if(AcousticEchoCanceler.isAvailable()){aec=AcousticEchoCanceler.create(record.getAudioSessionId());if(aec!=null)aec.setEnabled(true);}
-            if(NoiseSuppressor.isAvailable()){ns=NoiseSuppressor.create(record.getAudioSessionId());if(ns!=null)ns.setEnabled(true);}
+            if(record.getState()!=AudioRecord.STATE_INITIALIZED)
+                throw new IOException("Nie można otworzyć mikrofonu (MIC 16 kHz)");
+            micStage="opus.newEncoder";
             OpusEncoder encoder=new OpusEncoder(rate,1,OpusApplication.OPUS_APPLICATION_VOIP);
-            encoder.setBitrate(24000);
+            micStage="opus.configure";
+            encoder.setBitrate(20000);
+            encoder.setComplexity(1); // limit CPU/stack pressure on watch
             short[] pcm=new short[samples];byte[] opus=new byte[4000];
+            micStage="audio.startRecording";
             record.startRecording();
+            if(record.getRecordingState()!=AudioRecord.RECORDSTATE_RECORDING)
+                throw new IOException("Android nie rozpoczął nagrywania");
             long began=SystemClock.elapsedRealtime(), lastSpeech=began;
             boolean heard=false;int consecutive=0;double noise=95;
             while(recording && socket!=null && sessionReady && !talking){
+                micStage="audio.read";
                 int off=0;
                 while(off<samples && recording){
                     int count=record.read(pcm,off,samples-off);
@@ -351,7 +362,9 @@ public final class XiaozhiClient {
                 if(rms>Math.max(230,noise*2.0)){
                     if(++consecutive>=2){heard=true;lastSpeech=now;}
                 }else{consecutive=0;if(!heard)noise=noise*.96+rms*.04;}
+                micStage="opus.encode";
                 int length=encoder.encode(pcm,0,samples,opus,0,opus.length);
+                micStage="websocket.send";
                 WebSocket s=socket;
                 if(s!=null&&length>0){
                     if(s.queueSize()>250_000){events.status("Wolne łącze – wstrzymuję mikrofon");break;}
@@ -361,16 +374,26 @@ public final class XiaozhiClient {
             }
             if(recording&&socket!=null&&!talking){
                 recording=false;
+                micStage="finish";
                 events.state(FaceView.State.THINKING);events.status("Ala myśli…");
                 try{Thread.sleep(180);}catch(InterruptedException ignored){Thread.currentThread().interrupt();}
                 send(new JSONObject().put("type","listen").put("state","stop"));
             }
         }catch(Throwable e){
-            if(recording){events.status("Mikrofon: "+brief(e));events.state(FaceView.State.ERROR);}
+            String stage=micStage;
+            CrashNotes.record(activity,"MIC / "+stage,e);
+            if(recording){
+                recording=false;
+                // A failed encoder previously left Xiaozhi waiting forever for
+                // listen.stop, making the user think the loudspeaker was broken.
+                try{send(new JSONObject().put("type","listen").put("state","stop"));}catch(Exception ignored){}
+                events.status("Mikrofon ["+stage+"]: "+brief(e)+"; zobacz Diagnostyka");
+                events.state(FaceView.State.ERROR);
+            }
         }finally{
             recording=false;
-            if(aec!=null)aec.release();if(ns!=null)ns.release();
-            if(record!=null){try{record.stop();}catch(Exception ignored){}record.release();}
+            if(record!=null){try{record.stop();}catch(Throwable ignored){}
+                try{record.release();}catch(Throwable ignored){}}
         }
     }
     private void endMic(){recording=false;}
