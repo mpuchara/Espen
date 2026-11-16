@@ -1166,7 +1166,7 @@ replace("main/application.cc",
 # Preserve explicit zero/mute across reboot; cap all Espen output settings.
 replace("main/audio/audio_codec.h",
         '    int output_volume_ = 70;',
-        '    int output_volume_ = 15;')
+        '    int output_volume_ = 75;')
 replace("main/audio/audio_codec.cc",
         '    if (output_volume_ <= 0) {\n'
         '        ESP_LOGW(TAG, "Output volume value (%d) is too small, setting to default (10)", output_volume_);\n'
@@ -1204,6 +1204,62 @@ replace("main/audio/codecs/es8311_audio_codec.cc",
         '        ESP_ERROR_CHECK(esp_codec_dev_set_out_vol(dev_, output_volume_));',
         '        ESP_ERROR_CHECK(esp_codec_dev_set_out_vol(dev_, output_volume_));\n'
         '        ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_set_out_mute(dev_, output_volume_ == 0));')
+
+# 0.2.7: when the microphone opened the ES8311 first, its DAC already had
+# a dev_ handle. Prior EnableOutput only asserted PA, never explicitly
+# unmuted/re-armed the DAC. Restore the output path every time playback starts.
+replace("main/audio/codecs/es8311_audio_codec.cc",
+        '    if (pa_pin_ != GPIO_NUM_NC) {\n'
+        '        int level = output_enabled_ ? 1 : 0;\n'
+        '        gpio_set_level(pa_pin_, pa_inverted_ ? !level : level);\n'
+        '    }',
+        '    if (dev_ != nullptr && output_enabled_) {\n'
+        '        esp_err_t vol_err = esp_codec_dev_set_out_vol(dev_, output_volume_);\n'
+        '        esp_err_t mute_err = esp_codec_dev_set_out_mute(dev_, output_volume_ == 0);\n'
+        '        if (vol_err != ESP_OK || mute_err != ESP_OK)\n'
+        '            ESP_LOGE(TAG, "Espen DAC re-arm failed: volume=%s mute=%s",\n'
+        '                     esp_err_to_name(vol_err), esp_err_to_name(mute_err));\n'
+        '    }\n'
+        '    if (pa_pin_ != GPIO_NUM_NC) {\n'
+        '        int level = output_enabled_ ? 1 : 0;\n'
+        '        esp_err_t pa_err = gpio_set_level(pa_pin_, pa_inverted_ ? !level : level);\n'
+        '        ESP_LOGI(TAG, "Espen speaker: PA GPIO%d level=%d DAC volume=%d%% output=%d gpio_err=%s",\n'
+        '                 static_cast<int>(pa_pin_), pa_inverted_ ? !level : level,\n'
+        '                 output_volume_, output_enabled_, esp_err_to_name(pa_err));\n'
+        '    }')
+replace("main/audio/codecs/es8311_audio_codec.cc",
+        'int Es8311AudioCodec::Write(const int16_t* data, int samples) {\n'
+        '    if (output_enabled_) {\n'
+        '        ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_write(dev_, (void*)data, samples * sizeof(int16_t)));\n'
+        '    }\n'
+        '    return samples;\n'
+        '}',
+        'int Es8311AudioCodec::Write(const int16_t* data, int samples) {\n'
+        '    if (!output_enabled_ || dev_ == nullptr || !data || samples <= 0) return 0;\n'
+        '    const esp_err_t err = esp_codec_dev_write(dev_, (void*)data, samples * sizeof(int16_t));\n'
+        '    if (err != ESP_OK) {\n'
+        '        ESP_LOGE(TAG, "Espen speaker PCM write failed: %s samples=%d vol=%d",\n'
+        '                 esp_err_to_name(err), samples, output_volume_);\n'
+        '        return 0;\n'
+        '    }\n'
+        '    static int64_t last_pcm_log_us = 0;\n'
+        '    static unsigned long pcm_packets = 0;\n'
+        '    ++pcm_packets;\n'
+        '    const int64_t now = esp_timer_get_time();\n'
+        '    if (pcm_packets <= 3 || now-last_pcm_log_us > 5000000) {\n'
+        '        int peak = 0;\n'
+        '        for (int i = 0; i < samples; ++i) {\n'
+        '            const int value = data[i];\n'
+        '            const int amp = value < 0 ? -value : value;\n'
+        '            if (amp > peak) peak = amp;\n'
+        '        }\n'
+        '        ESP_LOGI(TAG, "Espen speaker PCM sent: packets=%lu samples=%d peak=%d volume=%d%%",\n'
+        '                 pcm_packets, samples, peak, output_volume_);\n'
+        '        last_pcm_log_us = now;\n'
+        '    }\n'
+        '    return samples;\n'
+        '}')
+
 
 # Vision: native CSI owner, one MCP camera interface and one explicit user grant.
 replace("main/CMakeLists.txt", 'set(MAIN_PRIV_REQUIRES_EXTRA "")',
