@@ -971,7 +971,7 @@ class EspenDisplay : public LcdDisplay {
                 hb_camera_frame frame{};
                 if(hb_camera_acquire(&frame)){
                     if(frame.settled&&frame.sequence!=camera_preview_sequence_&&camera_preview_pixels_){
-                        if(hb_rgb888_preview(frame.pixels,frame.width,frame.height,camera_preview_pixels_,180,320)){
+                        if(hb_rgb888_preview_clockwise(frame.pixels,frame.width,frame.height,camera_preview_pixels_,320,180)){
                             camera_preview_sequence_=frame.sequence;
                             lv_obj_clear_flag(camera_image_,LV_OBJ_FLAG_HIDDEN);
                             lv_obj_invalidate(camera_image_);
@@ -1005,7 +1005,7 @@ class EspenDisplay : public LcdDisplay {
     void StopCameraPreview(){
         camera_preview_on_=false;camera_preview_sequence_=0;
         if(camera_image_)lv_obj_add_flag(camera_image_,LV_OBJ_FLAG_HIDDEN);
-        if(camera_preview_pixels_)memset(camera_preview_pixels_,0,180*320*2);
+        if(camera_preview_pixels_)memset(camera_preview_pixels_,0,320*180*2);
         if(camera_preview_label_)lv_label_set_text(camera_preview_label_,"Uruchom podgląd lokalny");
         // No renewal: native CSI powers down within 3.5 seconds.
     }
@@ -1036,14 +1036,14 @@ class EspenDisplay : public LcdDisplay {
                 auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
                 if(self->camera_preview_on_){self->StopCameraPreview();return;}
                 if(!self->camera_preview_pixels_){
-                    self->camera_preview_pixels_=static_cast<uint16_t*>(heap_caps_calloc(180*320,2,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+                    self->camera_preview_pixels_=static_cast<uint16_t*>(heap_caps_calloc(320*180,2,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
                     if(!self->camera_preview_pixels_){lv_label_set_text(self->camera_status_,"Brak pamięci PSRAM");return;}
                     self->camera_preview_desc_.header.magic=LV_IMAGE_HEADER_MAGIC;
                     self->camera_preview_desc_.header.cf=LV_COLOR_FORMAT_RGB565;
-                    self->camera_preview_desc_.header.w=180;
-                    self->camera_preview_desc_.header.h=320;
-                    self->camera_preview_desc_.header.stride=180*2;
-                    self->camera_preview_desc_.data_size=180*320*2;
+                    self->camera_preview_desc_.header.w=320;
+                    self->camera_preview_desc_.header.h=180;
+                    self->camera_preview_desc_.header.stride=320*2;
+                    self->camera_preview_desc_.data_size=320*180*2;
                     self->camera_preview_desc_.data=reinterpret_cast<const uint8_t*>(self->camera_preview_pixels_);
                     lv_image_set_src(self->camera_image_,&self->camera_preview_desc_);
                 }
@@ -1053,7 +1053,7 @@ class EspenDisplay : public LcdDisplay {
             },this,420);
             camera_preview_label_=lv_obj_get_child(preview,0);
             camera_image_=lv_image_create(camera_panel_);
-            lv_obj_set_size(camera_image_,180,320);
+            lv_obj_set_size(camera_image_,320,180);
             lv_obj_set_style_align(camera_image_,LV_ALIGN_CENTER,0);
             lv_obj_add_flag(camera_image_,LV_OBJ_FLAG_HIDDEN);
             MakeButton(camera_panel_,"Pokaż log USB (informacje)",[](lv_event_t* e){
@@ -2069,7 +2069,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.2.3 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.2.4 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();
