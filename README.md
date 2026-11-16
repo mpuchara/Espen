@@ -177,3 +177,17 @@ Na P4 rev1 log fizyczny wykazuje panic **Core 0 / Illegal instruction**, tuż po
 **Stabilizacja:** w 0.2.6 NSNet2 jest bezwarunkowo wyłączony w konfiguracji AFE, nawet jeśli NVS wcześniej zapisał `enhance=true`. Aktywny pozostaje **VADNet1 (wykrywanie mowy)** i opcjonalny **AGC (automatyczne wzmocnienie)**; lokalne wybudzanie, pre-roll, Xiaozhi, kamera i jej analiza pozostają bez zmian. Przycisk w Diagnostyce mowy steruje teraz tylko AGC i pokazuje stan NSNet2 jako wyłączony. Kolejna próba rozmowy na P4 powinna potwierdzić brak ponownego panika. GitHub CI kontroluje wygenerowane ustawienie `afe_config->ns_init = false`.
 
 **Diagnostyka:** w logu szukaj `Espen AFE safe mode: NSNet2 disabled`, potem `Espen speech: replay`, a następnie przejścia STT/TTS bez `Guru Meditation`. Jeśli crash pozostaje, zebrać nowy dump z MEPC/RA i dokładnym SHA kompilacji. Pełna aktualizacja nie jest potrzebna; użyj aktualizacji aplikacji i zasobów bez kasowania NVS.
+
+## 0.2.7 — głośnik ON/75% i śledzenie ścieżki PCM
+
+Zgłoszenie jest wcześniejsze niż kamera 0.2.x: już przy 0.1.36 brakowało słyszalnego głosu, a opt-in wzmacniacza NS4150 na GPIO11 w 0.1.37 i regulator głośności w 0.1.38 nie rozwiązały problemu. W 0.2.6 log potwierdza odbiór tekstu TTS z Xiaozhi, ale nie dowodzi, że zdekompresowane próbki trafiają do DAC. Gdy `SetOutputVolume` zmieniał wartość w logu, nie potwierdzał poziomu wzmacniacza ani PCM.
+
+**Zmiana 0.2.7:**
+- **SPK = WŁ i głośność = 75% domyślnie.** Jednorazowa migracja dawnych ustawień NVS `speaker_defaults_027` ustawia PA na ON i volume=75; kolejne świadome zmiany użytkownika będą respektowane. Nie kasuje Wi-Fi ani Xiaozhi.
+- Podczas pierwszego włączenia wyjścia audio powtórnie ustawia głośność ES8311 i znosi jego mute (jeśli >0). To usuwa możliwy stan, w którym mikrofon otworzył kodek, lecz późniejsze `EnableOutput` podniosło wyłącznie GPIO wzmacniacza.
+- Odczyt logów `Es8311AudioCodec: Espen speaker: PA GPIO11 level=1 ...` pokazuje fizyczny stan sterowania wzmacniaczem i błędy GPIO.
+- Log `Espen speaker PCM sent: ... peak=...` pojawia się z faktycznej ścieżki `esp_codec_dev_write`, a błędy zapisu są zgłaszane wprost. Jeśli PCM ma `peak > 0`, to strumień dochodzi do sterownika, ale bez testu na fizycznej płytce nie można jeszcze obiecać dźwięku z głośnika.
+- Zachowano test melodii 12 s w Ustawienia → Głośność / test głośnika; uruchom go przed testem rozmowy, aby rozdzielić sprzętowy tor głośnika od dekodowania TTS.
+
+Dla testu: po aktualizacji sprawdź log `Speaker defaults migrated: PA ON, volume 75%`; uruchom `Test melodii (12 s)`; następnie powiedz proste pytanie. Zapisz logi z `Es8311AudioCodec`, `AudioCodec`, `Application: <<`, `MCP`. **CI kompiluje kod, nie zastępuje fizycznego testu audio**. Jeśli status wykazuje PA=1, PCM peak>0 i write=OK bez dźwięku, trzeba sprawdzić połączenie pasywnego głośnika z dwoma wyjściami SPEAK BTL (nie z GND), zasilanie PA i wyjściowy kanał I2S. 
+
