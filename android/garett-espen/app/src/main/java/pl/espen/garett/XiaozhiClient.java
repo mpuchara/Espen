@@ -426,12 +426,14 @@ public final class XiaozhiClient {
                     .put("properties",new JSONObject().put("question",
                         new JSONObject().put("type","string")))
                     .put("required",new JSONArray().put("question")));
+            JSONObject volumeFields=new JSONObject().put("volume",new JSONObject()
+                .put("type","integer").put("minimum",0).put("maximum",100));
+            JSONObject volumeSchema=new JSONObject().put("type","object")
+                .put("properties",volumeFields)
+                .put("required",new JSONArray().put("volume"));
             JSONObject volume=new JSONObject().put("name","self.audio_speaker.set_volume")
                 .put("description","Ustaw głośność zegarka (0–100)")
-                .put("inputSchema",new JSONObject().put("type","object")
-                    .put("properties",new JSONObject().put("volume",new JSONObject()
-                        .put("type","integer").put("minimum",0).put("maximum",100))
-                    .put("required",new JSONArray().put("volume")));
+                .put("inputSchema",volumeSchema);
             mcpResult(id,new JSONObject().put("tools",new JSONArray().put(camera).put(volume)),modern);
             return;
         }
