@@ -68,6 +68,8 @@ public final class XiaozhiClient {
     private volatile boolean recording, closed, sessionStarting, sessionReady, talking;
     private Thread recordThread;
     private volatile long lastAudioAt;
+    private volatile long micSentFrames;
+    private volatile int peakMicRms, sttResponses, ttsResponses;
     private volatile String sessionId="";
     private String wsUrl, wsToken, legacyVisionUrl, legacyVisionToken;
     private int wsVersion=1, outRate=24000;
@@ -116,7 +118,11 @@ public final class XiaozhiClient {
         });
     }
     public String audioDiagnostics(){
-        return audio.route()+"\\nRamki audio: "+audio.packetsReceived()+
+        return "Mikrofon: pakiety Opus wysłane "+micSentFrames+
+            ", RMS max "+peakMicRms+
+            "\\nXiaozhi: STT "+sttResponses+", TTS "+ttsResponses+
+            "\\nGłośnik: "+audio.route()+
+            "\\nPakiety TTS: "+audio.packetsReceived()+
             ", odtworzone: "+audio.packetsPlayed()+", pominięte: "+audio.packetsDropped();
     }
     public void previewCamera(){
@@ -200,6 +206,7 @@ public final class XiaozhiClient {
         if(activity.checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){
             events.status("Zezwól aplikacji na mikrofon");return;
         }
+        micSentFrames=0;peakMicRms=0;sttResponses=0;ttsResponses=0;
         sessionStarting=true;events.state(FaceView.State.CONNECTING);events.status("Łączę z Alą…");
         worker.execute(()->{
             try {
@@ -269,6 +276,7 @@ public final class XiaozhiClient {
                     },45,TimeUnit.SECONDS);
                     break;
                 case "stt":
+                    sttResponses++;
                     String phrase=o.optString("text","");
                     vision.noteUserSpeech(phrase);
                     events.caption(phrase);
@@ -281,6 +289,7 @@ public final class XiaozhiClient {
                 case "tts":
                     String state=o.optString("state","");
                     if("start".equals(state)){
+                        ttsResponses++;
                         talking=true;ttsStoppedAt=0;endMic();
                         events.state(FaceView.State.SPEAKING);
                         events.status("Odbieram odpowiedź głosową…");
@@ -336,6 +345,7 @@ public final class XiaozhiClient {
                 if(!recording)break;
                 long energy=0;for(short v:pcm){energy+=(long)v*v;}
                 int rms=(int)Math.sqrt(energy/(double)samples);
+                if(rms>peakMicRms)peakMicRms=rms;
                 events.level(Math.min(100,rms/55),true);
                 long now=SystemClock.elapsedRealtime();
                 if(rms>Math.max(230,noise*2.0)){
@@ -345,7 +355,7 @@ public final class XiaozhiClient {
                 WebSocket s=socket;
                 if(s!=null&&length>0){
                     if(s.queueSize()>250_000){events.status("Wolne łącze – wstrzymuję mikrofon");break;}
-                    s.send(ByteString.of(opus,0,length));
+                    if(s.send(ByteString.of(opus,0,length)))micSentFrames++;
                 }
                 if((heard&&now-lastSpeech>1900)||(!heard&&now-began>8500))break;
             }
