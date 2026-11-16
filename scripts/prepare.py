@@ -12,7 +12,7 @@ for src, dst in [("config.h","config.h"),("config.json","config.json"),
                  ("espen_board.cc","espen_board.cc"),
                  ("board_p4_st7701_init.h","board_p4_st7701_init.h"),
                  ("face_engine.h","face_engine.h"),("dirty_rect.h","dirty_rect.h"),
-                 ("social_reactions.h","social_reactions.h"),("speech_quality.h","speech_quality.h"),("visual_world.h","visual_world.h")]:
+                 ("social_reactions.h","social_reactions.h"),("speech_quality.h","speech_quality.h"),("visual_world.h","visual_world.h"),("speaker_audio.h","speaker_audio.h")]:
     shutil.copyfile(root / "firmware" / src, board / dst)
 
 def replace(path, old, new):
@@ -1153,3 +1153,46 @@ replace("main/application.cc",
         '                extern void EspenVisualQuestion(const char*);\n'
         '                EspenVisualQuestion(text->valuestring);\n'
         '                ESP_LOGI(TAG, ">> %s", text->valuestring);')
+
+# 0.1.38: preview volume without writing NVS for every slider movement.
+# Preserve explicit zero/mute across reboot; cap all Espen output settings.
+replace("main/audio/audio_codec.h",
+        '    int output_volume_ = 70;',
+        '    int output_volume_ = 15;')
+replace("main/audio/audio_codec.cc",
+        '    if (output_volume_ <= 0) {\n'
+        '        ESP_LOGW(TAG, "Output volume value (%d) is too small, setting to default (10)", output_volume_);\n'
+        '        output_volume_ = 10;\n'
+        '    }',
+        '    if (output_volume_ < 0 || output_volume_ > 80) {\n'
+        '        ESP_LOGW(TAG, "Invalid Espen volume %d, clamping", output_volume_);\n'
+        '        output_volume_ = output_volume_ < 0 ? 0 : 80;\n'
+        '    }')
+replace("main/audio/codecs/es8311_audio_codec.h",
+        '    virtual void SetOutputVolume(int volume) override;',
+        '    virtual void SetOutputVolume(int volume) override;\n'
+        '    void SetEspenOutputVolume(int volume, bool persist);')
+replace("main/audio/codecs/es8311_audio_codec.cc",
+        'void Es8311AudioCodec::SetOutputVolume(int volume) {\n'
+        '    std::lock_guard<std::mutex> lock(data_if_mutex_);\n'
+        '    if (dev_ != nullptr) {\n'
+        '        ESP_ERROR_CHECK(esp_codec_dev_set_out_vol(dev_, volume));\n'
+        '    }\n'
+        '    AudioCodec::SetOutputVolume(volume);\n'
+        '}',
+        'void Es8311AudioCodec::SetOutputVolume(int volume) { SetEspenOutputVolume(volume, true); }\n'
+        'void Es8311AudioCodec::SetEspenOutputVolume(int volume, bool persist) {\n'
+        '    volume = volume < 0 ? 0 : volume > 80 ? 80 : volume;\n'
+        '    std::lock_guard<std::mutex> lock(data_if_mutex_);\n'
+        '    if (dev_ != nullptr) {\n'
+        '        if (volume == 0) ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_set_out_mute(dev_, true));\n'
+        '        ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_set_out_vol(dev_, volume));\n'
+        '        if (volume > 0) ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_set_out_mute(dev_, false));\n'
+        '    }\n'
+        '    if (persist) AudioCodec::SetOutputVolume(volume);\n'
+        '    else output_volume_ = volume;\n'
+        '}')
+replace("main/audio/codecs/es8311_audio_codec.cc",
+        '        ESP_ERROR_CHECK(esp_codec_dev_set_out_vol(dev_, output_volume_));',
+        '        ESP_ERROR_CHECK(esp_codec_dev_set_out_vol(dev_, output_volume_));\n'
+        '        ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_set_out_mute(dev_, output_volume_ == 0));')

@@ -5,6 +5,7 @@
 #include "config.h"
 #include "face_engine.h"
 #include "speech_quality.h"
+#include "speaker_audio.h"
 #include "visual_world.h"
 #include "dirty_rect.h"
 #include "display/lcd_display.h"
@@ -193,7 +194,34 @@ static std::string EspenDiagSummary(){
     return diag.note.empty()?std::string(b):std::string(b)+"\n"+diag.note;
 }
 static std::atomic<bool> espen_speaker_pa{false};
+static std::atomic<bool> speaker_test_running{false},speaker_test_stop{false};
+static std::atomic<int> speaker_preview_volume{espen::kSpeakerVolumeDefault};
+static std::atomic<bool> speaker_preview_pending{false};
+static void EspenSetSpeakerVolume(int volume,bool persist){
+    auto* codec=static_cast<Es8311AudioCodec*>(Board::GetInstance().GetAudioCodec());
+    codec->SetEspenOutputVolume(espen::SpeakerVolume(volume),persist);
+}
+static void EspenPreviewSpeakerVolume(int volume){
+    speaker_preview_volume.store(espen::SpeakerVolume(volume),std::memory_order_release);
+    if(!speaker_preview_pending.exchange(true,std::memory_order_acq_rel)){
+        Application::GetInstance().Schedule([](){
+            speaker_preview_pending.store(false,std::memory_order_release);
+            EspenSetSpeakerVolume(speaker_preview_volume.load(std::memory_order_acquire),false);
+        });
+    }
+}
+static void EspenSaveSpeakerVolume(int volume){
+    speaker_preview_volume.store(espen::SpeakerVolume(volume),std::memory_order_release);
+    Application::GetInstance().Schedule([volume](){EspenSetSpeakerVolume(volume,true);});
+}
+static std::string EspenSpeakerStatus(){
+    if(!espen_speaker_pa.load(std::memory_order_acquire))return "Włącz SPK i uruchom ponownie.";
+    if(speaker_test_running.load(std::memory_order_acquire))return "Odtwarzam melodię testową…";
+    std::lock_guard<std::mutex> l(diag.mutex);
+    return diag.note.empty()?"Gotowy do testu.":diag.note;
+}
 static bool EspenDiagPlay(bool raw,bool tone=false){
+    if(tone&&!espen_speaker_pa.load(std::memory_order_acquire))return false;
     auto& app=Application::GetInstance();
     auto& audio=app.GetAudioService();
     if(app.GetDeviceState()!=kDeviceStateIdle||!audio.IsPlaybackIdle()){
@@ -207,6 +235,7 @@ static bool EspenDiagPlay(bool raw,bool tone=false){
         diag.note.clear();
         diag.busy.store(true,std::memory_order_release);
     }
+    if(tone){speaker_test_stop.store(false,std::memory_order_release);speaker_test_running.store(true,std::memory_order_release);}
     audio.EnableWakeWordDetection(false);
     const auto ok=xTaskCreate([](void* arg){
         const auto mode=reinterpret_cast<uintptr_t>(arg);
@@ -215,17 +244,13 @@ static bool EspenDiagPlay(bool raw,bool tone=false){
         // Buffers cannot be changed while busy. Each chunk is owned by
         // the normal output task, not by this worker.
         if(mode==3){
-            // Quiet local two-tone test, through the normal PCM playback task.
-            // 50 ms chunks, short fades, no cloud or recording required.
-            constexpr int rate=AUDIO_OUTPUT_SAMPLE_RATE,chunk=rate/20,total=rate*8/10;
-            for(int off=0;off<total&&a.GetDeviceState()==kDeviceStateIdle;off+=chunk){
+            // Bounded 12-second local melody with gaps/fades, real codec volume.
+            // One speaker owner; no extra network/TTS request.
+            constexpr int rate=AUDIO_OUTPUT_SAMPLE_RATE,chunk=rate/50,total=rate*espen::kSpeakerTestMs/1000;
+            for(int off=0;off<total&&a.GetDeviceState()==kDeviceStateIdle&&
+                    !speaker_test_stop.load(std::memory_order_acquire);off+=chunk){
                 std::vector<int16_t> pcm(chunk);
-                for(int i=0;i<chunk;++i){
-                    int n=off+i, pos=n%(rate*4/10);
-                    int fade=std::min({pos,rate*4/10-pos,rate/50});
-                    double freq=n<total/2?440.0:660.0;
-                    pcm[i]=static_cast<int16_t>(2600.0*fade/(rate/50)*std::sin(6.283185307179586*freq*n/rate));
-                }
+                for(int i=0;i<chunk;++i)pcm[i]=espen::SpeakerTestSample(off+i,rate);
                 if(!service.QueueEspenDiagnosticPcm(std::move(pcm)))break;
             }
         } else if(play_raw){
@@ -245,9 +270,10 @@ static bool EspenDiagPlay(bool raw,bool tone=false){
             }
         }
         while(a.GetDeviceState()==kDeviceStateIdle&&!service.IsPlaybackIdle())vTaskDelay(pdMS_TO_TICKS(40));
+        if(mode==3)speaker_test_running.store(false,std::memory_order_release);
         diag.busy.store(false,std::memory_order_release);vTaskDelete(nullptr);
     },"espen_diag",4096,reinterpret_cast<void*>(static_cast<uintptr_t>(tone?3:raw?1:2)),2,nullptr);
-    if(ok!=pdPASS){std::lock_guard<std::mutex> l(diag.mutex);diag.note="Brak pamięci na odtwarzanie.";diag.busy.store(false,std::memory_order_release);return false;}
+    if(ok!=pdPASS){std::lock_guard<std::mutex> l(diag.mutex);diag.note="Brak pamięci na odtwarzanie.";speaker_test_running.store(false,std::memory_order_release);diag.busy.store(false,std::memory_order_release);return false;}
     return true;
 }
 static std::atomic<bool> espen_network_error{false},espen_turn_waiting{false};
@@ -434,10 +460,15 @@ class EspenDisplay : public LcdDisplay {
     lv_obj_t* speech_gain_label_=nullptr;
     lv_obj_t* speech_enhance_label_=nullptr;
     lv_obj_t* speech_perf_label_=nullptr;
+    lv_obj_t* speaker_panel_=nullptr;
+    lv_obj_t* speaker_status_=nullptr;
+    lv_obj_t* speaker_slider_=nullptr;
     lv_obj_t* speaker_mode_label_=nullptr;
     lv_obj_t* speaker_volume_label_=nullptr;
     bool speaker_pa_requested_=false;
-    int speaker_volume_=15;
+    int speaker_volume_=espen::kSpeakerVolumeDefault;
+    int speaker_last_nonzero_=espen::kSpeakerVolumeDefault;
+    bool speaker_slider_sync_=false;
     int speech_gain_=30;bool speech_enhance_=true,speech_perf_=false;
     lv_obj_t* ssid_ = nullptr;
     lv_obj_t* password_ = nullptr;
@@ -474,7 +505,9 @@ class EspenDisplay : public LcdDisplay {
         // is editing Wi-Fi. Never invent a code when the server has none.
         if (!code.empty() && code != last_auto_code_ &&
             (!settings_ || lv_obj_has_flag(settings_, LV_OBJ_FLAG_HIDDEN)) &&
-            (!wake_panel_ || lv_obj_has_flag(wake_panel_, LV_OBJ_FLAG_HIDDEN))) {
+            (!wake_panel_ || lv_obj_has_flag(wake_panel_, LV_OBJ_FLAG_HIDDEN)) &&
+            (!speaker_panel_ || lv_obj_has_flag(speaker_panel_,LV_OBJ_FLAG_HIDDEN)) &&
+            (!speech_diag_ || lv_obj_has_flag(speech_diag_,LV_OBJ_FLAG_HIDDEN))) {
             last_auto_code_ = code;
             if (!cloud_ || lv_obj_has_flag(cloud_, LV_OBJ_FLAG_HIDDEN)) OpenCloud();
         }
@@ -482,6 +515,8 @@ class EspenDisplay : public LcdDisplay {
         RefreshWake();
         if(speech_diag_&&!lv_obj_has_flag(speech_diag_,LV_OBJ_FLAG_HIDDEN)&&speech_diag_status_)
             lv_label_set_text(speech_diag_status_,EspenDiagSummary().c_str());
+        if(speaker_panel_&&!lv_obj_has_flag(speaker_panel_,LV_OBJ_FLAG_HIDDEN)&&speaker_status_)
+            lv_label_set_text(speaker_status_,EspenSpeakerStatus().c_str());
         auto& wifi=WifiManager::GetInstance();
         wifi_online_=wifi.IsInitialized()&&wifi.IsConnected();
         wifi_offline_=wifi.IsInitialized()&&!wifi_online_;
@@ -759,15 +794,96 @@ class EspenDisplay : public LcdDisplay {
                 active!=speaker_pa_requested_?" (restart)":"");
         }
         if(speaker_volume_label_)lv_label_set_text_fmt(speaker_volume_label_,"Głośność: %d%%",speaker_volume_);
+        if(speaker_slider_&&lv_slider_get_value(speaker_slider_)!=speaker_volume_){
+            speaker_slider_sync_=true;lv_slider_set_value(speaker_slider_,speaker_volume_,LV_ANIM_OFF);speaker_slider_sync_=false;
+        }
     }
-    void ChangeSpeakerVolume(int delta){
-        speaker_volume_=std::clamp(speaker_volume_+delta,10,80);
-        int v=speaker_volume_;
-        Application::GetInstance().Schedule([v](){
-            Board::GetInstance().GetAudioCodec()->SetOutputVolume(v);
-            ESP_LOGI(TAG,"Espen output volume: %d",v);
-        });
+    void SetSpeakerVolume(int value,bool save){
+        speaker_volume_=espen::SpeakerVolume(value);
+        if(speaker_volume_>0)speaker_last_nonzero_=speaker_volume_;
         RefreshSpeakerControls();
+        if(save)EspenSaveSpeakerVolume(speaker_volume_);else EspenPreviewSpeakerVolume(speaker_volume_);
+    }
+    void ChangeSpeakerVolume(int delta){SetSpeakerVolume(speaker_volume_+delta,true);}
+    void OpenSpeakerPanel(){
+        if(!speaker_panel_){
+            speaker_panel_=lv_obj_create(lv_layer_top());
+            lv_obj_set_size(speaker_panel_,DISPLAY_WIDTH,DISPLAY_HEIGHT);lv_obj_center(speaker_panel_);
+            lv_obj_set_style_bg_color(speaker_panel_,lv_color_hex(0x102030),0);
+            lv_obj_set_style_bg_opa(speaker_panel_,LV_OPA_COVER,0);
+            lv_obj_set_style_text_color(speaker_panel_,lv_color_white(),0);
+            lv_obj_set_style_text_font(speaker_panel_,EspenUiFont(),0);
+            lv_obj_set_style_pad_all(speaker_panel_,18,0);
+            lv_obj_set_style_pad_row(speaker_panel_,14,0);
+            lv_obj_set_flex_flow(speaker_panel_,LV_FLEX_FLOW_COLUMN);
+            auto* title=lv_label_create(speaker_panel_);lv_label_set_text(title,"ESPEN / Głośność");
+            auto* warning=lv_label_create(speaker_panel_);lv_obj_set_width(warning,lv_pct(100));
+            lv_label_set_long_mode(warning,LV_LABEL_LONG_WRAP);
+            lv_obj_set_style_text_color(warning,lv_color_hex(0xFFD66B),0);
+            lv_label_set_text(warning,"SPK: tylko głośnik pasywny 4–8 Ω lub konwerter BTL → LINE. Nie podłączaj bezpośrednio do AUX.");
+            auto* spk=MakeButton(speaker_panel_,"SPK",[](lv_event_t* e){
+                auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                self->speaker_pa_requested_=!self->speaker_pa_requested_;
+                {Settings cfg("espen_audio",true);cfg.SetBool("speaker_pa",self->speaker_pa_requested_);}
+                if(self->speaker_pa_requested_)self->SetSpeakerVolume(espen::kSpeakerVolumeDefault,true);
+                self->RefreshSpeakerControls();
+            },this,420);
+            speaker_mode_label_=lv_obj_get_child(spk,0);
+            MakeButton(speaker_panel_,"Zastosuj SPK / restart",[](lv_event_t*){
+                Application::GetInstance().Schedule([](){esp_restart();});
+            },this,420);
+            speaker_volume_label_=lv_label_create(speaker_panel_);
+            speaker_slider_=lv_slider_create(speaker_panel_);
+            lv_obj_set_size(speaker_slider_,400,32);
+            lv_slider_set_range(speaker_slider_,0,espen::kSpeakerVolumeMax);
+            lv_obj_set_style_bg_color(speaker_slider_,lv_color_hex(0x29465B),LV_PART_MAIN);
+            lv_obj_set_style_bg_color(speaker_slider_,lv_color_hex(0x63E6FF),LV_PART_INDICATOR);
+            lv_obj_set_style_bg_color(speaker_slider_,lv_color_hex(0xF5F7FA),LV_PART_KNOB);
+            lv_obj_add_event_cb(speaker_slider_,[](lv_event_t* e){
+                auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                if(!self->speaker_slider_sync_)self->SetSpeakerVolume(lv_slider_get_value(self->speaker_slider_),false);
+            },LV_EVENT_VALUE_CHANGED,this);
+            lv_obj_add_event_cb(speaker_slider_,[](lv_event_t* e){
+                auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                self->SetSpeakerVolume(lv_slider_get_value(self->speaker_slider_),true);
+            },LV_EVENT_RELEASED,this);
+            lv_obj_add_event_cb(speaker_slider_,[](lv_event_t* e){
+                auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                self->SetSpeakerVolume(lv_slider_get_value(self->speaker_slider_),true);
+            },LV_EVENT_PRESS_LOST,this);
+            auto* row=lv_obj_create(speaker_panel_);
+            lv_obj_set_size(row,lv_pct(100),60);lv_obj_set_flex_flow(row,LV_FLEX_FLOW_ROW);
+            lv_obj_set_style_bg_opa(row,LV_OPA_TRANSP,0);lv_obj_set_style_border_width(row,0,0);lv_obj_set_style_pad_all(row,0,0);
+            MakeButton(row,"Ciszej −5",[](lv_event_t* e){static_cast<EspenDisplay*>(lv_event_get_user_data(e))->ChangeSpeakerVolume(-5);},this,200);
+            MakeButton(row,"Głośniej +5",[](lv_event_t* e){static_cast<EspenDisplay*>(lv_event_get_user_data(e))->ChangeSpeakerVolume(5);},this,200);
+            MakeButton(speaker_panel_,"Wycisz / przywróć",[](lv_event_t* e){
+                auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                self->SetSpeakerVolume(self->speaker_volume_?0:self->speaker_last_nonzero_,true);
+            },this,420);
+            MakeButton(speaker_panel_,"Test melodii (12 s)",[](lv_event_t*){
+                Application::GetInstance().Schedule([](){if(!speaker_test_running.load())EspenDiagPlay(false,true);});
+            },this,420);
+            MakeButton(speaker_panel_,"Zatrzymaj test",[](lv_event_t*){
+                Application::GetInstance().Schedule([](){speaker_test_stop.store(true,std::memory_order_release);});
+            },this,420);
+            speaker_status_=lv_label_create(speaker_panel_);lv_obj_set_width(speaker_status_,lv_pct(100));
+            lv_label_set_long_mode(speaker_status_,LV_LABEL_LONG_WRAP);
+            auto* hint=lv_label_create(speaker_panel_);lv_obj_set_width(hint,lv_pct(100));
+            lv_label_set_long_mode(hint,LV_LABEL_LONG_WRAP);
+            lv_label_set_text(hint,"Uruchom melodię i przesuń suwak. Zmiana działa podczas odtwarzania; po puszczeniu zapisuje się w pamięci.");
+            MakeButton(speaker_panel_,"Wróć",[](lv_event_t* e){
+                auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                EspenSaveSpeakerVolume(self->speaker_volume_);
+                Application::GetInstance().Schedule([](){speaker_test_stop.store(true,std::memory_order_release);});
+                lv_obj_add_flag(self->speaker_panel_,LV_OBJ_FLAG_HIDDEN);
+            },this,420);
+        }
+        {Settings cfg("espen_audio",false);speaker_pa_requested_=cfg.GetBool("speaker_pa",false);}
+        {Settings cfg("audio",false);speaker_volume_=espen::SpeakerVolume(cfg.GetInt("output_volume",espen::kSpeakerVolumeDefault));}
+        if(speaker_volume_>0)speaker_last_nonzero_=speaker_volume_;
+        RefreshSpeakerControls();
+        lv_label_set_text(speaker_status_,EspenSpeakerStatus().c_str());
+        lv_obj_clear_flag(speaker_panel_,LV_OBJ_FLAG_HIDDEN);lv_obj_move_foreground(speaker_panel_);
     }
     void OpenSpeechDiag() {
         if(!speech_diag_) {
@@ -780,53 +896,13 @@ class EspenDisplay : public LcdDisplay {
             lv_obj_set_style_pad_all(speech_diag_,14,0);
             lv_obj_set_style_pad_row(speech_diag_,8,0);
             lv_obj_set_flex_flow(speech_diag_,LV_FLEX_FLOW_COLUMN);
-            auto* title=lv_label_create(speech_diag_);lv_label_set_text(title,"ESPEN / Dźwięk i mowa");
+            auto* title=lv_label_create(speech_diag_);lv_label_set_text(title,"ESPEN / Diagnostyka mowy");
             speech_diag_status_=lv_label_create(speech_diag_);lv_obj_set_width(speech_diag_status_,lv_pct(100));
             lv_label_set_long_mode(speech_diag_status_,LV_LABEL_LONG_WRAP);
             auto* hint=lv_label_create(speech_diag_);lv_obj_set_width(hint,lv_pct(100));
             lv_label_set_long_mode(hint,LV_LABEL_LONG_WRAP);
             lv_label_set_text(hint,"Uzbrój test, powiedz pytanie, zaczekaj na odpowiedź i sen. Wróć tutaj, odsłuchaj RAW i Opus. Do 12 s; tylko RAM.");
             Settings cfg("espen_audio",false);
-            speaker_pa_requested_=cfg.GetBool("speaker_pa",false);
-            {Settings audio("audio",false);speaker_volume_=std::clamp<int32_t>(audio.GetInt("output_volume",70),10,80);}
-            auto* warning=lv_label_create(speech_diag_);
-            lv_obj_set_width(warning,lv_pct(100));lv_label_set_long_mode(warning,LV_LABEL_LONG_WRAP);
-            lv_obj_set_style_text_color(warning,lv_color_hex(0xFFD66B),0);
-            lv_label_set_text(warning,"UWAGA: SPK to wyjście mostkowe klasy D, nie AUX. Włącz tylko dla głośnika pasywnego 4–8 Ω lub odpowiedniego konwertera BTL → LINE. Nigdy nie łącz SPK− z GND.");
-            auto* spk=MakeButton(speech_diag_,"SPK",[](lv_event_t* e){
-                auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
-                self->speaker_pa_requested_=!self->speaker_pa_requested_;
-                {Settings audio("espen_audio",true);audio.SetBool("speaker_pa",self->speaker_pa_requested_);}
-                if(self->speaker_pa_requested_){
-                    // Safe low default before the amplifier is enabled at reboot.
-                    self->speaker_volume_=15;
-                    {Settings audio("audio",true);audio.SetInt("output_volume",15);}
-                    Application::GetInstance().Schedule([](){
-                        Board::GetInstance().GetAudioCodec()->SetOutputVolume(15);
-                    });
-                }
-                self->RefreshSpeakerControls();
-            },this,420);
-            speaker_mode_label_=lv_obj_get_child(spk,0);
-            speaker_volume_label_=lv_label_create(speech_diag_);
-            auto* volume_row=lv_obj_create(speech_diag_);
-            lv_obj_set_size(volume_row,lv_pct(100),58);
-            lv_obj_set_flex_flow(volume_row,LV_FLEX_FLOW_ROW);
-            lv_obj_set_style_bg_opa(volume_row,LV_OPA_TRANSP,0);
-            lv_obj_set_style_border_width(volume_row,0,0);lv_obj_set_style_pad_all(volume_row,0,0);
-            MakeButton(volume_row,"Ciszej −",[](lv_event_t* e){
-                static_cast<EspenDisplay*>(lv_event_get_user_data(e))->ChangeSpeakerVolume(-5);
-            },this,200);
-            MakeButton(volume_row,"Głośniej +",[](lv_event_t* e){
-                static_cast<EspenDisplay*>(lv_event_get_user_data(e))->ChangeSpeakerVolume(5);
-            },this,200);
-            MakeButton(speech_diag_,"Test dźwięku (2 tony)",[](lv_event_t*){
-                Application::GetInstance().Schedule([](){EspenDiagPlay(false,true);});
-            },this,420);
-            MakeButton(speech_diag_,"Zastosuj SPK / restart",[](lv_event_t*){
-                Application::GetInstance().Schedule([](){esp_restart();});
-            },this,420);
-            RefreshSpeakerControls();
             speech_gain_=espen::MicGain(cfg.GetInt("mic_gain",30));
             speech_enhance_=cfg.GetBool("enhance",true);speech_perf_=cfg.GetBool("high_perf",false);
             auto* gain=MakeButton(speech_diag_,"Wzmocnienie",[](lv_event_t* e){
@@ -867,7 +943,6 @@ class EspenDisplay : public LcdDisplay {
                 lv_obj_add_flag(self->speech_diag_,LV_OBJ_FLAG_HIDDEN);
             },this,420);
         }
-        RefreshSpeakerControls();
         lv_label_set_text_fmt(speech_gain_label_,"Mikrofon: %d dB (restart)",speech_gain_);
         lv_label_set_text(speech_enhance_label_,speech_enhance_?"NSNet2 + AGC: WŁ (restart)":"NSNet2 + AGC: WYŁ (restart)");
         lv_label_set_text(speech_perf_label_,speech_perf_?"AFE: HIGH PERF (restart)":"AFE: LOW COST (restart)");
@@ -889,6 +964,10 @@ class EspenDisplay : public LcdDisplay {
             lv_obj_set_flex_flow(settings_, LV_FLEX_FLOW_COLUMN);
             auto* title = lv_label_create(settings_);
             lv_label_set_text(title, "ESPEN / Ustawienia");
+            MakeButton(settings_,"Głośność / test głośnika",[](lv_event_t* e){
+                auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                self->CloseSettings();self->OpenSpeakerPanel();
+            },this,420);
             settings_status_ = lv_label_create(settings_);
             lv_obj_set_width(settings_status_, lv_pct(100));
             lv_label_set_long_mode(settings_status_, LV_LABEL_LONG_WRAP);
@@ -953,7 +1032,7 @@ class EspenDisplay : public LcdDisplay {
                 lv_label_set_text(label,self->visual_enabled_?"Visual World: WŁ":"Visual World: WYŁ");
             },this,420);
             lv_label_set_text(lv_obj_get_child(visuals,0),visual_enabled_?"Visual World: WŁ":"Visual World: WYŁ");
-            MakeButton(settings_, "Dźwięk / diagnostyka mowy", [](lv_event_t* e) {
+            MakeButton(settings_, "Diagnostyka mowy", [](lv_event_t* e) {
                 auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
                 self->CloseSettings();self->OpenSpeechDiag();
             },this,420);
@@ -1137,7 +1216,7 @@ class EspenDisplay : public LcdDisplay {
         g={x,y,w,h,angle};
     }
     bool OverlayVisible() const {
-        for(auto* panel:{settings_,wake_panel_,cloud_,speech_diag_})
+        for(auto* panel:{settings_,wake_panel_,cloud_,speech_diag_,speaker_panel_})
             if(panel&&!lv_obj_has_flag(panel,LV_OBJ_FLAG_HIDDEN))return true;
         return false;
     }
@@ -1850,7 +1929,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.1.37 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.1.38 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();
