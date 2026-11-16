@@ -33,6 +33,12 @@ static uint64_t settle_until;
 static unsigned face_x, face_y, face_w, face_h;
 static uint64_t face_ms;
 static hb_camera_status status;
+static void camera_stage(hb_camera_stage stage) {
+    portENTER_CRITICAL(&lock);
+    status.stage=stage;
+    status.stage_since_ms=(uint64_t)esp_timer_get_time()/1000;
+    portEXIT_CRITICAL(&lock);
+}
 static esp_cam_ctlr_handle_t controller;
 static isp_proc_handle_t isp;
 static i2c_master_dev_handle_t sensor;
@@ -313,6 +319,7 @@ static esp_err_t disable_isp_modules(void)
 }
 static esp_err_t initialize(void)
 {
+    camera_stage(HB_CAM_PROBE);
     uint16_t id;
     esp_err_t e = hb_camera_probe(&id);
     portENTER_CRITICAL(&lock);
@@ -329,6 +336,7 @@ static esp_err_t initialize(void)
     e = i2c_master_bus_add_device(bus, &dev, &sensor);
     if (e != ESP_OK)
         return e;
+    camera_stage(HB_CAM_SENSOR_CONFIG);
     e = write_reg(0x0100, 0);
     if (e == ESP_OK)
         e = write_reg(0x0103, 1);
@@ -357,9 +365,11 @@ static esp_err_t initialize(void)
                                            .input_data_color_type = CAM_CTLR_COLOR_RAW10,
                                            .output_data_color_type = CAM_CTLR_COLOR_RGB888,
                                            .queue_items = 1};
+    camera_stage(HB_CAM_CSI_CREATE);
     e = esp_cam_new_csi_ctlr(&csi, &controller);
     if (e != ESP_OK)
         return e;
+    camera_stage(HB_CAM_PSRAM);
     for (int i = 0; i < HB_CAMERA_SLOTS; i++)
         if (!storage[i])
         {
@@ -374,6 +384,7 @@ static esp_err_t initialize(void)
     e = esp_cam_ctlr_register_event_callbacks(controller, &callbacks, NULL);
     if (e != ESP_OK)
         return e;
+    camera_stage(HB_CAM_CSI_ENABLE);
     e = esp_cam_ctlr_enable(controller);
     if (e != ESP_OK)
         return e;
@@ -386,6 +397,7 @@ static esp_err_t initialize(void)
                                       .h_res = WIDTH,
                                       .v_res = HEIGHT,
                                       .bayer_order = COLOR_RAW_ELEMENT_ORDER_GBRG};
+    camera_stage(HB_CAM_ISP_CREATE);
     e = esp_isp_new_processor(&config, &isp);
     if (e != ESP_OK)
     {
@@ -399,16 +411,20 @@ static esp_err_t initialize(void)
     if (e != ESP_OK)
         return e;
     isp_enabled = true;
+    camera_stage(HB_CAM_ISP_CONFIG);
     e = configure_isp();
     if (e != ESP_OK)
         return e;
+    camera_stage(HB_CAM_CSI_START);
     e = esp_cam_ctlr_start(controller);
     if (e != ESP_OK)
         return e;
     controller_started = true;
+    camera_stage(HB_CAM_SENSOR_STREAM);
     e = write_reg(0x0100, 1);
     if (e != ESP_OK)
         return e;
+    camera_stage(HB_CAM_WAIT_FRAMES);
     portENTER_CRITICAL(&lock);
     status.running = true;
     settle_until = (uint64_t)esp_timer_get_time() / 1000 + 200;
@@ -512,6 +528,7 @@ static void worker(void *arg)
             if (hb_camera_acquire(&frame))
             {
                 sequence = frame.sequence;
+                if(status.stage==HB_CAM_WAIT_FRAMES)camera_stage(HB_CAM_STREAMING);
                 if (pattern && !pattern_reported && frame.timestamp_ms >= changed + 200)
                 {
                     // Numeric synthetic-pattern diagnostics only; never log a room frame.
@@ -671,8 +688,11 @@ static void worker(void *arg)
         }
         portENTER_CRITICAL(&lock);
         status.error = e;
-        if(e!=ESP_OK)status.errors++;
+        if(e!=ESP_OK){status.errors++;status.failed_attempts++;}
         portEXIT_CRITICAL(&lock);
+        if(e!=ESP_OK)ESP_LOGE("EspenCamera","Startup/stream failure at stage %d: %s (frames=%u, free SPIRAM=%u)",
+            (int)status.stage,esp_err_to_name(e),(unsigned)status.frames,
+            (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
         stop_driver();
         release_idle_storage();
         if (isp_quarantined)
@@ -680,11 +700,13 @@ static void worker(void *arg)
             portENTER_CRITICAL(&lock);
             status.quarantined = true;
             portEXIT_CRITICAL(&lock);
+            camera_stage(HB_CAM_FAILED);
             ESP_LOGE("camera", "Driver lifetime uncertain; camera quarantined until reboot; "
                                "dashboard/manual brightness remain available");
             vTaskDelete(NULL);
         }
-        if(e==ESP_OK){hb_camera_health_init(&health);continue;}
+        if(e==ESP_OK){hb_camera_health_init(&health);camera_stage(HB_CAM_IDLE);continue;}
+        camera_stage(HB_CAM_RETRY);
         uint32_t backoff = hb_camera_health_retry(&health);
         portENTER_CRITICAL(&lock);
         status.retry_seconds = backoff;
@@ -700,6 +722,7 @@ esp_err_t hb_camera_start(void)
     if (atomic_exchange(&started, true))
         return ESP_ERR_INVALID_STATE;
     hb_frame_pool_init(&pool);
+    camera_stage(HB_CAM_IDLE);
     if (xTaskCreate(worker, "local_camera", 6144, NULL, 1, NULL) == pdPASS)
         return ESP_OK;
     atomic_store(&started, false);

@@ -18,9 +18,18 @@ typedef struct
     bool settled;
     hb_frame_lease lease;
 } hb_camera_frame;
+typedef enum {
+    HB_CAM_IDLE=0, HB_CAM_PROBE, HB_CAM_SENSOR_CONFIG, HB_CAM_CSI_CREATE,
+    HB_CAM_PSRAM, HB_CAM_CSI_ENABLE, HB_CAM_ISP_CREATE, HB_CAM_ISP_CONFIG,
+    HB_CAM_CSI_START, HB_CAM_SENSOR_STREAM, HB_CAM_WAIT_FRAMES,
+    HB_CAM_STREAMING, HB_CAM_RETRY, HB_CAM_FAILED
+} hb_camera_stage;
 typedef struct
 {
     uint16_t sensor_id;
+    hb_camera_stage stage;
+    uint64_t stage_since_ms;
+    uint32_t failed_attempts;
     unsigned width, height;
     uint32_t frames, dropped, errors, restarts, retry_seconds;
     float fps, exposure_us, analogue_gain, digital_gain;

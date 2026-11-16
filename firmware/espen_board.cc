@@ -470,7 +470,7 @@ class EspenDisplay : public LcdDisplay {
     uint16_t* camera_preview_pixels_=nullptr;
     lv_image_dsc_t camera_preview_desc_{};
     uint32_t camera_preview_sequence_=0;
-    uint32_t camera_preview_draw_=0,camera_status_draw_=0;
+    uint32_t camera_preview_draw_=0,camera_status_draw_=0,camera_preview_since_=0;
     bool camera_preview_on_=false;
     lv_obj_t* speaker_panel_=nullptr;
     lv_obj_t* speaker_status_=nullptr;
@@ -981,15 +981,25 @@ class EspenDisplay : public LcdDisplay {
                 }
             }
         }
-        if(now-camera_status_draw_<400&&camera_status_draw_!=0)return;
+        if(now-camera_status_draw_<700&&camera_status_draw_!=0)return;
         camera_status_draw_=now;
         hb_camera_status st{};hb_camera_get_status(&st);
-        char buf[220];
-        snprintf(buf,sizeof(buf),"OV02C10 0x%04x | %s | klatki %lu\n%s | %s",
-            static_cast<unsigned>(st.sensor_id),st.quarantined?"błąd sterownika — restart":st.running?"CSI aktywne":camera_preview_on_?"uruchamianie":"kamera uśpiona",
-            static_cast<unsigned long>(st.frames),
-            EspenVision().EndpointReady()?"Vision HTTPS: gotowe":"Vision HTTPS: brak adresu",
-            st.error==ESP_OK?"OK":esp_err_to_name(st.error));
+        static const char* stages[]={"nieaktywna","SCCB/I2C1","rejestry OV02C10",
+            "tworzenie CSI","rezerwacja PSRAM","włączanie CSI",
+            "tworzenie ISP","konfiguracja ISP","start CSI",
+            "start strumienia","oczekiwanie na klatki","obraz aktywny",
+            "ponawianie próby","usterka sterownika"};
+        unsigned index=static_cast<unsigned>(st.stage);
+        const char* stage=index<sizeof(stages)/sizeof(stages[0])?stages[index]:"nieznany";
+        char buf[340];
+        snprintf(buf,sizeof(buf),"OV02C10: 0x%04X  |  klatki: %lu  |  %s\n%s (%lus)\n%s  |  wolna PSRAM: %u KB  |  nieudane próby: %lu\nVision HTTPS: %s",
+            static_cast<unsigned>(st.sensor_id),static_cast<unsigned long>(st.frames),
+            st.quarantined?"BŁĄD — restart":st.running?"CSI aktywne":camera_preview_on_?"kamera nieaktywna":"wyłączona",
+            stage,static_cast<unsigned long>((esp_timer_get_time()/1000-st.stage_since_ms)/1000),
+            st.error==ESP_OK?"Brak błędów":esp_err_to_name(st.error),
+            static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)/1024),
+            static_cast<unsigned long>(st.failed_attempts),
+            EspenVision().EndpointReady()?"gotowe":"brak adresu");
         if(strcmp(lv_label_get_text(camera_status_),buf)!=0)lv_label_set_text(camera_status_,buf);
     }
     void StopCameraPreview(){
@@ -1021,7 +1031,7 @@ class EspenDisplay : public LcdDisplay {
             camera_cloud_label_=lv_obj_get_child(cloud,0);
             auto* hint=lv_label_create(camera_panel_);lv_obj_set_width(hint,lv_pct(100));
             lv_label_set_long_mode(hint,LV_LABEL_LONG_WRAP);
-            lv_label_set_text(hint,"Podgląd jest lokalny. Włącz analizę tylko jeśli zgadzasz się na wysłanie pojedynczego zdjęcia, gdy poprosisz Alę, by spojrzała.");
+            lv_label_set_text(hint,"Podgląd lokalny, bez przesyłania zdjęć. Analiza Xiaozhi wymaga osobnego zezwolenia.");
             auto* preview=MakeButton(camera_panel_,"Uruchom podgląd lokalny",[](lv_event_t* e){
                 auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
                 if(self->camera_preview_on_){self->StopCameraPreview();return;}
@@ -1038,7 +1048,7 @@ class EspenDisplay : public LcdDisplay {
                     lv_image_set_src(self->camera_image_,&self->camera_preview_desc_);
                 }
                 if(!EspenVision().StartLocal()){lv_label_set_text(self->camera_status_,"Nie udało się uruchomić kamery");return;}
-                self->camera_preview_on_=true;self->camera_preview_sequence_=0;
+                self->camera_preview_on_=true;self->camera_preview_sequence_=0;self->camera_preview_since_=lv_tick_get();
                 lv_label_set_text(self->camera_preview_label_,"Zatrzymaj podgląd");
             },this,420);
             camera_preview_label_=lv_obj_get_child(preview,0);
@@ -1046,6 +1056,15 @@ class EspenDisplay : public LcdDisplay {
             lv_obj_set_size(camera_image_,180,320);
             lv_obj_set_style_align(camera_image_,LV_ALIGN_CENTER,0);
             lv_obj_add_flag(camera_image_,LV_OBJ_FLAG_HIDDEN);
+            MakeButton(camera_panel_,"Pokaż log USB (informacje)",[](lv_event_t* e){
+                auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                hb_camera_status st{};hb_camera_get_status(&st);
+                ESP_LOGW(TAG,"Camera diagnostics: stage=%u ID=0x%04x error=%s frames=%u restarts=%u failed=%u mem_free=%u",
+                    static_cast<unsigned>(st.stage),static_cast<unsigned>(st.sensor_id),esp_err_to_name(st.error),
+                    static_cast<unsigned>(st.frames),static_cast<unsigned>(st.restarts),
+                    static_cast<unsigned>(st.failed_attempts),static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
+                lv_label_set_text(self->camera_status_,"Diagnostyka wypisana do USB. Wyślij komunikaty EspenCamera.");
+            },this,420);
             MakeButton(camera_panel_,"Wróć",[](lv_event_t* e){
                 auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
                 self->StopCameraPreview();lv_obj_add_flag(self->camera_panel_,LV_OBJ_FLAG_HIDDEN);
@@ -2050,7 +2069,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.2.0 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.2.1 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();
