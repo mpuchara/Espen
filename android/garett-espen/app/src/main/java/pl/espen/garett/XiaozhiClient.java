@@ -118,6 +118,74 @@ public final class XiaozhiClient {
             @Override public void pcmLevel(int value){events.level(value,false);}
         });
     }
+    public void testMicrophone(){
+        if(socket!=null||recording||sessionStarting){
+            events.status("Najpierw zakończ rozmowę z Xiaozhi");return;
+        }
+        if(activity.checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){
+            events.status("Nadaj Ali uprawnienie do mikrofonu");return;
+        }
+        new Thread(()->{
+            AudioRecord input=null;
+            String stage="microphone.newRecord";
+            String result="";
+            try{
+                final int rate=16000,samples=960;
+                int buffer=AudioRecord.getMinBufferSize(rate,AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT);
+                if(buffer<=0)throw new IOException("Brak 16 kHz, kod="+buffer);
+                input=new AudioRecord(MediaRecorder.AudioSource.MIC,rate,
+                    AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT,
+                    Math.max(buffer,samples*8));
+                if(input.getState()!=AudioRecord.STATE_INITIALIZED)
+                    throw new IOException("AudioRecord nie jest gotowy");
+                stage="microphone.start";
+                input.startRecording();
+                if(input.getRecordingState()!=AudioRecord.RECORDSTATE_RECORDING)
+                    throw new IOException("AudioRecord nie nagrywa");
+                stage="microphone.read";
+                short[] pcm=new short[samples];
+                int reads=0,maxRms=0;
+                for(int pass=0;pass<16;pass++){
+                    int offset=0;
+                    while(offset<samples){
+                        int n=input.read(pcm,offset,samples-offset);
+                        if(n<=0)throw new IOException("AudioRecord.read="+n);
+                        offset+=n;
+                    }
+                    reads++;
+                    long sum=0;for(short x:pcm)sum+=(long)x*x;
+                    maxRms=Math.max(maxRms,(int)Math.sqrt(sum/(double)samples));
+                }
+                stage="opus.init";
+                OpusEncoder encoder=new OpusEncoder(rate,1,OpusApplication.OPUS_APPLICATION_VOIP);
+                encoder.setBitrate(20000);encoder.setComplexity(1);
+                stage="opus.encode";
+                byte[] output=new byte[1600];
+                int encoded=encoder.encode(pcm,0,samples,output,0,output.length);
+                if(encoded<=0)throw new IOException("Opus.encode="+encoded);
+                result="Mikrofon OK: "+reads+" ramek, RMS max "+maxRms+
+                    ", Opus "+encoded+" bajtów.";
+            }catch(Throwable error){
+                CrashNotes.record(activity,"MIC TEST / "+stage,error);
+                result="Test nieudany na etapie "+stage+" ("+
+                    error.getClass().getSimpleName()+"). Kopiuj diagnostykę.";
+            }finally{
+                if(input!=null){try{input.stop();}catch(Throwable ignored){}
+                    try{input.release();}catch(Throwable ignored){}}
+            }
+            final String feedback=result;
+            events.status(feedback);
+            activity.runOnUiThread(()->{
+                if(!activity.isFinishing()){
+                    new android.app.AlertDialog.Builder(activity)
+                        .setTitle("Test mikrofonu Android 8.1")
+                        .setMessage(feedback)
+                        .setPositiveButton("OK",null).show();
+                }
+            });
+        },"ala-mic-self-test").start();
+    }
     public String audioDiagnostics(){
         return "Mikrofon: pakiety Opus wysłane "+micSentFrames+
             ", RMS max "+peakMicRms+", etap "+micStage+
