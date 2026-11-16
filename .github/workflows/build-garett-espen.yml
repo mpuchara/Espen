@@ -40,6 +40,8 @@ jobs:
           name: garett-espen-android81-face-test-v1
           path: android/garett-espen/lite/build/outputs/apk/debug/lite-debug.apk
           if-no-files-found: error
+      - name: Test Opus codec compatibility on JVM
+        run: gradle --no-daemon --stacktrace :app:testDebugUnitTest
       - name: Build Android 8.1 full compatibility APK
         run: gradle --no-daemon --stacktrace :app:assembleDebug
       - name: Upload full APK
