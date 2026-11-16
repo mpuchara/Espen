@@ -162,3 +162,11 @@ Zgodnie z testem fizycznej kamery obraz podglądu i zdjęć przeznaczonych do an
 
 **„Bez odbioru”** wypowiedziane jako samodzielne polecenie (również „Ala, bez odbioru”) po odebraniu transkrypcji STT Xiaozhi zamyka aktywny kanał rozmowy, opróżnia kolejkę odtwarzania i wraca do trybu oczekiwania. Późne TTS z zamkniętej sesji jest ignorowane. To polecenie rozpoznawane z **chmurowego STT**, nie offline w trakcie rozmowy — wymaga połączenia z Xiaozhi i chwili na transkrypcję. Nie reaguje na frazę jako fragment pytania lub cytatu. Lokalne wybudzanie pozostaje aktywne w dotychczasowym trybie („mowa” lub „hasło”); komenda nie wyłącza mikrofonu sprzętowo ani nie zmienia NVS. Zgoda na przesyłanie zdjęć do chmury pozostaje domyślnie WYŁ. Test urządzenia: orientacja podglądu, JPEG i fraza podczas słuchania i po ponownym wybudzeniu; build CI jest wymagany.
 
+## 0.2.5 — naprawa analizy kamery przez Xiaozhi
+
+Z logu urządzenia: mikrofon, sieć, MQTT, tool MCP i podgląd kamery działają, ale `EspenVision: No HTTPS vision endpoint from Xiaozhi` przerywa `self.camera.take_photo` jeszcze **przed** właściwym przechwyceniem zdjęcia. To problem konfiguracji usługi analizy, a nie dowód awarii sensora CSI. W starym MCP Xiaozhi serwer przekazuje `capabilities.vision.url` podczas `initialize`; publiczny serwer bywa skonfigurowany jako `http://api.xiaozhi.me/vision/explain`, podczas gdy Espen 0.2.4 dopuszczał wyłącznie `https://` i po cichu odrzucał adres.
+
+**Zmiana:** bezpieczne podniesienie **wyłącznie tego oficjalnego adresu** do `https://api.xiaozhi.me/vision/explain` (bez przesyłania zdjęć lub tokena po HTTP). Inne HTTP URL, hosty podobne, adresy LAN i nieprawidłowe URL pozostają blokowane; własne endpointy HTTPS są akceptowane. Nowy log informuje o wyniku negocjacji MCP (`offered/url`) oraz przyjęciu lub odrzuceniu endpointu **bez wypisywania adresu/tokena**. Domyślne wyłączenie analizy w chmurze i wymóg wyraźnego pytania pozostają. Jednostkowe testy weryfikują normalizację HTTPS. Obserwuj na urządzeniu `Espen MCP vision negotiation`, `Secure Xiaozhi vision endpoint configured`, `Fresh clockwise JPEG` i wynik serwera. Sukces kompilacji nie potwierdza udanej odpowiedzi analizy na fizycznym sprzęcie.
+
+Nie zmieniano drivera kamery, rotacji, pamięci NVS, Wi-Fi, audio ani protokołu rozmów.
+
