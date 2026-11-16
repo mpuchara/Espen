@@ -35,6 +35,11 @@ bool hb_rgb888_thumbnail(const uint8_t *src, unsigned w, unsigned h, uint8_t *ds
                          unsigned oh);
 bool hb_rgb888_preview(const uint8_t *src, unsigned w, unsigned h, uint16_t *dst, unsigned ow,
                        unsigned oh);
+// Rotate the previous CCW90 view 90 degrees clockwise: native landscape aspect ratio.
+bool hb_rgb888_thumbnail_clockwise(const uint8_t *src, unsigned w, unsigned h, uint8_t *dst,
+                                   unsigned out_width, unsigned out_height);
+bool hb_rgb888_preview_clockwise(const uint8_t *src, unsigned w, unsigned h, uint16_t *dst,
+                                 unsigned out_width, unsigned out_height);
 bool hb_rgb888_crop(const uint8_t *src, unsigned w, unsigned h, unsigned x, unsigned y, unsigned cw,
                     unsigned ch, uint8_t *dst, size_t capacity);
 hb_rgb888_stats hb_rgb888_quality(const uint8_t *src, unsigned w, unsigned h, unsigned x,
