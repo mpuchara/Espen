@@ -470,7 +470,7 @@ class EspenDisplay : public LcdDisplay {
     uint16_t* camera_preview_pixels_=nullptr;
     lv_image_dsc_t camera_preview_desc_{};
     uint32_t camera_preview_sequence_=0;
-    uint32_t camera_preview_draw_=0;
+    uint32_t camera_preview_draw_=0,camera_status_draw_=0;
     bool camera_preview_on_=false;
     lv_obj_t* speaker_panel_=nullptr;
     lv_obj_t* speaker_status_=nullptr;
@@ -981,14 +981,16 @@ class EspenDisplay : public LcdDisplay {
                 }
             }
         }
+        if(now-camera_status_draw_<400&&camera_status_draw_!=0)return;
+        camera_status_draw_=now;
         hb_camera_status st{};hb_camera_get_status(&st);
         char buf[220];
         snprintf(buf,sizeof(buf),"OV02C10 0x%04x | %s | klatki %lu\n%s | %s",
-            st.sensor_id,st.quarantined?"błąd sterownika — restart":st.running?"CSI aktywne":camera_preview_on_?"uruchamianie":"kamera uśpiona",
+            static_cast<unsigned>(st.sensor_id),st.quarantined?"błąd sterownika — restart":st.running?"CSI aktywne":camera_preview_on_?"uruchamianie":"kamera uśpiona",
             static_cast<unsigned long>(st.frames),
             EspenVision().EndpointReady()?"Vision HTTPS: gotowe":"Vision HTTPS: brak adresu",
             st.error==ESP_OK?"OK":esp_err_to_name(st.error));
-        lv_label_set_text(camera_status_,buf);
+        if(strcmp(lv_label_get_text(camera_status_),buf)!=0)lv_label_set_text(camera_status_,buf);
     }
     void StopCameraPreview(){
         camera_preview_on_=false;camera_preview_sequence_=0;
@@ -1051,7 +1053,7 @@ class EspenDisplay : public LcdDisplay {
         }
         lv_label_set_text(camera_cloud_label_,EspenVision().CloudEnabled()?"Analiza Xiaozhi: WŁ":"Analiza Xiaozhi: WYŁ");
         lv_obj_clear_flag(camera_panel_,LV_OBJ_FLAG_HIDDEN);lv_obj_move_foreground(camera_panel_);
-        RefreshCameraPanel(lv_tick_get());
+        camera_status_draw_=0;RefreshCameraPanel(lv_tick_get());
     }
     void OpenSettings() {
         if (!settings_) {

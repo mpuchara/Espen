@@ -1211,7 +1211,7 @@ replace("main/application.cc", '                EspenVisualQuestion(text->values
         '                EspenVisionQuestion(text->valuestring);')
 replace("main/mcp_server.cc",
         '                "Always remember you have a camera. If the user asks you to see something, use "',
-        '                "The camera is private. Only use it when the user explicitly asks you to look at or describe something. "')
+        '                "The camera is private. Only when the user explicitly asks you to look at or describe something, use "')
 replace("main/mcp_server.cc",
         'return std::unexpected("Failed to capture photo");',
         'return std::unexpected("Camera unavailable, or permission missing. Ask the user to enable cloud vision and explicitly ask you to look; never claim to see an image without a successful capture.");')

@@ -363,8 +363,9 @@ static esp_err_t initialize(void)
     for (int i = 0; i < HB_CAMERA_SLOTS; i++)
         if (!storage[i])
         {
-            storage[i] = esp_cam_ctlr_alloc_buffer(controller, FRAME_ALLOC_BYTES,
-                                                   MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
+            // IDF6.1 native alloc_buffer uses calloc, not explicit cache alignment.
+            storage[i] = heap_caps_aligned_alloc(256, FRAME_ALLOC_BYTES,
+                                                  MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
             if (!storage[i])
                 return ESP_ERR_NO_MEM;
         }

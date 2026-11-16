@@ -30,6 +30,17 @@ patch("new_trans.buffer), new_trans.buflen, ESP_CACHE_MSYNC_FLAG_DIR_M2C",
       "new_trans.buffer), new_trans.buflen, ESP_CACHE_MSYNC_FLAG_DIR_M2C | ESP_CACHE_MSYNC_FLAG_UNALIGNED")
 patch("trans.buffer), trans.buflen, ESP_CACHE_MSYNC_FLAG_DIR_M2C",
       "trans.buffer), trans.buflen, ESP_CACHE_MSYNC_FLAG_DIR_M2C | ESP_CACHE_MSYNC_FLAG_UNALIGNED")
+# P4 rev1 cannot use the new bridge color converter. The CSI input is
+# RAW10; the separate hardware ISP produces RGB888 downstream. IDF6.1
+# otherwise incorrectly rejects this pair as a bridge conversion request.
+patch("if (ctlr->custom_data_depth || config->src_format == config->dst_format) {",
+      "if (ctlr->custom_data_depth || config->src_format == config->dst_format || "
+      "(config->src_format == CAM_CTLR_COLOR_RAW10 && config->dst_format == CAM_CTLR_COLOR_RGB888)) {")
+# Keep logical format metadata consistent even when the separate ISP owns conversion.
+patch("mipi_csi_brg_ll_set_color_mode_bypass(ctlr->hal.bridge_dev, true);\n        return ESP_OK;",
+      "mipi_csi_brg_ll_set_color_mode_bypass(ctlr->hal.bridge_dev, true);\n"
+      "        ctlr->in_color_format = config->src_format;\n"
+      "        ctlr->out_color_format = config->dst_format;\n        return ESP_OK;")
 if dst.exists():shutil.rmtree(dst)
 shutil.copytree(native,dst)
 (dst/"csi/src/esp_cam_ctlr_csi.c").write_text(data)
