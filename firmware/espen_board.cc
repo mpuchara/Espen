@@ -34,6 +34,7 @@
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
+#include <cmath>
 #include <algorithm>
 #include <atomic>
 #include <esp_timer.h>
@@ -191,7 +192,8 @@ static std::string EspenDiagSummary(){
         diag.stats.peak,diag.stats.ClipPermille(),diag.truncated?" | limit 12 s":"");
     return diag.note.empty()?std::string(b):std::string(b)+"\n"+diag.note;
 }
-static bool EspenDiagPlay(bool raw){
+static std::atomic<bool> espen_speaker_pa{false};
+static bool EspenDiagPlay(bool raw,bool tone=false){
     auto& app=Application::GetInstance();
     auto& audio=app.GetAudioService();
     if(app.GetDeviceState()!=kDeviceStateIdle||!audio.IsPlaybackIdle()){
@@ -199,7 +201,7 @@ static bool EspenDiagPlay(bool raw){
     }
     {
         std::lock_guard<std::mutex> l(diag.mutex);
-        if(diag.busy.load()||diag.armed||diag.active||!(raw?diag.samples:diag.packets)){
+        if(diag.busy.load()||diag.armed||diag.active||(!tone&&!(raw?diag.samples:diag.packets))){
             diag.note="Brak gotowego nagrania; uzbrój test i zadaj pytanie.";return false;
         }
         diag.note.clear();
@@ -207,11 +209,26 @@ static bool EspenDiagPlay(bool raw){
     }
     audio.EnableWakeWordDetection(false);
     const auto ok=xTaskCreate([](void* arg){
-        const bool play_raw=reinterpret_cast<uintptr_t>(arg)==1;
+        const auto mode=reinterpret_cast<uintptr_t>(arg);
+        const bool play_raw=mode==1;
         auto& a=Application::GetInstance();auto& service=a.GetAudioService();
         // Buffers cannot be changed while busy. Each chunk is owned by
         // the normal output task, not by this worker.
-        if(play_raw){
+        if(mode==3){
+            // Quiet local two-tone test, through the normal PCM playback task.
+            // 50 ms chunks, short fades, no cloud or recording required.
+            constexpr int rate=AUDIO_OUTPUT_SAMPLE_RATE,chunk=rate/20,total=rate*8/10;
+            for(int off=0;off<total&&a.GetDeviceState()==kDeviceStateIdle;off+=chunk){
+                std::vector<int16_t> pcm(chunk);
+                for(int i=0;i<chunk;++i){
+                    int n=off+i, pos=n%(rate*4/10);
+                    int fade=std::min({pos,rate*4/10-pos,rate/50});
+                    double freq=n<total/2?440.0:660.0;
+                    pcm[i]=static_cast<int16_t>(2600.0*fade/(rate/50)*std::sin(6.283185307179586*freq*n/rate));
+                }
+                if(!service.QueueEspenDiagnosticPcm(std::move(pcm)))break;
+            }
+        } else if(play_raw){
             for(size_t off=0;off<diag.samples&&a.GetDeviceState()==kDeviceStateIdle;){
                 size_t n=std::min<size_t>(960,diag.samples-off);
                 std::vector<int16_t> pcm(n*3/2);
@@ -229,7 +246,7 @@ static bool EspenDiagPlay(bool raw){
         }
         while(a.GetDeviceState()==kDeviceStateIdle&&!service.IsPlaybackIdle())vTaskDelay(pdMS_TO_TICKS(40));
         diag.busy.store(false,std::memory_order_release);vTaskDelete(nullptr);
-    },"espen_diag",4096,reinterpret_cast<void*>(static_cast<uintptr_t>(raw?1:2)),2,nullptr);
+    },"espen_diag",4096,reinterpret_cast<void*>(static_cast<uintptr_t>(tone?3:raw?1:2)),2,nullptr);
     if(ok!=pdPASS){std::lock_guard<std::mutex> l(diag.mutex);diag.note="Brak pamięci na odtwarzanie.";diag.busy.store(false,std::memory_order_release);return false;}
     return true;
 }
@@ -417,6 +434,10 @@ class EspenDisplay : public LcdDisplay {
     lv_obj_t* speech_gain_label_=nullptr;
     lv_obj_t* speech_enhance_label_=nullptr;
     lv_obj_t* speech_perf_label_=nullptr;
+    lv_obj_t* speaker_mode_label_=nullptr;
+    lv_obj_t* speaker_volume_label_=nullptr;
+    bool speaker_pa_requested_=false;
+    int speaker_volume_=15;
     int speech_gain_=30;bool speech_enhance_=true,speech_perf_=false;
     lv_obj_t* ssid_ = nullptr;
     lv_obj_t* password_ = nullptr;
@@ -731,6 +752,23 @@ class EspenDisplay : public LcdDisplay {
         lv_obj_clear_flag(wake_panel_,LV_OBJ_FLAG_HIDDEN);lv_obj_move_foreground(wake_panel_);
         RefreshWake();
     }
+    void RefreshSpeakerControls(){
+        if(speaker_mode_label_){
+            bool active=espen_speaker_pa.load(std::memory_order_acquire);
+            lv_label_set_text_fmt(speaker_mode_label_,"SPK: %s%s",speaker_pa_requested_?"WŁ":"WYŁ",
+                active!=speaker_pa_requested_?" (restart)":"");
+        }
+        if(speaker_volume_label_)lv_label_set_text_fmt(speaker_volume_label_,"Głośność: %d%%",speaker_volume_);
+    }
+    void ChangeSpeakerVolume(int delta){
+        speaker_volume_=std::clamp(speaker_volume_+delta,10,80);
+        int v=speaker_volume_;
+        Application::GetInstance().Schedule([v](){
+            Board::GetInstance().GetAudioCodec()->SetOutputVolume(v);
+            ESP_LOGI(TAG,"Espen output volume: %d",v);
+        });
+        RefreshSpeakerControls();
+    }
     void OpenSpeechDiag() {
         if(!speech_diag_) {
             speech_diag_=lv_obj_create(lv_layer_top());
@@ -742,13 +780,53 @@ class EspenDisplay : public LcdDisplay {
             lv_obj_set_style_pad_all(speech_diag_,14,0);
             lv_obj_set_style_pad_row(speech_diag_,8,0);
             lv_obj_set_flex_flow(speech_diag_,LV_FLEX_FLOW_COLUMN);
-            auto* title=lv_label_create(speech_diag_);lv_label_set_text(title,"ESPEN / Diagnostyka mowy");
+            auto* title=lv_label_create(speech_diag_);lv_label_set_text(title,"ESPEN / Dźwięk i mowa");
             speech_diag_status_=lv_label_create(speech_diag_);lv_obj_set_width(speech_diag_status_,lv_pct(100));
             lv_label_set_long_mode(speech_diag_status_,LV_LABEL_LONG_WRAP);
             auto* hint=lv_label_create(speech_diag_);lv_obj_set_width(hint,lv_pct(100));
             lv_label_set_long_mode(hint,LV_LABEL_LONG_WRAP);
             lv_label_set_text(hint,"Uzbrój test, powiedz pytanie, zaczekaj na odpowiedź i sen. Wróć tutaj, odsłuchaj RAW i Opus. Do 12 s; tylko RAM.");
             Settings cfg("espen_audio",false);
+            speaker_pa_requested_=cfg.GetBool("speaker_pa",false);
+            {Settings audio("audio",false);speaker_volume_=std::clamp<int32_t>(audio.GetInt("output_volume",70),10,80);}
+            auto* warning=lv_label_create(speech_diag_);
+            lv_obj_set_width(warning,lv_pct(100));lv_label_set_long_mode(warning,LV_LABEL_LONG_WRAP);
+            lv_obj_set_style_text_color(warning,lv_color_hex(0xFFD66B),0);
+            lv_label_set_text(warning,"UWAGA: SPK to wyjście mostkowe klasy D, nie AUX. Włącz tylko dla głośnika pasywnego 4–8 Ω lub odpowiedniego konwertera BTL → LINE. Nigdy nie łącz SPK− z GND.");
+            auto* spk=MakeButton(speech_diag_,"SPK",[](lv_event_t* e){
+                auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                self->speaker_pa_requested_=!self->speaker_pa_requested_;
+                {Settings audio("espen_audio",true);audio.SetBool("speaker_pa",self->speaker_pa_requested_);}
+                if(self->speaker_pa_requested_){
+                    // Safe low default before the amplifier is enabled at reboot.
+                    self->speaker_volume_=15;
+                    {Settings audio("audio",true);audio.SetInt("output_volume",15);}
+                    Application::GetInstance().Schedule([](){
+                        Board::GetInstance().GetAudioCodec()->SetOutputVolume(15);
+                    });
+                }
+                self->RefreshSpeakerControls();
+            },this,420);
+            speaker_mode_label_=lv_obj_get_child(spk,0);
+            speaker_volume_label_=lv_label_create(speech_diag_);
+            auto* volume_row=lv_obj_create(speech_diag_);
+            lv_obj_set_size(volume_row,lv_pct(100),58);
+            lv_obj_set_flex_flow(volume_row,LV_FLEX_FLOW_ROW);
+            lv_obj_set_style_bg_opa(volume_row,LV_OPA_TRANSP,0);
+            lv_obj_set_style_border_width(volume_row,0,0);lv_obj_set_style_pad_all(volume_row,0,0);
+            MakeButton(volume_row,"Ciszej −",[](lv_event_t* e){
+                static_cast<EspenDisplay*>(lv_event_get_user_data(e))->ChangeSpeakerVolume(-5);
+            },this,200);
+            MakeButton(volume_row,"Głośniej +",[](lv_event_t* e){
+                static_cast<EspenDisplay*>(lv_event_get_user_data(e))->ChangeSpeakerVolume(5);
+            },this,200);
+            MakeButton(speech_diag_,"Test dźwięku (2 tony)",[](lv_event_t*){
+                Application::GetInstance().Schedule([](){EspenDiagPlay(false,true);});
+            },this,420);
+            MakeButton(speech_diag_,"Zastosuj SPK / restart",[](lv_event_t*){
+                Application::GetInstance().Schedule([](){esp_restart();});
+            },this,420);
+            RefreshSpeakerControls();
             speech_gain_=espen::MicGain(cfg.GetInt("mic_gain",30));
             speech_enhance_=cfg.GetBool("enhance",true);speech_perf_=cfg.GetBool("high_perf",false);
             auto* gain=MakeButton(speech_diag_,"Wzmocnienie",[](lv_event_t* e){
@@ -789,6 +867,7 @@ class EspenDisplay : public LcdDisplay {
                 lv_obj_add_flag(self->speech_diag_,LV_OBJ_FLAG_HIDDEN);
             },this,420);
         }
+        RefreshSpeakerControls();
         lv_label_set_text_fmt(speech_gain_label_,"Mikrofon: %d dB (restart)",speech_gain_);
         lv_label_set_text(speech_enhance_label_,speech_enhance_?"NSNet2 + AGC: WŁ (restart)":"NSNet2 + AGC: WYŁ (restart)");
         lv_label_set_text(speech_perf_label_,speech_perf_?"AFE: HIGH PERF (restart)":"AFE: LOW COST (restart)");
@@ -874,7 +953,7 @@ class EspenDisplay : public LcdDisplay {
                 lv_label_set_text(label,self->visual_enabled_?"Visual World: WŁ":"Visual World: WYŁ");
             },this,420);
             lv_label_set_text(lv_obj_get_child(visuals,0),visual_enabled_?"Visual World: WŁ":"Visual World: WYŁ");
-            MakeButton(settings_, "Diagnostyka mowy", [](lv_event_t* e) {
+            MakeButton(settings_, "Dźwięk / diagnostyka mowy", [](lv_event_t* e) {
                 auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
                 self->CloseSettings();self->OpenSpeechDiag();
             },this,420);
@@ -1771,7 +1850,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.1.36 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.1.37 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();
@@ -1792,14 +1871,19 @@ public:
         GetBacklight()->RestoreBrightness();
     }
     AudioCodec* GetAudioCodec() override {
-        // NC intentionally keeps the external amp off; upstream decoder still
-        // consumes server audio, so its state machine and text events work.
-        static const bool logged = []() { ESP_LOGI(TAG, "Audio: ES8311 built-in mic, DIN GPIO48"); return true; }();
-        (void)logged;
+        // The on-board NS4150 is a BTL speaker amplifier, not a line output.
+        // Leave it off by default until the user selects a safe connection.
+        static const bool speaker_enabled=[](){
+            Settings cfg("espen_audio",false);
+            bool enabled=cfg.GetBool("speaker_pa",false);
+            espen_speaker_pa.store(enabled,std::memory_order_release);
+            ESP_LOGI(TAG,"Audio: ES8311 mic DIN GPIO48, NS4150 PA GPIO11 %s",enabled?"enabled":"disabled");
+            return enabled;
+        }();
         static Es8311AudioCodec codec(bus_, AUDIO_CODEC_I2C_PORT,
             AUDIO_INPUT_SAMPLE_RATE, AUDIO_OUTPUT_SAMPLE_RATE,
             AUDIO_I2S_GPIO_MCLK, AUDIO_I2S_GPIO_BCLK, AUDIO_I2S_GPIO_WS,
-            AUDIO_I2S_GPIO_DOUT, AUDIO_I2S_GPIO_DIN, GPIO_NUM_NC,
+            AUDIO_I2S_GPIO_DOUT, AUDIO_I2S_GPIO_DIN, speaker_enabled?AUDIO_CODEC_PA_PIN:GPIO_NUM_NC,
             ES8311_CODEC_DEFAULT_ADDR, true, false);
         static const bool configured=[](){
             Settings cfg("espen_audio",false);
