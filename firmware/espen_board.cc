@@ -891,7 +891,7 @@ class EspenDisplay : public LcdDisplay {
                 lv_obj_add_flag(self->speaker_panel_,LV_OBJ_FLAG_HIDDEN);
             },this,420);
         }
-        {Settings cfg("espen_audio",false);speaker_pa_requested_=cfg.GetBool("speaker_pa",false);}
+        {Settings cfg("espen_audio",false);speaker_pa_requested_=cfg.GetBool("speaker_pa",true);}
         {Settings cfg("audio",false);speaker_volume_=espen::SpeakerVolume(cfg.GetInt("output_volume",espen::kSpeakerVolumeDefault));}
         if(speaker_volume_>0)speaker_last_nonzero_=speaker_volume_;
         RefreshSpeakerControls();
@@ -2069,7 +2069,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.2.6 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.2.7 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();
@@ -2092,10 +2092,21 @@ public:
     Camera* GetCamera() override {return &EspenVision();}
     AudioCodec* GetAudioCodec() override {
         // The on-board NS4150 is a BTL speaker amplifier, not a line output.
-        // Leave it off by default until the user selects a safe connection.
+        // Only drive the board-owned NS4150 with its passive speaker connector.
+        // On upgrade, migrate the old default-OFF/15% settings once to ON/75%.
         static const bool speaker_enabled=[](){
+            {
+                Settings migration("espen_audio",true);
+                if(!migration.GetBool("speaker_defaults_027",false)){
+                    migration.SetBool("speaker_pa",true);
+                    Settings audio("audio",true);
+                    audio.SetInt("output_volume",espen::kSpeakerVolumeDefault);
+                    migration.SetBool("speaker_defaults_027",true);
+                    ESP_LOGI(TAG,"Speaker defaults migrated: PA ON, volume 75%%");
+                }
+            }
             Settings cfg("espen_audio",false);
-            bool enabled=cfg.GetBool("speaker_pa",false);
+            bool enabled=cfg.GetBool("speaker_pa",true);
             espen_speaker_pa.store(enabled,std::memory_order_release);
             ESP_LOGI(TAG,"Audio: ES8311 mic DIN GPIO48, NS4150 PA GPIO11 %s",enabled?"enabled":"disabled");
             return enabled;
