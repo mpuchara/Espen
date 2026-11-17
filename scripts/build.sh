@@ -2,7 +2,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 root="$PWD"
-# Verify all firmware NVS keys obey the 15-byte ESP-IDF limit.\npython3 tests/test_nvs_key_lengths.py\n# Host-side regression tests for the local wake feature extractor and DTW.
+# Verify all firmware NVS keys obey the 15-byte ESP-IDF limit.
+python3 tests/test_nvs_key_lengths.py
+# Host-side regression tests for the local wake feature extractor and DTW.
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_wake_features.cc -o /tmp/espen-wake-test
 /tmp/espen-wake-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread -Itests/stubs tests/test_wake_engine.cc -o /tmp/espen-wake-engine-test
@@ -19,6 +21,8 @@ c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_visual_world.cc -o /tmp/espe
 /tmp/espen-visual-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_speaker_audio.cc -o /tmp/espen-speaker-test
 /tmp/espen-speaker-test
+c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_emotional_audio.cc -o /tmp/espen-emotional-audio-test
+/tmp/espen-emotional-audio-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_vision_gate.cc -o /tmp/espen-vision-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_vision_endpoint.cc -o /tmp/espen-vision-endpoint-test
 /tmp/espen-vision-endpoint-test
