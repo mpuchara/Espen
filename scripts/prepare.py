@@ -1403,13 +1403,17 @@ replace("main/application.cc",
         '    // Play popup sound after ResetDecoder (in EnableVoiceProcessing) has been called',
         '    extern void EspenListeningCue(); EspenListeningCue();\n\n'
         '    // Play popup sound after ResetDecoder (in EnableVoiceProcessing) has been called')
-# Earlier Espen patches may already have disabled the upstream popup.
-# This is optional: never fail the overlay just because the OGG was removed.
-p = up / "main/application.cc"
-src = p.read_text()
-src = src.replace('        audio_service_.PlaySound(Lang::Sounds::OGG_POPUP);',
-                  '        // Replaced by Espen PCM listening cue.')
-p.write_text(src)
+# Replace ONLY the listening popup: the notification popup elsewhere
+# in application.cc must remain unchanged.
+replace("main/application.cc",
+        '    if (play_popup_on_listening_) {\n'
+        '        play_popup_on_listening_ = false;\n'
+        '        audio_service_.PlaySound(Lang::Sounds::OGG_POPUP);\n'
+        '    }',
+        '    if (play_popup_on_listening_) {\n'
+        '        play_popup_on_listening_ = false;\n'
+        '        // Espen already played its own short PCM listening cue.\n'
+        '    }')
 
 # Emotion sometimes arrives before TTS start. Queue the corresponding cue
 # only after ResetDecoder(), otherwise the state transition would erase it.
