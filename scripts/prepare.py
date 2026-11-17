@@ -1726,3 +1726,45 @@ replace("main/application.cc",
         '        if (strcmp(type->valuestring, "notify") == 0) {',
         '        if (espen_standby_requested_.load(std::memory_order_acquire)) return;\n'
         '        if (strcmp(type->valuestring, "notify") == 0) {')
+
+# 0.2.14: One answer per wake invocation (for the default AutoStop mode).
+# Xiaozhi upstream changes Speaking -> Listening on TTS stop and reopens
+# streaming immediately. With television in the room this makes the robot
+# listen indefinitely. Hold Speaking until its already buffered PCM has
+# actually played, THEN close this cloud turn and arm the local keyword.
+# Preserve explicit ManualStop and Realtime semantics.
+replace("main/application.h",
+        '    uint64_t espen_finish_at_ = 0;',
+        '    uint64_t espen_finish_at_ = 0;\n'
+        '    bool espen_tv_turn_closing_ = false;')
+replace("main/application.cc",
+        '                        if (listening_mode_ == kListeningModeManualStop) {\n'
+        '                            SetDeviceState(kDeviceStateIdle);\n'
+        '                        } else {\n'
+        '                            SetDeviceState(kDeviceStateListening);\n'
+        '                        }',
+        '                        if (listening_mode_ == kListeningModeAutoStop) {\n'
+        '                            // Hold facial animation and audio until queued TTS drains.\n'
+        '                            espen_tv_turn_closing_ = true;\n'
+        '                        } else if (listening_mode_ == kListeningModeManualStop) {\n'
+        '                            SetDeviceState(kDeviceStateIdle);\n'
+        '                        } else {\n'
+        '                            SetDeviceState(kDeviceStateListening);\n'
+        '                        }')
+replace("main/application.cc",
+        'void Application::EspenEnsureWake() {\n    if (!espen_wake_ready_) return;',
+        'void Application::EspenEnsureWake() {\n'
+        '    if (!espen_wake_ready_) return;\n'
+        '    if (espen_tv_turn_closing_) {\n'
+        '        if (GetDeviceState() != kDeviceStateSpeaking) {\n'
+        '            espen_tv_turn_closing_ = false; // touch/voice interrupted response\n'
+        '        } else if (audio_service_.IsPlaybackIdle()) {\n'
+        '            espen_tv_turn_closing_ = false;\n'
+        '            audio_service_.EnableEspenBargeIn(false);\n'
+        '            ESP_LOGI(TAG, "Espen TV-safe: answer fully played; close cloud turn");\n'
+        '            SetDeviceState(kDeviceStateIdle);\n'
+        '            if (protocol_ && protocol_->IsAudioChannelOpened())\n'
+        '                protocol_->CloseAudioChannel();\n'
+        '            return;\n'
+        '        }\n'
+        '    }')
