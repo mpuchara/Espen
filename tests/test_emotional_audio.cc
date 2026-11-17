@@ -42,5 +42,5 @@ int main() {
     assert(!limit.CanPlay(EmotionalCue::Laugh, 2500));
     limit.NewTurn();
     assert(limit.CanPlay(EmotionalCue::Laugh, 2500));
-    std::cout << "Espen Emotional Audio Engine: 25 cues, envelope, limiter OK\n";
+    std::cout << "Espen Emotional Audio Engine: 37 cues, envelope, limiter OK\n";
 }
