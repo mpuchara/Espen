@@ -1418,8 +1418,12 @@ void Application::EspenWakeFromTouch() {
 
 void Application::HandleWakeWordDetectedEvent() {""")
 replace("main/application.cc",
+        'void Application::HandleWakeWordDetectedEvent() {\n'
+        '    extern bool EspenDiagnosticBusy();\n'
         '    if (EspenDiagnosticBusy()) return;\n'
         '    auto state = GetDeviceState();',
+        'void Application::HandleWakeWordDetectedEvent() {\n'
+        '    extern bool EspenDiagnosticBusy();\n'
         '    if (EspenDiagnosticBusy()) return;\n'
         '    if (espen_standby_requested_.load(std::memory_order_acquire)) {\n'
         '        auto profile = EspenWake().Get();\n'
