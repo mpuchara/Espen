@@ -12,10 +12,11 @@ for src, dst in [("config.h","config.h"),("config.json","config.json"),
                  ("espen_board.cc","espen_board.cc"),
                  ("board_p4_st7701_init.h","board_p4_st7701_init.h"),
                  ("face_engine.h","face_engine.h"),("dirty_rect.h","dirty_rect.h"),
-                 ("social_reactions.h","social_reactions.h"),("speech_quality.h","speech_quality.h"),("visual_world.h","visual_world.h"),("speaker_audio.h","speaker_audio.h"),
+                 ("social_reactions.h","social_reactions.h"),("speech_quality.h","speech_quality.h"),("visual_world.h","visual_world.h"),("speaker_audio.h","speaker_audio.h"),("emotional_audio.h","emotional_audio.h"),
                  ("espen_camera.h","espen_camera.h"),("espen_camera.cc","espen_camera.cc"),("vision_gate.h","vision_gate.h"),("vision_endpoint.h","vision_endpoint.h")]:
     shutil.copyfile(root / "firmware" / src, board / dst)
 shutil.copytree(root / "firmware/camera", up / "components/espen_camera", dirs_exist_ok=True)
+shutil.copyfile(root / "firmware/emotional_audio.h", up / "main/audio/emotional_audio.h")
 
 def replace(path, old, new):
     p = up / path
@@ -1341,3 +1342,67 @@ replace("main/application.cc",
         'void Application::SetListeningMode(ListeningMode mode) {\n'
         '    espen_standby_requested_.store(false, std::memory_order_release);\n'
         '    listening_mode_ = mode;')
+
+# 0.2.9: local, bounded emotional sounds. All PCM shares Xiaozhi's ONE
+# audio output task and ES8311 mute/volume; no additional codec owner.
+# The request is nonblocking and dropped if an assistant packet has priority.
+replace("main/audio/audio_service.h",
+        '    uint32_t playback_id = 0;',
+        '    uint32_t playback_id = 0;\\n'
+        '    int espen_cue = -1;\\n'
+        '    int espen_cue_gain = 45;')
+replace("main/audio/audio_service.h",
+        '    bool QueueEspenDiagnosticPcm(std::vector<int16_t>&& pcm);',
+        '    bool QueueEspenDiagnosticPcm(std::vector<int16_t>&& pcm);\\n'
+        '    bool QueueEspenEmotionalCue(int cue, int gain);')
+replace("main/audio/audio_service.cc", '#include <esp_heap_caps.h>',
+        '#include <esp_heap_caps.h>\\n#include "emotional_audio.h"')
+replace("main/audio/audio_service.cc",
+        'bool AudioService::QueueEspenDiagnosticPcm(std::vector<int16_t>&& pcm) {',
+        """bool AudioService::QueueEspenEmotionalCue(int cue, int gain) {
+    if (!espen::ValidCue(cue) || gain <= 0) return false;
+    std::unique_lock<std::mutex> lock(audio_queue_mutex_, std::try_to_lock);
+    if (!lock.owns_lock() || service_stopped_.load() ||
+        !audio_decode_queue_.empty() || !audio_playback_queue_.empty() ||
+        output_in_flight_ || decode_in_flight_) return false;
+    AudioTask task;
+    task.type = kAudioTaskTypeDecodeToPlaybackQueue;
+    task.espen_cue = cue;
+    task.espen_cue_gain = std::clamp(gain, 0, 100);
+    audio_playback_queue_.push_back(std::move(task));
+    playback_drained_notified_ = false;
+    audio_queue_cv_.notify_all();
+    return true;
+}
+
+bool AudioService::QueueEspenDiagnosticPcm(std::vector<int16_t>&& pcm) {""")
+replace("main/audio/audio_service.cc",
+        '        auto task = std::move(audio_playback_queue_.front());\\n        audio_playback_queue_.pop_front();',
+        '        auto task = std::move(audio_playback_queue_.front());\\n'
+        '        const uint32_t espen_generation = playback_generation_;\\n'
+        '        audio_playback_queue_.pop_front();')
+replace("main/audio/audio_service.cc",
+        '        EspenVisualPlayback(task.espen_visual_cue);\\n'
+        '        EspenPlaybackLevel(task.pcm.data(), task.pcm.size());\\n'
+        '        codec_->OutputData(task.pcm);',
+        '        if (task.espen_cue >= 0) {\\n'
+        '            task.pcm = espen::RenderEmotionalCue(\\n'
+        '                static_cast<espen::EmotionalCue>(task.espen_cue),\\n'
+        '                codec_->output_sample_rate(), task.espen_cue_gain);\\n'
+        '            std::lock_guard<std::mutex> cue_lock(audio_queue_mutex_);\\n'
+        '            if (espen_generation != playback_generation_) task.pcm.clear();\\n'
+        '        }\\n'
+        '        if (!task.pcm.empty()) {\\n'
+        '            EspenVisualPlayback(task.espen_visual_cue);\\n'
+        '            EspenPlaybackLevel(task.pcm.data(), task.pcm.size());\\n'
+        '            codec_->OutputData(task.pcm);\\n'
+        '        }')
+# The stock upstream OGG popup is replaced to avoid playing twice and
+# prevent its large decoder start from obscuring the new short listening cue.
+replace("main/application.cc",
+        '    // Play popup sound after ResetDecoder (in EnableVoiceProcessing) has been called',
+        '    extern void EspenListeningCue(); EspenListeningCue();\\n\\n'
+        '    // Play popup sound after ResetDecoder (in EnableVoiceProcessing) has been called')
+replace("main/application.cc",
+        '        audio_service_.PlaySound(Lang::Sounds::OGG_POPUP);',
+        '        // Espen plays its own short cue through the shared PCM output task.')
