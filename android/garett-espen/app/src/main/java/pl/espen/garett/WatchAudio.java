@@ -30,6 +30,7 @@ final class WatchAudio {
     private final Reporter reporter;
     private final ArrayBlockingQueue<byte[]> frames = new ArrayBlockingQueue<>(24);
     private final AtomicBoolean running = new AtomicBoolean();
+    private final WatchFx effects = new WatchFx();
     private volatile Thread player;
     private volatile long lastWrittenMs, received, played, dropped;
     private volatile boolean soundConfigured;
@@ -43,7 +44,7 @@ final class WatchAudio {
     WatchAudio(Activity a, Reporter r) { activity=a; reporter=r; }
 
     void resetSession(){
-        stop();frames.clear();
+        stop();frames.clear();effects.reset();
         received=played=dropped=0;lastWrittenMs=0;
         soundConfigured=false;route="nie uruchomiony";
     }
@@ -72,6 +73,7 @@ final class WatchAudio {
         }
     }
 
+    String reaction(String spokenSentence){ return effects.cue(spokenSentence); }
     long packetsReceived(){ return received; }
     long packetsPlayed(){ return played; }
     long packetsDropped(){ return dropped; }
@@ -139,6 +141,7 @@ final class WatchAudio {
                 // decoding and audio write off the UI and Xiaozhi control thread.
                 int count=decoder.decode(frame,0,frame.length,pcm,0,pcm.length,false);
                 if(count<=0)continue;
+                effects.mix(pcm,count,playbackHz);
                 long sum=0;for(int i=0;i<count;i++)sum+=(long)pcm[i]*pcm[i];
                 reporter.pcmLevel(Math.min(100,(int)(Math.sqrt(sum/(double)count)/95)));
                 int offset=0;
