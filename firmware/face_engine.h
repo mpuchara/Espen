@@ -171,6 +171,7 @@ public:
         const auto traits=Personality(persona_);
         if(phase!=phase_) {
             phase_=phase;phase_since_=now;
+            if(phase!=Phase::Speaking) reply_=ReplyBeat::None;
             if(phase==Phase::Idle||phase==Phase::Offline||phase==Phase::Startup) {
                 ResetIdle(now);
                 if(force_sleep_) idle_since_=now-kSleepMs;
