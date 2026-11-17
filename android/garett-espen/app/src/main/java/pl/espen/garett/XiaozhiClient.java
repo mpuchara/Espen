@@ -415,7 +415,7 @@ public final class XiaozhiClient {
                 case "tts":
                     String state=o.optString("state","");
                     if("start".equals(state)){
-                        barge.stop();
+                        barge.reset();
                         ttsResponses++;
                         talking=true;ttsStoppedAt=0;endMic();
                         // Avoid simultaneous AudioRecord and AudioTrack initialization
