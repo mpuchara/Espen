@@ -322,3 +322,42 @@ Przetestuj 10 przerwań TTS, brak samowybudzania, 10 dialogów
 bez restartu. Gdy 42 dB powoduje przester lub fałszywe wybudzenia,
 wróć do Auto lub Standardowego. Kompilacja CI nie zastąpi testu
 na fizycznym ESP32-P4.
+
+## Espen 0.2.14 — TV-safe, poprawka rozmowy (2026-11-17)
+
+Problem 0.2.13: rozpoznawanie startu mowy oparte na energii i zerowych
+przejściach potrafiło potraktować telewizor jako użytkownika; barge-in
+mógł uciąć pierwsze słowa odpowiedzi. To nie znaczy, że telewizor
+przestaje być mową: sam VAD nie potrafi odróżnić rozmówcy od aktora
+w telewizji. Bez wiarygodnej identyfikacji mówcy, referencji AEC
+i/lub kierunkowego mikrofonu jedyna deterministyczna ochrona przed
+przypadkową aktywacją to **nauczone hasło wybudzające** albo dotyk.
+
+- **Wybudzanie: hasło** jest teraz domyślne i po aktualizacji raz
+  zastępuje zapamiętane stare automatyczne wybudzanie. NVS
+  `espen_ui/tv_guard_v14` chroni przed powtórzeniem migracji:
+  jeśli później świadomie włączysz automatyczne **Wybudzanie: mowa
+  (TV!)**, ustawienie pozostanie włączone przez kolejny restart.
+  Nie usuwamy nauczenia hasła, Wi-Fi ani parowania Xiaozhi.
+- **Mikrofon Auto** działa teraz z 30 dB i WebRTC AGC 6 dB zamiast
+  agresywnego 36/9. Tryby Czuły (36 dB/9 dB) i Bardzo czuły
+  (42 dB/12 dB) pozostają dostępne dla spokojnych pomieszczeń.
+- **Barge-in** ma 900 ms ochrony faktycznie odtwarzanego PCM,
+  wymaga aktywnej referencji głośnika, silnej przewagi sygnału
+  użytkownika nad wyciekiem TTS/tłem i co najmniej 240 ms
+  ciągłej mowy. Dzięki temu krótka fraza z telewizora czy szum
+  nie powinny uciąć odpowiedzi. Głośny TV nadal może dać fałszywy
+  sygnał — to ograniczenie pojedynczego mikrofonu bez AEC.
+  Dotyk nadal przerywa odpowiedź od razu.
+- Zostawiliśmy VADNet1, zachowaliśmy wyłączony NSNet2 (crash FFT na
+  ESP32-P4 rev1), nie dodaliśmy obciążającego drugiego AFE ani
+  nowych nagrań trwałych. Zapis hasła i poprzednie funkcje 0.2.13
+  pozostają bez zmian.
+
+**Po instalacji** wybudź Alę nauczonym „Hej Ala” albo dotykiem.
+Sprawdź 10 odpowiedzi przy włączonym TV oraz 10 prób świadomego
+przerwania własnym głosem po pierwszej sekundzie odpowiedzi;
+jeżeli na Twoim ustawieniu głośności TV nadal przebija się przez
+barge-in, należy przeanalizować nagranie RAW/Opus i zmniejszyć
+głośność tła albo dostroić próg na konkretnym sprzęcie.
+Testów fizycznych nie da się zastąpić samym zielonym CI.
