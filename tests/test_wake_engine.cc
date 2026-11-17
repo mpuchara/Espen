@@ -63,7 +63,9 @@ int main() {
     auto saved_profile=nvs_committed;
     nvs_committed.clear();
     EspenWakeEngine voice_only;
+    voice_only.SetMicMode(espen::kMicModeVerySensitive);
     voice_only.SetAutoSpeech(true);voice_only.AllowSpeech(true);voice_only.SetRunning(true);
+    assert(voice_only.Get().gate<90);
     assert(!voice_only.Get().trained);
     for(int i=0;i<20;++i)voice_only.Feed(silence.data(),silence.size());
     std::string onset;
