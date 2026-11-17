@@ -1091,7 +1091,7 @@ class EspenDisplay : public LcdDisplay {
             lv_bar_set_range(speech_meter_bar_,0,100);
             auto* hint=lv_label_create(speech_diag_);lv_obj_set_width(hint,lv_pct(100));
             lv_label_set_long_mode(hint,LV_LABEL_LONG_WRAP);
-            lv_label_set_text(hint,"Auto: 36 dB, adaptacja do szumu i AGC. Bardzo czuły może wybudzać od TV. Test RAW/Opus: 12 s, tylko RAM.");
+            lv_label_set_text(hint,"TV-safe 0.2.14: wybudzanie hasłem; mowa bez hasła opcjonalna. Barge-in chroni 900 ms TTS. RAW/Opus do 12 s tylko w RAM.");
             Settings cfg("espen_audio",false);
             int legacy=cfg.GetInt("mic_gain",-1);
             speech_mode_=espen::ResolveMicMode(cfg.GetInt("mic_profile",-1),legacy);
@@ -1338,11 +1338,11 @@ class EspenDisplay : public LcdDisplay {
                 {Settings ui("espen_ui",true);ui.SetBool("auto_speech",self->auto_speech_);}
                 EspenWake().SetAutoSpeech(self->auto_speech_);
                 lv_label_set_text(self->speech_mode_label_,self->auto_speech_?
-                    "Wybudzanie: mowa":"Wybudzanie: hasło");
+                    "Wybudzanie: mowa (TV!)":"Wybudzanie: hasło");
                 self->RefreshWake();
             },this,420);
             speech_mode_label_=lv_obj_get_child(mode,0);
-            lv_label_set_text(speech_mode_label_,auto_speech_?"Wybudzanie: mowa":"Wybudzanie: hasło");
+            lv_label_set_text(speech_mode_label_,auto_speech_?"Wybudzanie: mowa (TV!)":"Wybudzanie: hasło");
             auto* visuals=MakeButton(settings_,"Visual World",[](lv_event_t* e){
                 auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
                 self->visual_enabled_=!self->visual_enabled_;
@@ -1455,7 +1455,7 @@ class EspenDisplay : public LcdDisplay {
     lv_obj_t* effect_icons_[3]={};
     espen::PetEffect drawn_effect_=espen::PetEffect::None;
     int effect_y_[3]={-1,-1,-1},effect_x_[3]={-1,-1,-1};
-    bool auto_speech_=true;
+    bool auto_speech_=false;
     std::string wake_indicator_text_;
     int touch_distance_=0;
     lv_point_t touch_prev_{};
@@ -1634,9 +1634,16 @@ class EspenDisplay : public LcdDisplay {
         }
     }
     void BuildFace() {
-        Settings cfg("espen_ui",false);
+        Settings cfg("espen_ui",true);
+        // v0.2.14 one-time safety migration: TV speech used to open sessions.
+        // Later deliberate re-enabling of hands-free speech survives reboot.
+        if(!cfg.GetBool("tv_guard_v14",false)){
+            cfg.SetBool("auto_speech",false);
+            cfg.SetBool("tv_guard_v14",true);
+            ESP_LOGW(TAG,"TV guard v0.2.14: auto-speech disabled; wake phrase and touch remain");
+        }
         engine_.SetPersona(static_cast<espen::Persona>(std::clamp<int32_t>(cfg.GetInt("persona",0),0,static_cast<int32_t>(espen::Persona::Count)-1)));
-        auto_speech_=cfg.GetBool("auto_speech",true);
+        auto_speech_=cfg.GetBool("auto_speech",false);
         visual_enabled_=cfg.GetBool("visual_world",true);
         EspenWake().SetAutoSpeech(auto_speech_);
         face_=lv_obj_create(container_);Solid(face_,0x09141D,36);
@@ -2392,7 +2399,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.2.13 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.2.14 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();
