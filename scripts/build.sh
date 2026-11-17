@@ -23,6 +23,8 @@ c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_visual_world.cc -o /tmp/espe
 /tmp/espen-visual-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_speaker_audio.cc -o /tmp/espen-speaker-test
 /tmp/espen-speaker-test
+c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_emotional_audio.cc -o /tmp/espen-emotional-audio-test
+/tmp/espen-emotional-audio-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_vision_gate.cc -o /tmp/espen-vision-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_vision_endpoint.cc -o /tmp/espen-vision-endpoint-test
 /tmp/espen-vision-endpoint-test
