@@ -27,6 +27,7 @@ import okhttp3.Response;
 @SuppressWarnings("deprecation")
 public final class Vision {
     public interface Result { void done(String description, String error); }
+    public interface ImageListener { void onPhoto(byte[] jpeg); }
     private final Activity activity;
     private final OkHttpClient http;
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -35,6 +36,8 @@ public final class Vision {
     private volatile long consentUntil = 0;
     private volatile long pictureAt = 0;
     private volatile byte[] jpeg;
+    private volatile ImageListener imageListener;
+    public void setImageListener(ImageListener listener){imageListener=listener;}
     public Vision(Activity a, OkHttpClient h) { activity=a;http=h; }
     public void setEnabled(boolean on) { enabled=on; if(!on) cancel(); }
     public boolean isEnabled() { return enabled; }
@@ -142,6 +145,8 @@ public final class Vision {
                                     if(!smaller.compress(Bitmap.CompressFormat.JPEG,72,out))
                                         throw new IOException("JPEG encode");
                                     jpeg=out.toByteArray();pictureAt=SystemClock.elapsedRealtime();
+                                    ImageListener listener=imageListener;
+                                    if(listener!=null)listener.onPhoto(jpeg.clone());
                                     cb.done("Zdjęcie gotowe. Zapytaj Alę, co widzi.",null);
                                 }catch(Throwable ex){
                                     cb.done(null,"Zdjęcie: "+ex.getClass().getSimpleName());
@@ -187,5 +192,5 @@ public final class Vision {
             }catch(Exception e){cb.done(null,"Analiza niedostępna: "+e.getMessage());}
         });
     }
-    public void shutdown(){cancel();network.shutdownNow();}
+    public void shutdown(){imageListener=null;cancel();network.shutdownNow();}
 }
