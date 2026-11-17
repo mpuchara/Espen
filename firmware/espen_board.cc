@@ -602,7 +602,7 @@ class EspenDisplay : public LcdDisplay {
     int speaker_volume_=espen::kSpeakerVolumeDefault;
     int speaker_last_nonzero_=espen::kSpeakerVolumeDefault;
     bool speaker_slider_sync_=false;
-    int speech_mode_=espen::kMicModeAuto,speech_gain_=36;
+    int speech_mode_=espen::kMicModeAuto,speech_gain_=30;
     bool speech_enhance_=true,speech_perf_=false;
     lv_obj_t* ssid_ = nullptr;
     lv_obj_t* password_ = nullptr;
@@ -1091,7 +1091,7 @@ class EspenDisplay : public LcdDisplay {
             lv_bar_set_range(speech_meter_bar_,0,100);
             auto* hint=lv_label_create(speech_diag_);lv_obj_set_width(hint,lv_pct(100));
             lv_label_set_long_mode(hint,LV_LABEL_LONG_WRAP);
-            lv_label_set_text(hint,"TV-safe 0.2.14: wybudzanie hasłem; mowa bez hasła opcjonalna. Barge-in chroni 900 ms TTS. RAW/Opus do 12 s tylko w RAM.");
+            lv_label_set_text(hint,"TV-safe 0.2.14: Auto 30 dB, hasło zamiast szumu/TV. Mowa bez hasła opcjonalna. TTS chroniony 900 ms. RAW/Opus do 12 s tylko w RAM.");
             Settings cfg("espen_audio",false);
             int legacy=cfg.GetInt("mic_gain",-1);
             speech_mode_=espen::ResolveMicMode(cfg.GetInt("mic_profile",-1),legacy);
