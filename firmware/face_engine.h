@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstring>
 #include "social_reactions.h"
+#include "response_reactions.h"
 
 namespace espen {
 enum class Mood { Neutral, Happy, Laugh, Sad, Surprise, Angry, Thinking, Sleepy,
@@ -93,6 +94,8 @@ class FaceEngine {
     bool celebrating_=false,local_waking_=false,force_sleep_=false;
     bool wake_anim_=false;
     Social social_=Social::None;
+    ReplyBeat reply_=ReplyBeat::None;
+    uint32_t reply_at_=0;
     uint32_t social_at_=0,social_until_=0,last_startle_=0;
     Affinity affinity_;
     bool initialized_=false, blink_active_=false, double_blink_=false, second_blink_=false;
@@ -131,6 +134,11 @@ public:
         force_sleep_=false;
         if(phase_==Phase::Idle||phase_==Phase::Offline||phase_==Phase::Startup) ResetIdle(now);
     }
+    // A short acting cue synchronized to the currently played assistant sentence.
+    // Does not change listening, wake-word, cloud emotion or microphone ownership.
+    void ReplyReact(ReplyBeat beat,uint32_t now) {
+        reply_=beat; reply_at_=now;
+    }
     void SocialReact(Social reaction,uint32_t now) {
         if(reaction==Social::None)return;
         affinity_.Record(reaction,now);
@@ -163,6 +171,7 @@ public:
         const auto traits=Personality(persona_);
         if(phase!=phase_) {
             phase_=phase;phase_since_=now;
+            if(phase!=Phase::Speaking) reply_=ReplyBeat::None;
             if(phase==Phase::Idle||phase==Phase::Offline||phase==Phase::Startup) {
                 ResetIdle(now);
                 if(force_sleep_) idle_since_=now-kSleepMs;
@@ -228,6 +237,23 @@ public:
                 default:break;
             }
         }
+        const bool reply_active=phase==Phase::Speaking&&reply_!=ReplyBeat::None &&
+            now-reply_at_<1800&&social_==Social::None;
+        // Respect a specific cloud-selected emotion. Local sentence semantics
+        // add variety primarily when Xiaozhi returns neutral/generic happiness.
+        if(reply_active&&(cloud_==Mood::Neutral||cloud_==Mood::Happy||cloud_==Mood::Thinking)) {
+            switch(reply_) {
+                case ReplyBeat::Celebrate: mood=Mood::Excited;break;
+                case ReplyBeat::Giggle: mood=Mood::Laugh;break;
+                case ReplyBeat::Astonished: mood=Mood::Surprise;break;
+                case ReplyBeat::Oops: mood=Mood::Confused;break;
+                case ReplyBeat::Whisper: mood=Mood::Shy;break;
+                case ReplyBeat::Puzzle: mood=Mood::Thinking;break;
+                case ReplyBeat::Warmth: mood=Mood::Love;break;
+                case ReplyBeat::Magic: mood=Mood::Wink;break;
+                default:break;
+            }
+        }
         if(asleep) mood=Mood::Sleepy;
         Pose p=Expression(mood);
         // A goodnight wish is a friendly sleepy face, not a command to
@@ -242,6 +268,21 @@ public:
         if(social_==Social::Annoyed) {
             p.tilt=18;p.brow=23;
             if(now-social_at_>1600){p.eye_h=32;p.tilt=9;}
+        }
+        if(reply_active) {
+            // Distinct short micro-animations. Keep PCM-controlled lips untouched.
+            const uint32_t age=now-reply_at_;
+            switch(reply_) {
+                case ReplyBeat::Celebrate: p.tilt=(age/120)%2?11:-11;break;
+                case ReplyBeat::Giggle: p.asym=(age/110)%2?18:-12;break;
+                case ReplyBeat::Astonished: p.eye_h=std::min(76,p.eye_h+12);break;
+                case ReplyBeat::Oops: p.tilt=-13;p.brow=13;break;
+                case ReplyBeat::Whisper: p.eye_h=std::min(p.eye_h,28);p.tilt=-8;break;
+                case ReplyBeat::Puzzle: p.brow=14;p.asym=16;break;
+                case ReplyBeat::Warmth: p.eye_h=std::min(p.eye_h,43);break;
+                case ReplyBeat::Magic: p.accent=Accent::Star;p.tilt=(age/180)%2?10:-10;break;
+                default:break;
+            }
         }
         if(phase==Phase::Listening && mood==Mood::Neutral) {p.eye_h=54;p.color=0x7CF6DA;}
         if(phase==Phase::Wake) {p.eye_h=58;p.mouth_w=111;}
@@ -283,6 +324,19 @@ public:
         if(mood==Mood::Confused) {gx=12;gy=-4;}
         if(social_==Social::Comfort){gx=0;gy=4;}
         if(social_==Social::Annoyed&&now-social_at_>650)gx=-16;
+        if(reply_active) {
+            switch(reply_) {
+                case ReplyBeat::Celebrate:gx=(now/110)%2?15:-15;gy=-8;break;
+                case ReplyBeat::Giggle:gx=(now/95)%2?9:-9;break;
+                case ReplyBeat::Astonished:gy=-9;break;
+                case ReplyBeat::Oops:gy=9;break;
+                case ReplyBeat::Whisper:gx=-19;gy=5;break;
+                case ReplyBeat::Puzzle:gx=(now/420)%2?16:-9;gy=-9;break;
+                case ReplyBeat::Warmth:gx=0;gy=3;break;
+                case ReplyBeat::Magic:gx=(now/170)%2?19:-19;gy=-5;break;
+                default:break;
+            }
+        }
         if(dance||social_==Social::Celebration) {
             uint32_t t=now-(social_==Social::Celebration?social_at_:celebrate_at_);
             int swing=static_cast<int>((t/35)%32);
@@ -330,9 +384,24 @@ public:
         else if(phase==Phase::Listening) bob=static_cast<int>((now/220)%4)-2;
         else if(mood==Mood::Fear) bob=static_cast<int>((now/60)%5)-2;
         else if(social_==Social::Annoyed&&now-social_at_<650) bob=static_cast<int>((now/65)%7)-3;
+        if(reply_active&&!dance) {
+            const int step=static_cast<int>((now-reply_at_)/100);
+            switch(reply_) {
+                case ReplyBeat::Celebrate:bob=step<12?(step%4<2?-9:7):0;break;
+                case ReplyBeat::Giggle:bob=step%2?5:-5;break;
+                case ReplyBeat::Astonished:bob=step<3?-8:0;break;
+                case ReplyBeat::Oops:bob=step<4?5:0;break;
+                case ReplyBeat::Whisper:bob=-2;break;
+                case ReplyBeat::Puzzle:bob=step%4<2?2:-3;break;
+                case ReplyBeat::Warmth:bob=1;break;
+                case ReplyBeat::Magic:bob=(step%4)*3-4;break;
+                default:break;
+            }
+        }
         f.bob=Approach(f.bob,bob,std::max(1,speed));f.mood=mood;f.asleep=asleep;
-        f.hearts=social_==Social::Affection||(social_==Social::Comfort&&now-social_at_>=650);
-        f.heart_age=f.hearts?(now-social_at_)%1950:0;
+        const bool reply_hearts=reply_active&&reply_==ReplyBeat::Warmth;
+        f.hearts=social_==Social::Affection||(social_==Social::Comfort&&now-social_at_>=650)||reply_hearts;
+        f.heart_age=f.hearts?(reply_hearts?now-reply_at_:now-social_at_)%1950:0;
         f.effect=affinity_.Effect(now);f.effect_age=affinity_.Age(now);
         return f;
     }

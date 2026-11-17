@@ -33,6 +33,8 @@ c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_speaker_audio.cc -o /tmp/esp
 /tmp/espen-speaker-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_emotional_audio.cc -o /tmp/espen-emotional-audio-test
 /tmp/espen-emotional-audio-test
+c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_reply_reactions.cc -o /tmp/espen-reply-reactions-test
+/tmp/espen-reply-reactions-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_vision_gate.cc -o /tmp/espen-vision-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_vision_endpoint.cc -o /tmp/espen-vision-endpoint-test
 /tmp/espen-vision-endpoint-test
