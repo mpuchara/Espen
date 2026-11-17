@@ -29,6 +29,8 @@ c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_vision_endpoint.cc -o /tmp/e
 /tmp/espen-vision-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_voice_commands.cc -o /tmp/espen-voice-command-test
 /tmp/espen-voice-command-test
+c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_standby_policy.cc -o /tmp/espen-standby-test
+/tmp/espen-standby-test
 cc -std=c11 -O2 -Wall -Wextra -Werror -Ifirmware/camera/include tests/test_camera_rotation.c firmware/camera/raw_frame.c firmware/camera/light_meter.c -lm -o /tmp/espen-camera-rotation-test
 /tmp/espen-camera-rotation-test
 ref=49b4380b3faa0ceadd28a3e78aaf0f311c46c57e
