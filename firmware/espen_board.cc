@@ -5,6 +5,7 @@
 #include "config.h"
 #include "face_engine.h"
 #include "speech_quality.h"
+#include "standby_policy.h"
 #include "speaker_audio.h"
 #include "espen_camera.h"
 #include "visual_world.h"
@@ -717,7 +718,11 @@ class EspenDisplay : public LcdDisplay {
     void RefreshWake() {
         auto s=EspenWake().Get();
         if(wake_indicator_) {
-            std::string status=!s.running?(auto_speech_?"Mowa: oczekiwanie":
+            const bool standby=Application::GetInstance().EspenIsStandby();
+            std::string status=standby?
+                (s.trained?"Bez odbioru • dotknij lub powiedz: "+s.name:
+                           "Bez odbioru • dotknij, aby wznowić"):
+                !s.running?(auto_speech_?"Mowa: oczekiwanie":
                     s.trained?"Hasło zapisane: "+s.name:"Naucz hasło w ustawieniach"):
                 !s.receiving?"Uruchamiam mikrofon...":
                 !s.signal?"Mikrofon: brak sygnału":
@@ -1246,6 +1251,9 @@ class EspenDisplay : public LcdDisplay {
     std::atomic<uint32_t> mood_seq_{0};
     uint32_t seen_mood_=0,last_stt_=0,last_ambient_=0,last_audio_=0;
     bool waiting_answer_=false,button_added_=false,touch_active_=false,touch_long_=false;
+    bool standby_swipe_active_=false;
+    lv_point_t standby_swipe_start_{};
+    uint32_t standby_swipe_ms_=0;
     uint32_t touch_started_=0,last_tap_=0,last_pet_=0;
     int tap_count_=0;
     espen::PetMotion pet_motion_;
@@ -1706,7 +1714,7 @@ class EspenDisplay : public LcdDisplay {
                 if(x!=symbol_x_[i]||y!=symbol_y_[i]) {lv_obj_set_pos(symbols_[i],x,y);symbol_x_[i]=x;symbol_y_[i]=y;}
             }
         }
-        Hide(sleep_label_,p.accent!=Accent::Sleep);
+        Hide(sleep_label_,p.accent!=Accent::Sleep && !Application::GetInstance().EspenIsStandby());
         if(p.accent==Accent::Sleep) {
             int y=35+f.bob;if(y!=sleep_y_){lv_obj_set_pos(sleep_label_,282,y);sleep_y_=y;}
         }
@@ -1934,6 +1942,38 @@ class EspenDisplay : public LcdDisplay {
     static constexpr const char* kSystemRole = "system";
 
 public:
+    // Called for ALL GT911 pointer input, including scrollable chat and empty
+    // screen areas. The device-level event is not lost to child widgets.
+    void ObserveTouch(lv_event_t* e) {
+        auto code=lv_event_get_code(e);
+        if(code!=LV_EVENT_PRESSED && code!=LV_EVENT_PRESSING && code!=LV_EVENT_RELEASED &&
+           code!=LV_EVENT_PRESS_LOST) return;
+        auto* indev=lv_indev_active();
+        if(!indev) return;
+        auto& app=Application::GetInstance();
+        lv_point_t p{};
+        lv_indev_get_point(indev,&p);
+        const uint32_t now=lv_tick_get();
+        if(code==LV_EVENT_PRESSED) {
+            standby_swipe_active_=true;standby_swipe_start_=p;standby_swipe_ms_=now;
+            if(app.EspenIsStandby()) {
+                standby_swipe_active_=false;
+                app.EspenWakeFromTouch();
+                lv_indev_wait_release(indev); // Don't activate a button underneath.
+            }
+        } else if(code==LV_EVENT_PRESSING) {
+            if(standby_swipe_active_ && !app.EspenIsStandby() && !OverlayVisible() &&
+               espen::IsStandbySwipe(p.x-standby_swipe_start_.x,
+                                     p.y-standby_swipe_start_.y,now-standby_swipe_ms_)) {
+                standby_swipe_active_=false;
+                app.EspenEnterStandby();
+                lv_indev_wait_release(indev); // This swipe cannot also wake Ala.
+            }
+        } else {
+            standby_swipe_active_=false;
+        }
+    }
+
     EspenDisplay(esp_lcd_panel_io_handle_t io, esp_lcd_panel_handle_t panel)
         : LcdDisplay(io, panel, DISPLAY_WIDTH, DISPLAY_HEIGHT) {
         Settings ui("espen_ui",false);
@@ -2150,7 +2190,14 @@ class EspenBoard : public WifiBoard {
         lvgl_port_touch_cfg_t lv_cfg = {};
         lv_cfg.disp = lv_display_get_default();
         lv_cfg.handle = touch_;
-        if (lv_cfg.disp) lvgl_port_add_touch(&lv_cfg);
+        if (lv_cfg.disp) {
+            auto* indev=lvgl_port_add_touch(&lv_cfg);
+            if(indev && display_) {
+                lv_indev_add_event_cb(indev,[](lv_event_t* e) {
+                    static_cast<EspenDisplay*>(lv_event_get_user_data(e))->ObserveTouch(e);
+                },LV_EVENT_ALL,display_);
+            }
+        }
     }
 public:
     EspenBoard() {
