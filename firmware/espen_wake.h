@@ -1,6 +1,7 @@
 #pragma once
 #include "wake_features.h"
 #include "speech_onset.h"
+#include "speech_quality.h"
 #include <esp_log.h>
 #include <nvs.h>
 #include <mutex>
@@ -15,6 +16,7 @@ class EspenWakeEngine {
     espen_wake::Extractor extractor_;
     bool loaded_=false, trained_=false, running_=false, learning_=false, recording_=false;
     bool auto_speech_=false, speech_allowed_=false;
+    int mic_mode_=espen::kMicModeAuto;
     espen::SpeechOnset onset_;
     int count_=0, waited_=0, used_=0, voiced_=0, quiet_=0, start_=0, pos_=0, pre_count_=0, pre_pos_=0;
     float noise_=35.f, last_rms_=0.f;
@@ -69,7 +71,7 @@ class EspenWakeEngine {
             last_health_log_=last_frame_at_;
             ESP_LOGI(TAG,"Wake PCM: frames=%lu rms=%d noise=%d gate=%d candidates=%lu trained=%d",
                 static_cast<unsigned long>(frames_received_),static_cast<int>(rms),
-                static_cast<int>(noise_),static_cast<int>(std::max(45.f,noise_*2.6f)),
+                static_cast<int>(noise_),static_cast<int>(espen::MicGate(noise_,mic_mode_,true)),
                 static_cast<unsigned long>(candidates_),trained_);
         }
         // Use the quietest early frame, not the mean of a boot sound.
@@ -82,17 +84,17 @@ class EspenWakeEngine {
         }
         if(!recording_ && rms<noise_ && used_==0)
             noise_=std::clamp(.80f*noise_+.20f*rms,10.f,1500.f);
-        if(auto_speech_&&speech_allowed_&&!learning_&&onset_.Feed(pcm_.data(),pcm_.size(),rms,noise_)) {
+        if(auto_speech_&&speech_allowed_&&!learning_&&onset_.Feed(pcm_.data(),pcm_.size(),rms,noise_,mic_mode_)) {
             ESP_LOGI(TAG,"Local speech onset: rms=%d noise=%d",static_cast<int>(rms),static_cast<int>(noise_));
             ResetSegment();
             return espen::kSpeechWake;
         }
         if((learning_&&!recording_)||(!learning_&&!trained_)){
-            if(rms<noise_*2.6f)noise_=std::clamp(.97f*noise_+.03f*rms,10.f,1500.f);
+            if(rms<espen::MicGate(noise_,mic_mode_,true))noise_=std::clamp(.97f*noise_+.03f*rms,10.f,1500.f);
             return {};
         }
         if(recording_ && ++waited_>350){recording_=false;ResetSegment();message_="Nie wykryto pełnej frazy. Spróbuj ponownie.";return {};}
-        bool speech=rms>std::max(45.f,noise_*2.6f);
+        bool speech=rms>espen::MicGate(noise_,mic_mode_,true);
         // Reject a long utterance as a whole, not a possible matching suffix.
         if(blocked_){
             blocked_quiet_=speech?0:blocked_quiet_+1;
@@ -136,6 +138,11 @@ public:
         bool auto_speech,speech_allowed;
     };
     void Load(){std::lock_guard<std::mutex> l(mutex_);LoadLocked();}
+    void SetMicMode(int mode) {
+        std::lock_guard<std::mutex> l(mutex_);
+        mode=std::clamp(mode,espen::kMicModeAuto,espen::kMicModeLegacy);
+        if(mic_mode_!=mode){mic_mode_=mode;onset_.Reset();ResetSegment();}
+    }
     void SetAutoSpeech(bool on) {
         std::lock_guard<std::mutex> l(mutex_);
         if(auto_speech_!=on){auto_speech_=on;onset_.Reset();ResetSegment();}
@@ -151,7 +158,7 @@ public:
         return {trained_,running_,recording_,count_,trained_?active_.name:"Hej Ala",message_,
             receiving,receiving&&zero_frames_<50,frames_received_,running_?now-armed_at_:0,
             static_cast<int>(last_rms_),static_cast<int>(noise_),
-            static_cast<int>(std::max(45.f,noise_*2.6f)),auto_speech_,speech_allowed_};
+            static_cast<int>(espen::MicGate(noise_,mic_mode_,true)),auto_speech_,speech_allowed_};
     }
     void SetRunning(bool on){
         std::lock_guard<std::mutex> l(mutex_);LoadLocked();
