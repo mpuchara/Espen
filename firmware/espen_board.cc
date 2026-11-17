@@ -1024,6 +1024,18 @@ class EspenDisplay : public LcdDisplay {
                     EspenPlayEmotionalCue(espen::EmotionalCue::Joy, true);
                 });
             },this,420);
+            // Hands-on audible preview of the 20 response-specific effects.
+            // No playback on the UI task; the normal audio output owns the codec.
+            MakeButton(speaker_panel_,"Test następnego odgłosu (20)",[](lv_event_t*){
+                static std::atomic<uint32_t> next{0};
+                const int start=static_cast<int>(espen::EmotionalCue::Fanfare);
+                const int end=static_cast<int>(espen::EmotionalCue::Count);
+                const int cue=start+static_cast<int>(next.fetch_add(1,std::memory_order_relaxed) %
+                    static_cast<uint32_t>(end-start));
+                Application::GetInstance().Schedule([cue](){
+                    EspenPlayEmotionalCue(static_cast<espen::EmotionalCue>(cue),true);
+                });
+            },this,420);
             MakeButton(speaker_panel_,"Test melodii (12 s)",[](lv_event_t*){
                 Application::GetInstance().Schedule([](){if(!speaker_test_running.load())EspenDiagPlay(false,true);});
             },this,420);
@@ -2186,12 +2198,12 @@ public:
         pending_mood_.store(mood,std::memory_order_relaxed);
         espen_fx_last_mood.store(mood,std::memory_order_release);
         mood_seq_.fetch_add(1,std::memory_order_release);
-        // Xiaozhi sends LLM emotion independently of TTS. Keep the face
-        // synchronized; insert a short sound before speech only if idle.
-        if (Application::GetInstance().GetDeviceState()==kDeviceStateSpeaking &&
-            espen_response_ready.load(std::memory_order_acquire)) {
-            const auto cue=EspenCueForMood(mood);
-            if (cue!=espen::EmotionalCue::Count) EspenPlayEmotionalCue(cue);
+        // The cloud emotion is authoritative for the face. For audio, keep
+        // the ONE-cue-per-answer guard: subsequent emotion packets cannot add
+        // beeps during speech or override an earlier sentence-specific cue.
+        if(Application::GetInstance().GetDeviceState()==kDeviceStateSpeaking &&
+           visual_packet_tag.load(std::memory_order_acquire)) {
+            EspenTryResponseCue(pending_reply_beat.load(std::memory_order_acquire));
         }
     }
 
@@ -2358,7 +2370,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.2.11 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.2.12 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();

@@ -264,3 +264,28 @@ Osiem dodatkowych, krótkich gestów **odpowiedzi Ali**, rozpoznawanych lokalnie
 Animacja zdania rozpoczyna się **dopiero przy rzeczywistym odtwarzaniu jego audio**, na podstawie istniejącego znacznika TTS. Przed rozpoczęciem odpowiedzi wybierany jest najwyżej jeden charakterystyczny odgłos (jeśli tekst jest już dostępny); w przeciwnym razie zostaje dotychczasowa reakcja na `llm.emotion`. Jeśli tekst napłynie później, mimika nadal zadziała, ale nie wpychamy odgłosu w środek mowy. Efekty są nieblokujące, ograniczane przez istniejący limiter, respektują wyciszenie i głośność oraz ustępują TTS. Priorytet mają konkretne emocje serwera i wcześniejsze gesty społeczne; synchronizacja ust nadal zależy wyłącznie od prawdziwego PCM. Nie zmieniono sterownika LCD, głośnika, mikrofonu, standby, wybudzania ani barge-in.
 
 Test hostowy `tests/test_reply_reactions.cc` obejmuje polskie frazy, odrzucanie obcych słów, 8 mapowań audio, wygaszanie mimiki po ~1.8 s, serduszka i priorytet emocji chmurowych. Testy rzeczywistego głośnika, czasu względem TTS i płynności animacji wymagają płytki ESP32-P4; sama kompilacja nie potwierdza działania na urządzeniu.
+
+## Espen 0.2.12 — Ala Expressive Pack (20 animowanych reakcji)
+
+Wersja **0.2.12** zachowuje wszystkie funkcje 0.2.11 (kamera/Xiaozhi, wybudzenie wyuczonym hasłem, „bez odbioru” po głosie lub swipie w dół, przerwanie mówienia głosem, dialog, istniejący Emotional Audio Engine) i dodaje **12 nowych reakcji podczas odpowiedzi**, ponad 8 wcześniej zaimplementowanych:
+
+| Fraza Ali (przykład) | Mimika / ruch | Sygnał lokalny |
+| --- | --- | --- |
+| „Zatańczmy!” | Kołysanie na boki, skoki, gwiazdki | Taneczny motyw |
+| „Taaa, jasne…” | Przewracanie oczami | Ironizujący dwudźwięk |
+| „Hurra, wygraliśmy!” | Dumna, zwycięska mina | Zwycięski akord |
+| „Eureka, mam pomysł!” | Szerokie oczy, gwiazdki | Dźwięk olśnienia |
+| „Chwila prawdy…” | Zawieszone spojrzenie | Napięcie |
+| „Mam sprytny plan…” | Szelmowskie mrugnięcie | Psotny sygnał |
+| „Przykro mi” | Smutne oczy, łza | Łagodny smutny dźwięk |
+| „Dobranoc” | Opadające powieki | Cicha kołysanka |
+| „Szukajmy wskazówek” | Detektywistyczne rozglądanie | Dźwięk poszukiwań |
+| „Bip bop, tryb robota!” | Mechaniczny rytm oczu | Robotyczne bip-bop |
+| „Ta-dam!” | Drżące spojrzenie, gwiazdki | Werble / zapowiedź |
+| „Masz rację” | Potwierdzające kiwnięcie | Łagodne potwierdzenie |
+
+Łącznie **20 kontekstowych gestów odpowiedzi** i **37 lokalnie syntezowanych efektów PCM** (w tym starsze sygnały przejścia między stanami). W Ustawienia → Głośnik dostępny jest przycisk **„Test następnego odgłosu (20)”**, odtwarzający kolejno charakterystyczne dźwięki, bez generowania ich w LVGL. Ustawienia efektów pozostają w NVS; głośnik, wyciszenie i istniejące ograniczenie liczby sygnałów działają bez zmian.
+
+Dźwięk jest opcjonalny i nieblokujący, a rozpoznawanie gestów działa wyłącznie na tekście wypowiadanym przez asystenta, nie na STT użytkownika. Animacje uruchamia znacznik **rzeczywiście odtwarzanego** PCM, trwają maksymalnie 1,8 s, respektują emocje Xiaozhi i nie zmieniają ruchu ust sterowanego PCM. Wydawanie dźwięku **nie ma pierwszeństwa przed mową**: jeśli odpowiedź już płynie lub kolejki są zajęte, sygnał jest pomijany. Priorytet mają wyłączenie rozmowy, wake-word i barge-in. Żaden nowy efekt nie wymaga internetu, dodatkowych plików dźwiękowych ani trwałych buforów nagrań.
+
+**Testy:** `tests/test_reply_reactions.cc` (20 klasyfikacji, mimika, priorytety), `tests/test_emotional_audio.cc` (37 efektów, obwiednia/limiter), komplet istniejących testów w `scripts/build.sh`, kompilacja firmware w GitHub Actions. Realne opóźnienie względem TTS i głośność należy zweryfikować na ESP32-P4 po wgraniu.

@@ -238,10 +238,11 @@ public:
             }
         }
         const bool reply_active=phase==Phase::Speaking&&reply_!=ReplyBeat::None &&
-            now-reply_at_<1800&&social_==Social::None;
+            now-reply_at_<1800&&social_==Social::None &&
+            (cloud_==Mood::Neutral||cloud_==Mood::Happy||cloud_==Mood::Thinking);
         // Respect a specific cloud-selected emotion. Local sentence semantics
         // add variety primarily when Xiaozhi returns neutral/generic happiness.
-        if(reply_active&&(cloud_==Mood::Neutral||cloud_==Mood::Happy||cloud_==Mood::Thinking)) {
+        if(reply_active) {
             switch(reply_) {
                 case ReplyBeat::Celebrate: mood=Mood::Excited;break;
                 case ReplyBeat::Giggle: mood=Mood::Laugh;break;
@@ -251,6 +252,18 @@ public:
                 case ReplyBeat::Puzzle: mood=Mood::Thinking;break;
                 case ReplyBeat::Warmth: mood=Mood::Love;break;
                 case ReplyBeat::Magic: mood=Mood::Wink;break;
+                case ReplyBeat::Dance: mood=Mood::Excited;break;
+                case ReplyBeat::EyeRoll: mood=Mood::Bored;break;
+                case ReplyBeat::Victory: mood=Mood::Confident;break;
+                case ReplyBeat::Eureka: mood=Mood::Surprise;break;
+                case ReplyBeat::Suspense: mood=Mood::Thinking;break;
+                case ReplyBeat::Sneaky: mood=Mood::Wink;break;
+                case ReplyBeat::Sadness: mood=Mood::Sad;break;
+                case ReplyBeat::Sleep: mood=Mood::Sleepy;break;
+                case ReplyBeat::Detective: mood=Mood::Thinking;break;
+                case ReplyBeat::Robot: mood=Mood::Confident;break;
+                case ReplyBeat::Drumroll: mood=Mood::Excited;break;
+                case ReplyBeat::Agree: mood=Mood::Happy;break;
                 default:break;
             }
         }
@@ -281,6 +294,18 @@ public:
                 case ReplyBeat::Puzzle: p.brow=14;p.asym=16;break;
                 case ReplyBeat::Warmth: p.eye_h=std::min(p.eye_h,43);break;
                 case ReplyBeat::Magic: p.accent=Accent::Star;p.tilt=(age/180)%2?10:-10;break;
+                case ReplyBeat::Dance: p.tilt=(age/140)%2?17:-17;p.accent=Accent::Star;break;
+                case ReplyBeat::EyeRoll: p.eye_h=17;p.brow=11;p.tilt=-7;break;
+                case ReplyBeat::Victory: p.accent=Accent::Star;p.tilt=(age/250)%2?7:-7;break;
+                case ReplyBeat::Eureka: p.eye_h=74;p.brow=-15;p.accent=Accent::Star;break;
+                case ReplyBeat::Suspense: p.eye_h=std::max(26,p.eye_h-10);p.brow=9;break;
+                case ReplyBeat::Sneaky: p.eye_h=28;p.asym=42;p.tilt=-11;break;
+                case ReplyBeat::Sadness: p.tilt=-10;p.eye_h=24;p.accent=Accent::Tear;break;
+                case ReplyBeat::Sleep: p.eye_h=9;p.tilt=6;p.accent=Accent::Sleep;break;
+                case ReplyBeat::Detective: p.brow=14;p.asym=(age/270)%2?22:0;break;
+                case ReplyBeat::Robot: p.eye_h=43;p.eye_w=61;p.tilt=0;p.color=0x63E6FF;break;
+                case ReplyBeat::Drumroll: p.brow=-13;p.accent=Accent::Star;break;
+                case ReplyBeat::Agree: p.eye_h=28;p.tilt=5;break;
                 default:break;
             }
         }
@@ -334,6 +359,18 @@ public:
                 case ReplyBeat::Puzzle:gx=(now/420)%2?16:-9;gy=-9;break;
                 case ReplyBeat::Warmth:gx=0;gy=3;break;
                 case ReplyBeat::Magic:gx=(now/170)%2?19:-19;gy=-5;break;
+                case ReplyBeat::Dance:gx=(now/140)%2?20:-20;gy=-7;break;
+                case ReplyBeat::EyeRoll:gx=(now-reply_at_)/450%2?14:-14;gy=-16;break;
+                case ReplyBeat::Victory:gx=0;gy=-7;break;
+                case ReplyBeat::Eureka:gx=0;gy=-12;break;
+                case ReplyBeat::Suspense:gx=(now/340)%2?11:-11;gy=-5;break;
+                case ReplyBeat::Sneaky:gx=-22;gy=7;break;
+                case ReplyBeat::Sadness:gx=-8;gy=10;break;
+                case ReplyBeat::Sleep:gx=0;gy=9;break;
+                case ReplyBeat::Detective:gx=(now/230)%2?21:-21;gy=-7;break;
+                case ReplyBeat::Robot:gx=(now/250)%2?12:-12;gy=0;break;
+                case ReplyBeat::Drumroll:gx=0;gy=-9;break;
+                case ReplyBeat::Agree:gx=0;gy=5;break;
                 default:break;
             }
         }
@@ -395,6 +432,18 @@ public:
                 case ReplyBeat::Puzzle:bob=step%4<2?2:-3;break;
                 case ReplyBeat::Warmth:bob=1;break;
                 case ReplyBeat::Magic:bob=(step%4)*3-4;break;
+                case ReplyBeat::Dance:bob=step%2?12:-11;break;
+                case ReplyBeat::EyeRoll:bob=-2;break;
+                case ReplyBeat::Victory:bob=step<6?-5:3;break;
+                case ReplyBeat::Eureka:bob=step<4?-9:2;break;
+                case ReplyBeat::Suspense:bob=step%4<2?-4:0;break;
+                case ReplyBeat::Sneaky:bob=step%2?2:-2;break;
+                case ReplyBeat::Sadness:bob=2;break;
+                case ReplyBeat::Sleep:bob=step%4<2?1:0;break;
+                case ReplyBeat::Detective:bob=step%4<2?0:-3;break;
+                case ReplyBeat::Robot:bob=step%3==0?4:0;break;
+                case ReplyBeat::Drumroll:bob=step%2?6:-6;break;
+                case ReplyBeat::Agree:bob=step%4<2?-4:5;break;
                 default:break;
             }
         }

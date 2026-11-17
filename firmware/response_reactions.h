@@ -10,7 +10,9 @@
 
 namespace espen {
 enum class ReplyBeat : uint8_t {
-    None, Celebrate, Giggle, Astonished, Oops, Whisper, Puzzle, Warmth, Magic
+    None, Celebrate, Giggle, Astonished, Oops, Whisper, Puzzle, Warmth, Magic,
+    Dance, EyeRoll, Victory, Eureka, Suspense, Sneaky, Sadness, Sleep,
+    Detective, Robot, Drumroll, Agree
 };
 
 inline ReplyBeat ClassifyReplyBeat(std::string_view text) {
@@ -49,6 +51,43 @@ inline ReplyBeat ClassifyReplyBeat(std::string_view text) {
     if (has("zgadnij") || has("mam zagadke") || has("zagadka dla ciebie") ||
         has("jak myslisz") || has("pomysl przez chwile"))
         return ReplyBeat::Puzzle;
+    // Second expressive pack (0.2.12): intentionally distinctive multiword
+    // expressions. We avoid generic "tak", "nie", "dobrze" and "uwaga".
+    if (has("tadam") || has("ta dam") || has("werble prosze") ||
+        has("czas na werble")) return ReplyBeat::Drumroll;
+    if (has("zatańczmy") || has("zatanczmy") || has("tanczymy") ||
+        has("czas na taniec") || has("taniec zwyciestwa") ||
+        has("zrobmy taniec")) return ReplyBeat::Dance;
+    if (has("taaa jasne") || has("no tak oczywiscie") ||
+        has("przewracam oczami") || has("serio mowisz") ||
+        has("no jasne ze nie")) return ReplyBeat::EyeRoll;
+    if (has("hurra") || has("hura") || has("jupi") ||
+        has("wygralismy") || has("zwyciestwo") ||
+        has("jestesmy zwyciezcami")) return ReplyBeat::Victory;
+    if (has("eureka") || has("juz wiem") || has("mam pomysl") ||
+        has("olśnienie") || has("olsnienie") ||
+        has("rozgryzlam to") || has("rozgryzlem to")) return ReplyBeat::Eureka;
+    if (has("zaraz sie okaze") || has("wielki final") ||
+        has("napiecie rosnie") || has("chwila prawdy") ||
+        has("trzymaj sie mocno")) return ReplyBeat::Suspense;
+    if (has("psikus") || has("mam sprytny plan") ||
+        has("podstepny plan") || has("zrobie ci psikusa") ||
+        has("maly zarcik")) return ReplyBeat::Sneaky;
+    if (has("przykro mi") || has("to smutne") ||
+        has("ale szkoda") || has("bardzo mi przykro"))
+        return ReplyBeat::Sadness;
+    if (has("dobranoc") || has("slodkich snow") ||
+        has("czas spac") || has("pora na sen"))
+        return ReplyBeat::Sleep;
+    if (has("sledztwo") || has("znajdzmy trop") ||
+        has("szukajmy wskazowek") || has("jestem detektywem") ||
+        has("czas na dochodzenie")) return ReplyBeat::Detective;
+    if (has("bip bop") || has("beep boop") ||
+        has("tryb robota") || has("robotyczny glos"))
+        return ReplyBeat::Robot;
+    if (has("masz racje") || has("dokladnie tak") ||
+        has("zgadza sie") || has("pelna zgoda"))
+        return ReplyBeat::Agree;
     return ReplyBeat::None;
 }
 
@@ -62,6 +101,18 @@ inline EmotionalCue ReplyCue(ReplyBeat beat) {
         case ReplyBeat::Puzzle: return EmotionalCue::Puzzle;
         case ReplyBeat::Warmth: return EmotionalCue::Hug;
         case ReplyBeat::Magic: return EmotionalCue::Magic;
+        case ReplyBeat::Dance: return EmotionalCue::Dance;
+        case ReplyBeat::EyeRoll: return EmotionalCue::EyeRoll;
+        case ReplyBeat::Victory: return EmotionalCue::Victory;
+        case ReplyBeat::Eureka: return EmotionalCue::Eureka;
+        case ReplyBeat::Suspense: return EmotionalCue::Suspense;
+        case ReplyBeat::Sneaky: return EmotionalCue::Sneaky;
+        case ReplyBeat::Sadness: return EmotionalCue::Sadness;
+        case ReplyBeat::Sleep: return EmotionalCue::Sleep;
+        case ReplyBeat::Detective: return EmotionalCue::Detective;
+        case ReplyBeat::Robot: return EmotionalCue::Robot;
+        case ReplyBeat::Drumroll: return EmotionalCue::Drumroll;
+        case ReplyBeat::Agree: return EmotionalCue::Agree;
         default: return EmotionalCue::Count;
     }
 }
