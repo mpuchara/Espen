@@ -52,6 +52,11 @@
 #include <freertos/task.h>
 
 static constexpr const char* TAG = "EspenBoard";
+// The TTS sentence can arrive before or after the speaking state transition.
+static std::atomic<espen::Mood> espen_fx_last_mood{espen::Mood::Neutral};
+static std::atomic<bool> espen_response_ready{false};
+static std::atomic<bool> espen_fx_response_attempted{false};
+static void EspenTryResponseCue(espen::ReplyBeat beat);
 LV_FONT_DECLARE(font_noto_sans_basic_20_4);
 extern lv_font_t* EspenPolishFont();
 static const lv_font_t* EspenUiFont() {
@@ -87,6 +92,8 @@ void EspenVisualBegin(){
     std::lock_guard<std::mutex> l(visual_mutex);
     visual_context.Begin();visual_packet_tag.store(0,std::memory_order_release);
     pending_reply_beat.store(espen::ReplyBeat::None,std::memory_order_release);
+    espen_fx_response_attempted.store(false,std::memory_order_release);
+    espen_response_ready.store(false,std::memory_order_release);
 }
 void EspenVisualSentence(const char* text){
     std::lock_guard<std::mutex> l(visual_mutex);
@@ -99,6 +106,9 @@ void EspenVisualSentence(const char* text){
     if(++visual_next==0)++visual_next;
     visual_entries[visual_next%32]={visual_next,cue,beat};
     visual_packet_tag.store(visual_next,std::memory_order_release);
+    // Text normally arrives between TTS start and the first audio frame.
+    // This is the earliest safe point for a reply-specific sound.
+    if(espen_response_ready.load(std::memory_order_acquire))EspenTryResponseCue(beat);
 }
 uint32_t EspenVisualPacketTag(){return visual_packet_tag.load(std::memory_order_acquire);}
 void EspenVisualPlayback(uint32_t tag){
@@ -232,8 +242,6 @@ static std::mutex espen_fx_mutex;
 static espen::EmotionalCueLimiter espen_fx_limiter;
 static std::atomic<bool> espen_fx_enabled{true};
 static std::atomic<int> espen_fx_gain{45};
-static std::atomic<espen::Mood> espen_fx_last_mood{espen::Mood::Neutral};
-static std::atomic<bool> espen_response_ready{false};
 static void EspenLoadFxSettings() {
     static const bool once = [](){
         Settings cfg("espen_audio", false);
@@ -296,16 +304,20 @@ static espen::EmotionalCue EspenCueForMood(espen::Mood mood) {
         default: return EmotionalCue::Count;
     }
 }
-// The LLM emotion can arrive *before* the TTS start packet. It is
-// remembered and applied after the TTS decoder is reset, before first PCM.
-void EspenResponseCue() {
-    espen_response_ready.store(true, std::memory_order_release);
-    const auto beat=pending_reply_beat.load(std::memory_order_acquire);
-    // Prefer the spoken sentence's playful accent over generic happy/neutral
-    // cloud emotion. One non-blocking cue per turn; TTS always wins priority.
+// Send at most one short response cue before TTS becomes busy. We wait for
+// the first sentence whenever possible, rather than consuming the limiter on
+// generic cloud happiness before the more specific spoken phrase arrives.
+static void EspenTryResponseCue(espen::ReplyBeat beat) {
+    if(!espen_response_ready.load(std::memory_order_acquire)||
+       espen_fx_response_attempted.exchange(true,std::memory_order_acq_rel))return;
     const auto cue=beat!=espen::ReplyBeat::None?espen::ReplyCue(beat):
         EspenCueForMood(espen_fx_last_mood.load(std::memory_order_acquire));
-    if (cue!=espen::EmotionalCue::Count) EspenPlayEmotionalCue(cue);
+    if(cue!=espen::EmotionalCue::Count)EspenPlayEmotionalCue(cue);
+}
+void EspenResponseCue() {
+    espen_response_ready.store(true,std::memory_order_release);
+    if(visual_packet_tag.load(std::memory_order_acquire))
+        EspenTryResponseCue(pending_reply_beat.load(std::memory_order_acquire));
 }
 static std::string EspenSpeakerStatus(){
     if(!espen_speaker_pa.load(std::memory_order_acquire))return "Włącz SPK i uruchom ponownie.";
