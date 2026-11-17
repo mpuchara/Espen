@@ -221,3 +221,18 @@ Ustawienia → Głośność: przyciski `Odgłosy emocji` (WŁ/WYŁ), `Głośnoś
 **Ważne:** jeśli emocja przyjdzie już podczas odtwarzania TTS, efekt zostanie pominięty zamiast przerywać słowa. To celowy priorytet niezawodności; pełny miks pod głosem wymaga osobnego etapu. Kod podlega buildowi CI, ale dopóki nie ma zielonego CI i odsłuchu na fizycznym P4, nie uznajemy brzmienia ani stabilności za potwierdzone.
 
 Test fizyczny: z włączonym SPK i głośnością 75% otwórz Głośność → `Test emocji`, potem wywołaj hasło, zadaj kilka pytań i sprawdź, czy słychać początek i koniec słuchania oraz czy model podsyła emocję `llm.emotion`. W logach szukaj `Emotional cue queued: id=... gain=...`. Sprawdź, czy nie występują restarty, trzaski ani opóźnienia odpowiedzi, także po 10 kolejnych turach. Aktualizuj aplikację i assets bez kasowania NVS.
+
+
+## Rozmowa z przerwaniem wypowiedzi — barge-in (eksperymentalne)
+
+Gdy Ala **odpowiada głosem**, użytkownik może zacząć mówić bez dotykania ekranu i bez wypowiadania hasła. Podczas odtwarzania TTS istniejące zadanie mikrofonu zbiera lokalne PCM 16 kHz; lekki detektor porównuje energię i korelację sygnału mikrofonowego z **rzeczywistym PCM kierowanym do głośnika** (okno 256 ms, kompensacja przesunięcia czasowego). Dzięki temu samo echo własnego głosu robota nie powinno włączać nasłuchu. Jeśli wykryje ciągłą mowę rozmówcy ponad szumem/echami przez około 120 ms, robot:
+
+1. Natychmiast wysyła do Xiaozhi `abort`, porzuca oczekujące TTS i aktualizuje stan na **Słucham**.
+2. Zachowuje do 400 ms lokalnych próbek sprzed przerwania i przekazuje je do istniejącego toru AFE/Opus dopiero po uruchomieniu nasłuchu. Początek wypowiedzi nie powinien zginąć podczas przełączania z głośnika na mikrofon.
+3. Ignoruje spóźnione pakiety TTS anulowanej odpowiedzi do czasu rozpoznania nowej wypowiedzi przez serwer.
+
+Nie otwieramy nowego kanału mikrofonu ani nie wysyłamy dźwięku w trybie `Bez odbioru`. Przerywanie jest uzbrojone **tylko podczas odpowiedzi Xiaozhi** (nie podczas muzyki testowej, powiadomień ani ekranów diagnostycznych). Nie używa niestabilnej ścieżki NSNet2 FFT, nie włącza dodatkowego AEC bez fizycznego kanału referencyjnego. Wykorzystuje jedyny mikrofon ES8311 i bufor pre-roll w PSRAM.
+
+**Ograniczenie sprzętowe:** ESP32-P4 ma w tej konfiguracji pojedynczy mikrofon bez sprzętowej referencji AEC; skuteczność wykrywania cichej mowy przy bardzo głośnej odpowiedzi zależy od odległości od głośnika, pogłosu i głośności. Korelacja PCM + bramka energetyczna to zabezpieczenie przed własnym głosem, ale wymaga testów na fizycznym urządzeniu. Testy syntetyczne obejmują odrzucanie czystego echa, wykrywanie innej mowy podczas echa, rozpoznanie mowy bez głośnika i ciszę.
+
+**Test sprzętowy:** wywołaj długą wypowiedź Ali, zacznij mówić normalnie po 1 s (nie krzycz), potwierdź błyskawiczne wyciszenie odpowiedzi i poprawną transkrypcję pierwszego słowa. Następnie pozwól Ali mówić bez ingerencji i sprawdź, że jej własny głos nie wywołuje przerwań. Wykonaj 10 prób przy 25%, 50% i 75% głośności, także przy słabszym Wi‑Fi. Przy fałszywych przerwaniach zachowaj logi `Espen barge-in`, `Espen: interrupting TTS`, `Espen speech: replay` (bez prywatnych próbek audio).
