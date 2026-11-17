@@ -574,6 +574,7 @@ class EspenDisplay : public LcdDisplay {
     lv_obj_t* settings_ = nullptr;
     lv_obj_t* speech_diag_=nullptr;
     lv_obj_t* speech_diag_status_=nullptr;
+    lv_obj_t* speech_meter_bar_=nullptr;
     lv_obj_t* speech_gain_label_=nullptr;
     lv_obj_t* speech_enhance_label_=nullptr;
     lv_obj_t* speech_perf_label_=nullptr;
@@ -601,7 +602,8 @@ class EspenDisplay : public LcdDisplay {
     int speaker_volume_=espen::kSpeakerVolumeDefault;
     int speaker_last_nonzero_=espen::kSpeakerVolumeDefault;
     bool speaker_slider_sync_=false;
-    int speech_gain_=30;bool speech_enhance_=true,speech_perf_=false;
+    int speech_mode_=espen::kMicModeAuto,speech_gain_=36;
+    bool speech_enhance_=true,speech_perf_=false;
     lv_obj_t* ssid_ = nullptr;
     lv_obj_t* password_ = nullptr;
     lv_obj_t* settings_status_ = nullptr;
@@ -648,8 +650,11 @@ class EspenDisplay : public LcdDisplay {
         }
         RefreshCloud();
         RefreshWake();
-        if(speech_diag_&&!lv_obj_has_flag(speech_diag_,LV_OBJ_FLAG_HIDDEN)&&speech_diag_status_)
+        if(speech_diag_&&!lv_obj_has_flag(speech_diag_,LV_OBJ_FLAG_HIDDEN)&&speech_diag_status_) {
             lv_label_set_text(speech_diag_status_,EspenDiagSummary().c_str());
+            if(speech_meter_bar_)lv_bar_set_value(speech_meter_bar_,
+                std::clamp(mic_rms.load(std::memory_order_relaxed)/32,0,100),LV_ANIM_OFF);
+        }
         if(speaker_panel_&&!lv_obj_has_flag(speaker_panel_,LV_OBJ_FLAG_HIDDEN)&&speaker_status_)
             lv_label_set_text(speaker_status_,EspenSpeakerStatus().c_str());
         auto& wifi=WifiManager::GetInstance();
@@ -1077,20 +1082,37 @@ class EspenDisplay : public LcdDisplay {
             lv_obj_set_style_pad_all(speech_diag_,14,0);
             lv_obj_set_style_pad_row(speech_diag_,8,0);
             lv_obj_set_flex_flow(speech_diag_,LV_FLEX_FLOW_COLUMN);
-            auto* title=lv_label_create(speech_diag_);lv_label_set_text(title,"ESPEN / Diagnostyka mowy");
+            auto* title=lv_label_create(speech_diag_);lv_label_set_text(title,"ESPEN / Inteligentny mikrofon");
             speech_diag_status_=lv_label_create(speech_diag_);lv_obj_set_width(speech_diag_status_,lv_pct(100));
             lv_label_set_long_mode(speech_diag_status_,LV_LABEL_LONG_WRAP);
+            speech_meter_bar_=lv_bar_create(speech_diag_);
+            lv_obj_set_width(speech_meter_bar_,lv_pct(100));
+            lv_obj_set_height(speech_meter_bar_,16);
+            lv_bar_set_range(speech_meter_bar_,0,100);
             auto* hint=lv_label_create(speech_diag_);lv_obj_set_width(hint,lv_pct(100));
             lv_label_set_long_mode(hint,LV_LABEL_LONG_WRAP);
-            lv_label_set_text(hint,"Uzbrój test, powiedz pytanie, zaczekaj na odpowiedź i sen. Wróć tutaj, odsłuchaj RAW i Opus. Do 12 s; tylko RAM.");
+            lv_label_set_text(hint,"Auto: 36 dB, adaptacja do szumu i AGC. Bardzo czuły może wybudzać od TV. Test RAW/Opus: 12 s, tylko RAM.");
             Settings cfg("espen_audio",false);
-            speech_gain_=espen::MicGain(cfg.GetInt("mic_gain",30));
+            int legacy=cfg.GetInt("mic_gain",-1);
+            speech_mode_=espen::ResolveMicMode(cfg.GetInt("mic_profile",-1),legacy);
+            speech_gain_=espen::MicModeGain(speech_mode_,legacy);
             speech_enhance_=cfg.GetBool("enhance",true);speech_perf_=cfg.GetBool("high_perf",false);
-            auto* gain=MakeButton(speech_diag_,"Wzmocnienie",[](lv_event_t* e){
+            auto* gain=MakeButton(speech_diag_,"Profil mikrofonu",[](lv_event_t* e){
                 auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
-                self->speech_gain_=espen::NextMicGain(self->speech_gain_);
-                {Settings cfg("espen_audio",true);cfg.SetInt("mic_gain",self->speech_gain_);}
-                lv_label_set_text_fmt(self->speech_gain_label_,"Mikrofon: %d dB (restart)",self->speech_gain_);
+                self->speech_mode_=espen::NextMicMode(self->speech_mode_);
+                self->speech_gain_=espen::MicModeGain(self->speech_mode_);
+                {
+                    Settings cfg("espen_audio",true);
+                    cfg.SetInt("mic_profile",self->speech_mode_);
+                    cfg.SetInt("mic_gain",self->speech_gain_);
+                    if(self->speech_mode_==espen::kMicModeAuto) {
+                        cfg.SetBool("enhance",true);
+                        self->speech_enhance_=true;
+                        lv_label_set_text(self->speech_enhance_label_,"AGC: WŁ / NSNet2: WYŁ (ochrona)");
+                    }
+                }
+                lv_label_set_text_fmt(self->speech_gain_label_,"Profil: %s / %d dB",
+                    espen::MicModeName(self->speech_mode_),self->speech_gain_);
             },this,420);
             speech_gain_label_=lv_obj_get_child(gain,0);
             auto* ns=MakeButton(speech_diag_,"AGC (bez NSNet2)",[](lv_event_t* e){
@@ -1124,7 +1146,7 @@ class EspenDisplay : public LcdDisplay {
                 lv_obj_add_flag(self->speech_diag_,LV_OBJ_FLAG_HIDDEN);
             },this,420);
         }
-        lv_label_set_text_fmt(speech_gain_label_,"Mikrofon: %d dB (restart)",speech_gain_);
+        lv_label_set_text_fmt(speech_gain_label_,"Profil: %s / %d dB",espen::MicModeName(speech_mode_),speech_gain_);
         lv_label_set_text(speech_enhance_label_,speech_enhance_?"AGC: WŁ / NSNet2: WYŁ (ochrona)":"AGC: WYŁ / NSNet2: WYŁ (ochrona)");
         lv_label_set_text(speech_perf_label_,speech_perf_?"AFE: HIGH PERF (restart)":"AFE: LOW COST (restart)");
         lv_label_set_text(speech_diag_status_,EspenDiagSummary().c_str());
@@ -2370,7 +2392,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.2.12 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.2.13 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();
@@ -2419,9 +2441,13 @@ public:
             ES8311_CODEC_DEFAULT_ADDR, true, false);
         static const bool configured=[](){
             Settings cfg("espen_audio",false);
-            int gain=espen::MicGain(cfg.GetInt("mic_gain",30));
+            int legacy=cfg.GetInt("mic_gain",-1);
+            int mode=espen::ResolveMicMode(cfg.GetInt("mic_profile",-1),legacy);
+            int gain=espen::MicModeGain(mode,legacy);
+            EspenWake().SetMicMode(mode);
             codec.SetInputGain(gain);
-            ESP_LOGI(TAG,"Espen mic gain: %d dB",gain);
+            ESP_LOGI(TAG,"Espen intelligent microphone: profile=%s gain=%d dB AGC=%d (NSNet2 off)",
+                espen::MicModeName(mode),gain,cfg.GetBool("enhance",true));
             return true;
         }();
         (void)configured;
