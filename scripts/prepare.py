@@ -390,7 +390,7 @@ replace("main/display/lcd_display.cc", "#define MAX_MESSAGES 40", "#define MAX_M
 
 # Local speaker-dependent enrollment replaces the ineffective English MultiNet
 # phonetic spelling. Keep the existing AFE and cloud conversation pipeline.
-for name in ("wake_features.h", "espen_wake.h", "speech_onset.h"):
+for name in ("wake_features.h", "espen_wake.h", "speech_onset.h", "speech_quality.h"):
     shutil.copyfile(root / "firmware" / name, up / "main/audio" / name)
 replace("main/application.cc",
         '#include "application.h"',
@@ -967,13 +967,15 @@ replace("scripts/build_default_assets.py",
         '    # Print model information (only for models that will actually be packaged)')
 replace("main/audio/engines/afe_audio_engine.cc",
         '#include "audio_service.h"',
-        '#include "audio_service.h"\n#include "settings.h"\n#include <esp_nsn_models.h>')
+        '#include "audio_service.h"\n#include "settings.h"\n#include "../speech_quality.h"\n#include <esp_nsn_models.h>')
 replace("main/audio/engines/afe_audio_engine.cc",
         '    afe_config_t* afe_config =\n'
         '        afe_config_init(input_format.c_str(), models_, AFE_TYPE_FD, AFE_MODE_LOW_COST);',
         '    Settings speech("espen_audio", false);\n'
         '    const bool enhance = speech.GetBool("enhance", true);\n'
         '    const bool high_perf = speech.GetBool("high_perf", false);\n'
+         '    const int mic_mode = espen::ResolveMicMode(speech.GetInt("mic_profile", -1),\n'
+         '        speech.GetInt("mic_gain", -1));\n'
         '    char* ns_model = models_ == nullptr ? nullptr : esp_srmodel_filter(models_, ESP_NSNET_PREFIX, nullptr);\n'
         '    afe_config_t* afe_config = afe_config_init(input_format.c_str(), models_, AFE_TYPE_FD,\n'
         '        high_perf ? AFE_MODE_HIGH_PERF : AFE_MODE_LOW_COST);')
@@ -1000,10 +1002,10 @@ replace("main/audio/engines/afe_audio_engine.cc",
         '    afe_config->agc_init = false;',
         '    afe_config->agc_init = enhance;\n'
         '    afe_config->agc_mode = AFE_AGC_MODE_WEBRTC;\n'
-        '    afe_config->agc_compression_gain_db = 6;\n'
+        '    afe_config->agc_compression_gain_db = espen::MicModeAgcBoost(mic_mode);\n'
         '    afe_config->agc_target_level_dbfs = 6;\n'
-        '    ESP_LOGI(TAG, "Espen AFE: NS=%s AGC=%d VAD=%s high_perf=%d",\n'
-        '        afe_config->ns_init ? ns_model : "off", enhance, vad_model_name ? vad_model_name : "WebRTC", high_perf);')
+        '    ESP_LOGI(TAG, "Espen AFE: NS=%s AGC=%d boost=%d dB VAD=%s high_perf=%d",\n'
+        '        afe_config->ns_init ? ns_model : "off", enhance, afe_config->agc_compression_gain_db, vad_model_name ? vad_model_name : "WebRTC", high_perf);')
 replace("main/audio/engines/afe_audio_engine.cc",
         '    afe_config_free(afe_config);\n\n    if (afe_iface_ == nullptr || afe_data_ == nullptr) {',
         '    if (afe_data_ == nullptr && (enhance || high_perf)) {\n'
