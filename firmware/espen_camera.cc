@@ -30,9 +30,9 @@ struct FrameGuard {
 }
 EspenCamera::EspenCamera(){
     Settings cfg("espen_camera",false);
-    enabled_.store(cfg.GetBool("cloud_enabled",false));
+    enabled_.store(cfg.GetBool("cloud_enabled",true));
 }
-EspenCamera::~EspenCamera(){ClearPhoto();}
+EspenCamera::~EspenCamera(){ClearPhoto();ClearChatPhoto();}
 EspenCamera& EspenVision(){static EspenCamera camera;return camera;}
 void EspenVisionQuestion(const char* text){EspenVision().NoteQuestion(text);}
 bool EspenCamera::StartLocal(){
@@ -45,6 +45,7 @@ bool EspenCamera::StartLocal(){
 void EspenCamera::SetCloudEnabled(bool value){
     enabled_.store(value,std::memory_order_release);
     grant_.store(0,std::memory_order_release);
+    if(!value)ClearChatPhoto();
     Settings cfg("espen_camera",true);cfg.SetBool("cloud_enabled",value);
 }
 void EspenCamera::NoteQuestion(const char* text){
@@ -70,6 +71,17 @@ void EspenCamera::ClearPhoto(){
     if(jpeg_)heap_caps_free(jpeg_);
     jpeg_=nullptr;jpeg_size_=0;jpeg_at_=0;
 }
+void EspenCamera::ClearChatPhoto(){
+    std::lock_guard<std::mutex> lock(chat_photo_mutex_);
+    if(chat_photo_)heap_caps_free(chat_photo_);
+    chat_photo_=nullptr;
+}
+uint16_t* EspenCamera::TakeChatPhoto(){
+    std::lock_guard<std::mutex> lock(chat_photo_mutex_);
+    auto* image=chat_photo_;
+    chat_photo_=nullptr;
+    return image;
+}
 bool EspenCamera::Capture(){
     std::lock_guard<std::mutex> lock(mutex_);
     ClearPhoto();
@@ -85,6 +97,12 @@ bool EspenCamera::Capture(){
     std::unique_ptr<uint8_t,decltype(&heap_caps_free)> rgb(
         static_cast<uint8_t*>(heap_caps_aligned_alloc(128,bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)),heap_caps_free);
     if(!rgb)return false;
+    // A chat attachment is a downscaled copy of THIS frame, not a later preview.
+    // Absence of PSRAM for the UI must not prevent an authorized cloud photo.
+    constexpr unsigned preview_w=320,preview_h=180;
+    std::unique_ptr<uint16_t,decltype(&heap_caps_free)> chat_rgb(
+        static_cast<uint16_t*>(heap_caps_malloc(preview_w*preview_h*sizeof(uint16_t),
+                                                  MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)),heap_caps_free);
     // Request a fresh real frame, allow the Home Buddy AE/AWB loop to settle.
     const uint32_t begin=NowMs();
     bool converted=false;
@@ -96,6 +114,9 @@ bool EspenCamera::Capture(){
                f.frame.timestamp_ms>=begin&&NowMs()-begin>=1200){
                 hb_camera_status status{};hb_camera_get_status(&status);
                 if(!status.test_pattern&&hb_rgb888_thumbnail_clockwise(f.frame.pixels,f.frame.width,f.frame.height,rgb.get(),w,h)){
+                    if(chat_rgb&&!hb_rgb888_preview_clockwise(
+                           f.frame.pixels,f.frame.width,f.frame.height,
+                           chat_rgb.get(),preview_w,preview_h))chat_rgb.reset();
                     converted=true;break;
                 }
             }
@@ -108,6 +129,15 @@ bool EspenCamera::Capture(){
         ClearPhoto();ESP_LOGW(TAG,"JPEG conversion failed");return false;
     }
     jpeg_at_=esp_timer_get_time();
+    if(chat_rgb&&CloudEnabled()){
+        std::lock_guard<std::mutex> chat_lock(chat_photo_mutex_);
+        if(chat_photo_)heap_caps_free(chat_photo_);
+        chat_photo_=chat_rgb.release();
+        ESP_LOGI(TAG,"Chat photo ready from same fresh frame (%ux%u RGB565)",
+                 preview_w,preview_h);
+    }else if(!chat_rgb){
+        ESP_LOGW(TAG,"Chat thumbnail unavailable (JPEG capture still succeeded)");
+    }
     ESP_LOGI(TAG,"Fresh clockwise JPEG %ux%u, %u bytes",w,h,static_cast<unsigned>(jpeg_size_));
     return true;
 }
