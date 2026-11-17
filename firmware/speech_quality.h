@@ -35,9 +35,9 @@ inline const char* MicModeName(int mode) {
     switch(mode) {
         case kMicModeAuto: return "Automatyczny";
         case kMicModeStandard: return "Standardowy";
-        case kMicModeSensitive: return "Czuly";
-        case kMicModeVerySensitive: return "Bardzo czuly";
-        case kMicModeLegacy: return "Poprzednie ustawienie";
+        case kMicModeSensitive: return "Czuły";
+        case kMicModeVerySensitive: return "Bardzo czuły";
+        case kMicModeLegacy: return "Poprzedni";
         default: return "Automatyczny";
     }
 }
