@@ -4,6 +4,14 @@ cd "$(dirname "$0")/.."
 root="$PWD"
 # Verify all firmware NVS keys obey the 15-byte ESP-IDF limit.
 python3 tests/test_nvs_key_lengths.py
+python3 - <<'PYVERSION'
+import json
+from pathlib import Path
+for file in ("web/manifest.json", "web/manifest-full.json"):
+    assert json.loads(Path(file).read_text())["version"] == "0.2.11", file
+assert "0.2.11 EXPERIMENTAL" in Path("web/index.html").read_text()
+assert "Espen 0.2.11 boot:" in Path("firmware/espen_board.cc").read_text()
+PYVERSION
 # Source-level integration guards for the LVGL/MCP bridge (plus host vision gate tests).
 python3 tests/test_photo_chat_integration.py
 # Host-side regression tests for the local wake feature extractor and DTW.
@@ -31,6 +39,10 @@ c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_vision_endpoint.cc -o /tmp/e
 /tmp/espen-vision-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_voice_commands.cc -o /tmp/espen-voice-command-test
 /tmp/espen-voice-command-test
+c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_barge_in.cc -o /tmp/espen-barge-test
+/tmp/espen-barge-test
+c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_standby_policy.cc -o /tmp/espen-standby-test
+/tmp/espen-standby-test
 cc -std=c11 -O2 -Wall -Wextra -Werror -Ifirmware/camera/include tests/test_camera_rotation.c firmware/camera/raw_frame.c firmware/camera/light_meter.c -lm -o /tmp/espen-camera-rotation-test
 /tmp/espen-camera-rotation-test
 ref=49b4380b3faa0ceadd28a3e78aaf0f311c46c57e

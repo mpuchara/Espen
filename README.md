@@ -221,3 +221,38 @@ Ustawienia → Głośność: przyciski `Odgłosy emocji` (WŁ/WYŁ), `Głośnoś
 **Ważne:** jeśli emocja przyjdzie już podczas odtwarzania TTS, efekt zostanie pominięty zamiast przerywać słowa. To celowy priorytet niezawodności; pełny miks pod głosem wymaga osobnego etapu. Kod podlega buildowi CI, ale dopóki nie ma zielonego CI i odsłuchu na fizycznym P4, nie uznajemy brzmienia ani stabilności za potwierdzone.
 
 Test fizyczny: z włączonym SPK i głośnością 75% otwórz Głośność → `Test emocji`, potem wywołaj hasło, zadaj kilka pytań i sprawdź, czy słychać początek i koniec słuchania oraz czy model podsyła emocję `llm.emotion`. W logach szukaj `Emotional cue queued: id=... gain=...`. Sprawdź, czy nie występują restarty, trzaski ani opóźnienia odpowiedzi, także po 10 kolejnych turach. Aktualizuj aplikację i assets bez kasowania NVS.
+
+
+## Rozmowa z przerwaniem wypowiedzi — barge-in (eksperymentalne)
+
+Gdy Ala **odpowiada głosem**, użytkownik może zacząć mówić bez dotykania ekranu i bez wypowiadania hasła. Podczas odtwarzania TTS istniejące zadanie mikrofonu zbiera lokalne PCM 16 kHz; lekki detektor porównuje energię i korelację sygnału mikrofonowego z **rzeczywistym PCM kierowanym do głośnika** (okno 256 ms, kompensacja przesunięcia czasowego). Dzięki temu samo echo własnego głosu robota nie powinno włączać nasłuchu. Jeśli wykryje ciągłą mowę rozmówcy ponad szumem/echami przez około 120 ms, robot:
+
+1. Natychmiast wysyła do Xiaozhi `abort`, porzuca oczekujące TTS i aktualizuje stan na **Słucham**.
+2. Zachowuje do 400 ms lokalnych próbek sprzed przerwania i przekazuje je do istniejącego toru AFE/Opus dopiero po uruchomieniu nasłuchu. Początek wypowiedzi nie powinien zginąć podczas przełączania z głośnika na mikrofon.
+3. Ignoruje spóźnione pakiety TTS anulowanej odpowiedzi do czasu rozpoznania nowej wypowiedzi przez serwer.
+
+Nie otwieramy nowego kanału mikrofonu ani nie wysyłamy dźwięku w trybie `Bez odbioru`. Przerywanie jest uzbrojone **tylko podczas odpowiedzi Xiaozhi** (nie podczas muzyki testowej, powiadomień ani ekranów diagnostycznych). Nie używa niestabilnej ścieżki NSNet2 FFT, nie włącza dodatkowego AEC bez fizycznego kanału referencyjnego. Wykorzystuje jedyny mikrofon ES8311 i bufor pre-roll w PSRAM.
+
+**Ograniczenie sprzętowe:** ESP32-P4 ma w tej konfiguracji pojedynczy mikrofon bez sprzętowej referencji AEC; skuteczność wykrywania cichej mowy przy bardzo głośnej odpowiedzi zależy od odległości od głośnika, pogłosu i głośności. Korelacja PCM + bramka energetyczna to zabezpieczenie przed własnym głosem, ale wymaga testów na fizycznym urządzeniu. Testy syntetyczne obejmują odrzucanie czystego echa, wykrywanie innej mowy podczas echa, rozpoznanie mowy bez głośnika i ciszę.
+
+**Test sprzętowy:** wywołaj długą wypowiedź Ali, zacznij mówić normalnie po 1 s (nie krzycz), potwierdź błyskawiczne wyciszenie odpowiedzi i poprawną transkrypcję pierwszego słowa. Następnie pozwól Ali mówić bez ingerencji i sprawdź, że jej własny głos nie wywołuje przerwań. Wykonaj 10 prób przy 25%, 50% i 75% głośności, także przy słabszym Wi‑Fi. Przy fałszywych przerwaniach zachowaj logi `Espen barge-in`, `Espen: interrupting TTS`, `Espen speech: replay` (bez prywatnych próbek audio).
+
+
+## Tryb „Bez odbioru” — wyłącz Xiaozhi do dotknięcia lub hasła
+
+Podczas aktywnej rozmowy powiedz **„bez odbioru”** (również „Ala, bez odbioru”). Alternatywnie przeciągnij palec **w dół na ekranie głównym** (co najmniej 110 px w ciągu 1,1 s); gest działa również nad przewijaną rozmową, ale nie podczas pracy w panelach ustawień. Espen zamyka kanał audio Xiaozhi, zatrzymuje przesyłanie głosu i odtwarzanie odpowiedzi, a na buźce pokazuje **„Bez odbioru”** oraz „Z z z”. Nie usuwa historii rozmowy ani zapisanych ustawień.
+
+**W trybie „Bez odbioru” przypadkowa mowa nie uruchomi Xiaozhi**, nawet jeśli w ustawieniach wybrano „Wybudzanie: mowa”. Mikrofon pozostaje używany **wyłącznie lokalnie** do porównania z nauczonym w urządzeniu hasłem. Działanie Xiaozhi można wznowić wyłącznie:
+- świeżym **dotknięciem ekranu** (pierwszy dotyk wybudza, nie uruchamia klikniętego przypadkiem przycisku); po nim wraca poprzedni tryb wybudzania;
+- wypowiedzeniem **nauczonego hasła**, np. „Hej Ala”. Dopasowanie lokalnego profilu w NVS odblokowuje tryb standby i normalnie rozpoczyna rozmowę. Jeśli hasła nie zapisano, wznowienie jest możliwe tylko dotknięciem.
+
+Wznowienie po samym dotknięciu przywraca gotowość asystenta, **nie** wysyła od razu audio do serwera. Tryb jest tymczasowy (nie zapisywany w NVS): po restarcie urządzenie uruchamia się normalnie. Funkcje ekranu i Wi-Fi pozostają aktywne — to pauza asystenta, nie wyłączenie zasilania/mikrofonu.
+
+**Test po wgraniu:** 1) włącz „Wybudzanie: mowa”; 2) powiedz „bez odbioru” lub zsuń palcem ekran, obserwuj zamknięcie połączenia; 3) mów przez 30 sekund bez hasła, upewnij się, że nie ma sesji; 4) wypowiedz nauczone hasło, sprawdź rozmowę; 5) ponownie uśpij i dotknij ekranu, następnie sprawdź powrót automatycznej mowy; 6) sprawdź, że gest na ekranie ustawień niczego nie wyłącza. Wymagany jest test na fizycznym GT911, ponieważ testy hostowe weryfikują jedynie politykę stanów i geometrię gestu.
+
+
+## 0.2.11 — wszystkie funkcje 0.2.10 i nowe
+
+Zachowano cały firmware 0.2.10: 17 emocjonalnych odgłosów, kamerę i zdjęcia w czacie, analizę Xiaozhi domyślnie włączoną, wszystkie ustawienia lokalne, głośnik ON/75%, polską rozmowę i lokalne nauczone hasło. Dodano lokalny tryb „Bez odbioru” z wznawianiem wyłącznie po dotyku lub nauczonym haśle (PR #12), oraz przerywanie TTS głosem użytkownika z 400 ms pre-roll (PR #13).
+
+**Instalacja:** aktualizuj bez kasowania NVS, aby zachować Wi-Fi i aktywację Xiaozhi. Po buildzie wymagane testy fizyczne ESP32-P4: 10 dialogów, 10 przerwań przy 25/50/75% głośności, brak samowybudzenia od TTS, gest w dół, 30 s rozmowy obok śpiącego robota, hasło, dotyk, zdjęcie, odgłosy i brak restartów.

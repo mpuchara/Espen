@@ -1422,3 +1422,300 @@ replace("main/application.cc",
         '            audio_service_.ResetDecoder();\n'
         '            extern void EspenResponseCue(); EspenResponseCue();\n'
         '            break;\n        case kDeviceStateNotifying:')
+
+# 0.2.11: local, echo-aware speech barge-in during Xiaozhi TTS.
+# Single codec owner; the audio input task samples the microphone during TTS,
+# compares it against the PCM just sent to the speaker, and captures 400 ms
+# of pre-roll BEFORE aborting playback. No audio is sent to the server until
+# the state machine has switched to a real listening session.
+shutil.copyfile(root / "firmware/barge_in.h", up / "main/audio/barge_in.h")
+replace("main/audio/audio_service.h",
+        '#include "speech_onset.h"',
+        '#include "speech_onset.h"\n#include "barge_in.h"')
+replace("main/audio/audio_service.h",
+        '#define AS_EVENT_ESPEN_CAPTURE (1 << 5)',
+        '#define AS_EVENT_ESPEN_CAPTURE (1 << 5)\n#define AS_EVENT_ESPEN_BARGE (1 << 6)')
+replace("main/audio/audio_service.h",
+        '    void CancelEspenSpeechCapture();',
+        '    void CancelEspenSpeechCapture();\n'
+        '    void EnableEspenBargeIn(bool on);\n'
+        '    void EspenPlaybackReference(const int16_t* pcm, size_t n);')
+replace("main/audio/audio_service.h",
+        '    bool espen_replaying_ = false;',
+        '    bool espen_replaying_ = false;\n'
+        '    std::mutex espen_barge_mutex_;\n'
+        '    espen::BargeInDetector espen_barge_;')
+replace("main/audio/audio_service.h",
+        '    std::function<void(const std::string&)> on_wake_word_detected;',
+        '    std::function<void(const std::string&)> on_wake_word_detected;\n'
+        '    std::function<void(void)> on_espen_barge_in;')
+replace("main/audio/audio_service.cc",
+        'void AudioService::CancelEspenSpeechCapture() {',
+        """void AudioService::EnableEspenBargeIn(bool on) {
+    std::lock_guard<std::mutex> wake(espen_wake_mutex_);
+    if (on) {
+        if (service_stopped_.load()) return;
+        {
+            std::lock_guard<std::mutex> guard(espen_barge_mutex_);
+            espen_barge_.Reset();
+        }
+        espen_pcm_.Clear();
+        xEventGroupClearBits(event_group_, AS_EVENT_ESPEN_CAPTURE);
+        xEventGroupSetBits(event_group_, AS_EVENT_ESPEN_BARGE);
+    } else {
+        xEventGroupClearBits(event_group_, AS_EVENT_ESPEN_BARGE);
+        std::lock_guard<std::mutex> guard(espen_barge_mutex_);
+        espen_barge_.Reset();
+        // Don't clear the ring or AS_EVENT_ESPEN_CAPTURE here: a
+        // detected interruption is replayed by EnableVoiceProcessing().
+    }
+}
+
+void AudioService::EspenPlaybackReference(const int16_t* pcm, size_t n) {
+    if (!(xEventGroupGetBits(event_group_) & AS_EVENT_ESPEN_BARGE)) return;
+    std::lock_guard<std::mutex> guard(espen_barge_mutex_);
+    if (xEventGroupGetBits(event_group_) & AS_EVENT_ESPEN_BARGE)
+        espen_barge_.Reference(pcm, n, codec_->output_sample_rate());
+}
+
+void AudioService::CancelEspenSpeechCapture() {""")
+# Retain the microphone's existing input task while TTS is speaking.
+replace("main/audio/audio_service.cc",
+        '                                                  AS_EVENT_AUDIO_PROCESSOR_RUNNING | AS_EVENT_ESPEN_CAPTURE;',
+        '                                                  AS_EVENT_AUDIO_PROCESSOR_RUNNING | AS_EVENT_ESPEN_CAPTURE |\n'
+        '                                                  AS_EVENT_ESPEN_BARGE;')
+replace("main/audio/audio_service.cc",
+        'AS_EVENT_AUDIO_PROCESSOR_RUNNING | AS_EVENT_ESPEN_CAPTURE |\n'
+        '                                           AS_EVENT_AUDIO_INPUT_STOP_REQUEST);',
+        'AS_EVENT_AUDIO_PROCESSOR_RUNNING | AS_EVENT_ESPEN_CAPTURE | AS_EVENT_ESPEN_BARGE |\n'
+        '                                           AS_EVENT_AUDIO_INPUT_STOP_REQUEST);')
+replace("main/audio/audio_service.cc",
+        'if (bits & (AS_EVENT_WAKE_WORD_RUNNING | AS_EVENT_AUDIO_PROCESSOR_RUNNING | AS_EVENT_ESPEN_CAPTURE)) {',
+        'if (bits & (AS_EVENT_WAKE_WORD_RUNNING | AS_EVENT_AUDIO_PROCESSOR_RUNNING | AS_EVENT_ESPEN_CAPTURE | AS_EVENT_ESPEN_BARGE)) {')
+replace("main/audio/audio_service.cc",
+        '                    } else if (current & AS_EVENT_WAKE_WORD_RUNNING) {\n'
+        '                        espen_pcm_.Push(data.data(), data.size());',
+        '                    } else if (current & AS_EVENT_ESPEN_BARGE) {\n'
+        '                        // Keep only 400 ms of 16-kHz local pre-roll.\n'
+        '                        espen_pcm_.Push(data.data(), data.size());\n'
+        '                        espen_pcm_.Keep(6400);\n'
+        '                        bool detected = false;\n'
+        '                        {\n'
+        '                            std::lock_guard<std::mutex> guard(espen_barge_mutex_);\n'
+        '                            detected = espen_barge_.Microphone(data.data(), data.size());\n'
+        '                        }\n'
+        '                        if (detected) {\n'
+        '                            xEventGroupClearBits(event_group_, AS_EVENT_ESPEN_BARGE);\n'
+        '                            xEventGroupSetBits(event_group_, AS_EVENT_ESPEN_CAPTURE);\n'
+        '                            ESP_LOGI(TAG, "Espen barge-in: speech above playback echo; pre-roll %u ms",\n'
+        '                                static_cast<unsigned>(espen_pcm_.Size()/16));\n'
+        '                            if (callbacks_.on_espen_barge_in) callbacks_.on_espen_barge_in();\n'
+        '                        }\n'
+        '                    } else if (current & AS_EVENT_WAKE_WORD_RUNNING) {\n'
+        '                        espen_pcm_.Push(data.data(), data.size());')
+# Playback output and local microphone must share one reference timestamp/source.
+# This call runs only on the existing, sole speaker-output task.
+replace("main/audio/audio_service.cc",
+        '        codec_->OutputData(task.pcm);',
+        '        EspenPlaybackReference(task.pcm.data(), task.pcm.size());\n'
+        '        codec_->OutputData(task.pcm);')
+# Handle all UI and protocol transitions from Application's main event loop.
+replace("main/application.h",
+        '    bool espen_wake_ready_ = false; // main-loop owned',
+        '    bool espen_wake_ready_ = false; // main-loop owned\n'
+        '    std::atomic<bool> espen_barge_guard_{false};\n'
+        '    void HandleEspenBargeIn();')
+replace("main/application.cc",
+        '    audio_service_.SetCallbacks(callbacks);',
+        '    callbacks.on_espen_barge_in = [this]() {\n'
+        '        Schedule([this]() { HandleEspenBargeIn(); });\n'
+        '    };\n'
+        '    audio_service_.SetCallbacks(callbacks);')
+replace("main/application.cc",
+        'void Application::HandleWakeWordDetectedEvent() {',
+        """void Application::HandleEspenBargeIn() {
+    if (GetDeviceState() != kDeviceStateSpeaking ||
+        espen_standby_requested_.load(std::memory_order_acquire)) {
+        audio_service_.CancelEspenSpeechCapture();
+        return;
+    }
+    espen_barge_guard_.store(true, std::memory_order_release);
+    ESP_LOGI(TAG, "Espen: interrupting TTS, switch to listening with pre-roll");
+    audio_service_.EnableEspenBargeIn(false);
+    AbortSpeaking(kAbortReasonNone);
+    audio_service_.ResetDecoder(); // discard decoded/queued old TTS
+    SetListeningMode(GetDefaultListeningMode());
+}
+
+void Application::HandleWakeWordDetectedEvent() {""")
+# Speaking -> idle/listening disables the local barge detector, but does not
+# discard captured PCM (EnableVoiceProcessing replays it).
+replace("main/application.cc",
+        '    switch (new_state) {\n        case kDeviceStateStarting:',
+        '    if (new_state != kDeviceStateSpeaking) audio_service_.EnableEspenBargeIn(false);\n'
+        '    switch (new_state) {\n        case kDeviceStateStarting:')
+replace("main/application.cc",
+        '            audio_service_.ResetDecoder();\n'
+        '            extern void EspenResponseCue(); EspenResponseCue();\n'
+        '            break;\n        case kDeviceStateNotifying:',
+        '            audio_service_.ResetDecoder();\n'
+        '            audio_service_.EnableEspenBargeIn(true);\n'
+        '            extern void EspenResponseCue(); EspenResponseCue();\n'
+        '            break;\n        case kDeviceStateNotifying:')
+# Ignore stale TTS start/stop/PCM events from the aborted answer while waiting
+# for the *next* user STT message. Do not block that new answer.
+replace("main/application.cc",
+        '        } else if (strcmp(type->valuestring, "tts") == 0) {\n'
+        '            if (espen_standby_requested_.load(std::memory_order_acquire)) return;',
+        '        } else if (strcmp(type->valuestring, "tts") == 0) {\n'
+        '            if (espen_standby_requested_.load(std::memory_order_acquire) ||\n'
+        '                espen_barge_guard_.load(std::memory_order_acquire)) return;')
+replace("main/application.cc",
+        '        if (GetDeviceState() == kDeviceStateSpeaking &&\n'
+        '            !espen_standby_requested_.load(std::memory_order_acquire)) {',
+        '        if (GetDeviceState() == kDeviceStateSpeaking &&\n'
+        '            !espen_standby_requested_.load(std::memory_order_acquire) &&\n'
+        '            !espen_barge_guard_.load(std::memory_order_acquire)) {')
+replace("main/application.cc",
+        '                if (espen::IsVoiceStandbyCommand(text->valuestring)) {',
+        '                // A real new transcript releases the interrupted-turn guard.\n'
+        '                espen_barge_guard_.store(false, std::memory_order_release);\n'
+        '                if (espen::IsVoiceStandbyCommand(text->valuestring)) {')
+# A TTS-start event may already be queued when the barge-in is detected.
+replace("main/application.cc",
+        '                    aborted_ = false;\n'
+        '                    SetDeviceState(kDeviceStateSpeaking);',
+        '                    if (espen_barge_guard_.load(std::memory_order_acquire)) return;\n'
+        '                    aborted_ = false;\n'
+        '                    SetDeviceState(kDeviceStateSpeaking);')
+
+# Do not play a second local robot cue over the user's first words while
+# an interrupted TTS turn is handing control to the microphone.
+replace("main/application.cc",
+        '    extern void EspenListeningCue(); EspenListeningCue();',
+        '    if (!espen_barge_guard_.load(std::memory_order_acquire)) {\n'
+        '        extern void EspenListeningCue(); EspenListeningCue();\n'
+        '    }')
+
+# Standby (local keyword only): shared by user STT command and GT911 swipe.
+# Keep the learned NVS wake template active, but never arm automatic speech
+# until a FRESH finger touch or a successful match of THAT saved template.
+shutil.copyfile(root / "firmware/standby_policy.h", board / "standby_policy.h")
+replace("main/application.cc",
+        '#include "boards/guition/espen-guition-jc4880p443/voice_commands.h"',
+        '#include "boards/guition/espen-guition-jc4880p443/voice_commands.h"\n'
+        '#include "boards/guition/espen-guition-jc4880p443/standby_policy.h"')
+replace("main/application.h", '    void StopListening();',
+        '    void StopListening();\n'
+        '    bool EspenIsStandby() const { return espen_standby_requested_.load(std::memory_order_acquire); }\n'
+        '    void EspenEnterStandby();\n'
+        '    void EspenWakeFromTouch();')
+replace("main/application.cc",
+        '    EspenWake().AllowSpeech(state == kDeviceStateIdle && EspenNetworkAvailable());',
+        '    EspenWake().AllowSpeech(espen::AllowAutomaticSpeech(\n'
+        '        espen_standby_requested_.load(std::memory_order_acquire),\n'
+        '        state == kDeviceStateIdle, EspenNetworkAvailable()));')
+# Re-use the already established safe main-task close path. The flag is
+# published immediately so late incoming packets cannot reactivate TTS.
+replace("main/application.cc", """                if (espen::IsVoiceStandbyCommand(text->valuestring)) {
+                    espen_standby_requested_.store(true, std::memory_order_release);
+                    Schedule([this]() {
+                        if (!espen_standby_requested_.load(std::memory_order_acquire)) return;
+                        ESP_LOGI(TAG, "Espen: voice standby command, closing cloud conversation");
+                        audio_service_.CancelEspenSpeechCapture();
+                        audio_service_.EnableVoiceProcessing(false);
+                        audio_service_.ResetDecoder();
+                        EspenSleepNow();
+                        if (protocol_ && protocol_->IsAudioChannelOpened())
+                            protocol_->CloseAudioChannel();
+                        SetDeviceState(kDeviceStateIdle);
+                    });
+                    return;
+                }""",
+        """                if (espen::IsVoiceStandbyCommand(text->valuestring)) {
+                    EspenEnterStandby();
+                    return;
+                }""")
+# Previous 0.2.4 code cleared standby whenever SetListeningMode ran;
+# this was not a user wake and could reenable accidental speech.
+replace("main/application.cc",
+        'void Application::SetListeningMode(ListeningMode mode) {\n'
+        '    espen_standby_requested_.store(false, std::memory_order_release);\n'
+        '    listening_mode_ = mode;',
+        'void Application::SetListeningMode(ListeningMode mode) {\n'
+        '    listening_mode_ = mode;')
+replace("main/application.cc", 'void Application::HandleWakeWordDetectedEvent() {',
+        """void Application::EspenEnterStandby() {
+    if (espen_standby_requested_.exchange(true, std::memory_order_acq_rel)) return;
+    ESP_LOGI(TAG, "Espen: entering keyword-only standby");
+    Schedule([this]() {
+        if (!espen_standby_requested_.load(std::memory_order_acquire)) return;
+        audio_service_.CancelEspenSpeechCapture();
+        audio_service_.EnableVoiceProcessing(false);
+        audio_service_.ResetDecoder();
+        EspenSleepNow();
+        if (protocol_ && protocol_->IsAudioChannelOpened())
+            protocol_->CloseAudioChannel();
+        if (GetDeviceState() != kDeviceStateIdle)
+            SetDeviceState(kDeviceStateIdle);
+        EspenEnsureWake(); // armed for the learned local keyword, NOT speech onset
+    });
+}
+
+void Application::EspenWakeFromTouch() {
+    if (!espen_standby_requested_.exchange(false, std::memory_order_acq_rel)) return;
+    ESP_LOGI(TAG, "Espen: resumed by touch");
+    Schedule([this]() {
+        EspenLocalWakePulse();
+        EspenEnsureWake(); // restore user's auto-speech setting
+    });
+}
+
+void Application::HandleWakeWordDetectedEvent() {""")
+replace("main/application.cc",
+        'void Application::HandleWakeWordDetectedEvent() {\n'
+        '    extern bool EspenDiagnosticBusy();\n'
+        '    if (EspenDiagnosticBusy()) return;\n'
+        '    auto state = GetDeviceState();',
+        'void Application::HandleWakeWordDetectedEvent() {\n'
+        '    extern bool EspenDiagnosticBusy();\n'
+        '    if (EspenDiagnosticBusy()) return;\n'
+        '    if (espen_standby_requested_.load(std::memory_order_acquire)) {\n'
+        '        auto profile = EspenWake().Get();\n'
+        '        const auto word = audio_service_.GetLastWakeWord();\n'
+        '        if (!profile.trained || word != profile.name) {\n'
+        '            ESP_LOGW(TAG, "Espen standby: ignored non-keyword wake event");\n'
+        '            EspenEnsureWake();\n'
+        '            return;\n'
+        '        }\n'
+        '        espen_standby_requested_.store(false, std::memory_order_release);\n'
+        '        ESP_LOGI(TAG, "Espen standby: resumed by learned wake word");\n'
+        '    }\n'
+        '    auto state = GetDeviceState();')
+# Do not allow stale button/pending connect jobs to reopen Xiaozhi.
+for signature in ("void Application::HandleToggleChatEvent() {",
+                  "void Application::HandleStartListeningEvent() {",
+                  "void Application::ContinueOpenAudioChannel(ListeningMode mode) {"):
+    replace("main/application.cc", signature,
+            signature + '\n    if (espen_standby_requested_.load(std::memory_order_acquire)) return;')
+# A response already queued before the standby request must not leave a
+# speaking/listening state behind AFTER the channel has been closed.
+replace("main/application.cc",
+        '                    aborted_ = false;\n'
+        '                    SetDeviceState(kDeviceStateSpeaking);',
+        '                    if (espen_standby_requested_.load(std::memory_order_acquire)) return;\n'
+        '                    aborted_ = false;\n'
+        '                    SetDeviceState(kDeviceStateSpeaking);')
+replace("main/application.cc",
+        '            } else if (strcmp(state->valuestring, "stop") == 0) {\n'
+        '                Schedule([this]() {\n'
+        '                    if (GetDeviceState() == kDeviceStateSpeaking) {',
+        '            } else if (strcmp(state->valuestring, "stop") == 0) {\n'
+        '                Schedule([this]() {\n'
+        '                    if (espen_standby_requested_.load(std::memory_order_acquire)) return;\n'
+        '                    if (GetDeviceState() == kDeviceStateSpeaking) {')
+# No Xiaozhi notifications, TTS or other cloud commands in keyword-only mode.
+replace("main/application.cc",
+        '        if (strcmp(type->valuestring, "notify") == 0) {',
+        '        if (espen_standby_requested_.load(std::memory_order_acquire)) return;\n'
+        '        if (strcmp(type->valuestring, "notify") == 0) {')
