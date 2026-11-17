@@ -662,7 +662,12 @@ replace("main/audio/audio_service.cc",
 replace("main/application.cc",
         '    EspenWake().Load();\n    espen_wake_ready_ = true;',
         '    EspenWake().Load();\n'
-        '    Settings espen_ui("espen_ui", false);\n'
+        '    Settings espen_ui("espen_ui", true);\n'
+        '    if (!espen_ui.GetBool("tv_guard_v14", false)) {\n'
+        '        espen_ui.SetBool("auto_speech", false);\n'
+        '        espen_ui.SetBool("tv_guard_v14", true);\n'
+        '        ESP_LOGW(TAG, "TV guard 0.2.14: migrating to keyword-only");\n'
+        '    }\n'
         '    EspenWake().SetAutoSpeech(espen_ui.GetBool("auto_speech", false));\n'
         '    espen_wake_ready_ = true;')
 replace("main/application.cc",
