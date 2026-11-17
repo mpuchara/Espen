@@ -98,9 +98,9 @@ public final class WatchActivity extends Activity implements FaceView.Actions, X
         scroll.addView(form);
         TextView info=new TextView(this);
         info.setText("Ala Watch 0.2.12 (Espen 0.2.11+)\n" +
-            "Przesuń w dół: bez odbioru; w górę: sterowanie.\\n" +
-            "Podczas mowy Ali dotknij mikrofonu, aby ją przerwać.\\n" +
-            "Lokalne hasło wymaga 3 próbek i działa tylko w otwartej aplikacji.\\n");
+            "Przesuń w dół: bez odbioru; w górę: sterowanie.\n" +
+            "Podczas mowy Ali dotknij mikrofonu, aby ją przerwać.\n" +
+            "Lokalne hasło wymaga 3 próbek i działa tylko w otwartej aplikacji.\n");
         info.setTextSize(14);form.addView(info);
         EditText ota=new EditText(this);ota.setSingleLine(false);ota.setMaxLines(3);
         ota.setText(XiaozhiClient.getOta(this));ota.setTextSize(13);ota.setHint("Adres OTA HTTPS");
