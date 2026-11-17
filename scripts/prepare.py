@@ -1341,3 +1341,122 @@ replace("main/application.cc",
         'void Application::SetListeningMode(ListeningMode mode) {\n'
         '    espen_standby_requested_.store(false, std::memory_order_release);\n'
         '    listening_mode_ = mode;')
+
+# Standby (local keyword only): shared by user STT command and GT911 swipe.
+# Keep the learned NVS wake template active, but never arm automatic speech
+# until a FRESH finger touch or a successful match of THAT saved template.
+shutil.copyfile(root / "firmware/standby_policy.h", board / "standby_policy.h")
+replace("main/application.cc",
+        '#include "boards/guition/espen-guition-jc4880p443/voice_commands.h"',
+        '#include "boards/guition/espen-guition-jc4880p443/voice_commands.h"\n'
+        '#include "boards/guition/espen-guition-jc4880p443/standby_policy.h"')
+replace("main/application.h", '    void StopListening();',
+        '    void StopListening();\n'
+        '    bool EspenIsStandby() const { return espen_standby_requested_.load(std::memory_order_acquire); }\n'
+        '    void EspenEnterStandby();\n'
+        '    void EspenWakeFromTouch();')
+replace("main/application.cc",
+        '    EspenWake().AllowSpeech(state == kDeviceStateIdle && EspenNetworkAvailable());',
+        '    EspenWake().AllowSpeech(espen::AllowAutomaticSpeech(\n'
+        '        espen_standby_requested_.load(std::memory_order_acquire),\n'
+        '        state == kDeviceStateIdle, EspenNetworkAvailable()));')
+# Re-use the already established safe main-task close path. The flag is
+# published immediately so late incoming packets cannot reactivate TTS.
+replace("main/application.cc", """                if (espen::IsVoiceStandbyCommand(text->valuestring)) {
+                    espen_standby_requested_.store(true, std::memory_order_release);
+                    Schedule([this]() {
+                        if (!espen_standby_requested_.load(std::memory_order_acquire)) return;
+                        ESP_LOGI(TAG, "Espen: voice standby command, closing cloud conversation");
+                        audio_service_.CancelEspenSpeechCapture();
+                        audio_service_.EnableVoiceProcessing(false);
+                        audio_service_.ResetDecoder();
+                        EspenSleepNow();
+                        if (protocol_ && protocol_->IsAudioChannelOpened())
+                            protocol_->CloseAudioChannel();
+                        SetDeviceState(kDeviceStateIdle);
+                    });
+                    return;
+                }""",
+        """                if (espen::IsVoiceStandbyCommand(text->valuestring)) {
+                    EspenEnterStandby();
+                    return;
+                }""")
+# Previous 0.2.4 code cleared standby whenever SetListeningMode ran;
+# this was not a user wake and could reenable accidental speech.
+replace("main/application.cc",
+        'void Application::SetListeningMode(ListeningMode mode) {\n'
+        '    espen_standby_requested_.store(false, std::memory_order_release);\n'
+        '    listening_mode_ = mode;',
+        'void Application::SetListeningMode(ListeningMode mode) {\n'
+        '    listening_mode_ = mode;')
+replace("main/application.cc", 'void Application::HandleWakeWordDetectedEvent() {',
+        """void Application::EspenEnterStandby() {
+    if (espen_standby_requested_.exchange(true, std::memory_order_acq_rel)) return;
+    ESP_LOGI(TAG, "Espen: entering keyword-only standby");
+    Schedule([this]() {
+        if (!espen_standby_requested_.load(std::memory_order_acquire)) return;
+        audio_service_.CancelEspenSpeechCapture();
+        audio_service_.EnableVoiceProcessing(false);
+        audio_service_.ResetDecoder();
+        EspenSleepNow();
+        if (protocol_ && protocol_->IsAudioChannelOpened())
+            protocol_->CloseAudioChannel();
+        if (GetDeviceState() != kDeviceStateIdle)
+            SetDeviceState(kDeviceStateIdle);
+        EspenEnsureWake(); // armed for the learned local keyword, NOT speech onset
+    });
+}
+
+void Application::EspenWakeFromTouch() {
+    if (!espen_standby_requested_.exchange(false, std::memory_order_acq_rel)) return;
+    ESP_LOGI(TAG, "Espen: resumed by touch");
+    Schedule([this]() {
+        EspenLocalWakePulse();
+        EspenEnsureWake(); // restore user's auto-speech setting
+    });
+}
+
+void Application::HandleWakeWordDetectedEvent() {""")
+replace("main/application.cc",
+        '    if (EspenDiagnosticBusy()) return;\n'
+        '    auto state = GetDeviceState();',
+        '    if (EspenDiagnosticBusy()) return;\n'
+        '    if (espen_standby_requested_.load(std::memory_order_acquire)) {\n'
+        '        auto profile = EspenWake().Get();\n'
+        '        const auto word = audio_service_.GetLastWakeWord();\n'
+        '        if (!profile.trained || word != profile.name) {\n'
+        '            ESP_LOGW(TAG, "Espen standby: ignored non-keyword wake event");\n'
+        '            EspenEnsureWake();\n'
+        '            return;\n'
+        '        }\n'
+        '        espen_standby_requested_.store(false, std::memory_order_release);\n'
+        '        ESP_LOGI(TAG, "Espen standby: resumed by learned wake word");\n'
+        '    }\n'
+        '    auto state = GetDeviceState();')
+# Do not allow stale button/pending connect jobs to reopen Xiaozhi.
+for signature in ("void Application::HandleToggleChatEvent() {",
+                  "void Application::HandleStartListeningEvent() {",
+                  "void Application::ContinueOpenAudioChannel(ListeningMode mode) {"):
+    replace("main/application.cc", signature,
+            signature + '\n    if (espen_standby_requested_.load(std::memory_order_acquire)) return;')
+# A response already queued before the standby request must not leave a
+# speaking/listening state behind AFTER the channel has been closed.
+replace("main/application.cc",
+        '                    aborted_ = false;\n'
+        '                    SetDeviceState(kDeviceStateSpeaking);',
+        '                    if (espen_standby_requested_.load(std::memory_order_acquire)) return;\n'
+        '                    aborted_ = false;\n'
+        '                    SetDeviceState(kDeviceStateSpeaking);')
+replace("main/application.cc",
+        '            } else if (strcmp(state->valuestring, "stop") == 0) {\n'
+        '                Schedule([this]() {\n'
+        '                    if (GetDeviceState() == kDeviceStateSpeaking) {',
+        '            } else if (strcmp(state->valuestring, "stop") == 0) {\n'
+        '                Schedule([this]() {\n'
+        '                    if (espen_standby_requested_.load(std::memory_order_acquire)) return;\n'
+        '                    if (GetDeviceState() == kDeviceStateSpeaking) {')
+# No Xiaozhi notifications, TTS or other cloud commands in keyword-only mode.
+replace("main/application.cc",
+        '        if (strcmp(type->valuestring, "notify") == 0) {',
+        '        if (espen_standby_requested_.load(std::memory_order_acquire)) return;\n'
+        '        if (strcmp(type->valuestring, "notify") == 0) {')
