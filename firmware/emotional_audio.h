@@ -12,6 +12,7 @@ namespace espen {
 enum class EmotionalCue : int {
     Wake, ListenStart, ListenEnd, Thinking, Answer, Joy, Laugh, Surprise,
     Curious, Sigh, Heart, Cheeky, Success, Confused, Yawn, Offline, Shy,
+    Fanfare, Giggle, Gasp, Oops, Whisper, Puzzle, Hug, Magic,
     Count
 };
 
@@ -57,7 +58,23 @@ inline constexpr CuePattern kEmotionalPatterns[] = {
     // offline: low, descending two-note warning
     {{{520,400,110,58},{400,290,150,56},{},{}}},
     // shy: tiny gentle peep
-    {{{730,905,100,43},{860,730,95,34},{},{}}}
+    {{{730,905,100,43},{860,730,95,34},{},{}}},
+    // Fanfare: confident four-note cheer
+    {{{580,690,73,72},{750,1000,75,78},{1180,1180,103,82},{1420,1420,130,82}}},
+    // Giggle: a bouncy, irregular chuckle
+    {{{760,920,50,69},{860,710,56,75},{780,1010,65,76},{980,870,105,65}}},
+    // Gasp: quick upward intake and tiny rebound
+    {{{430,1390,115,72},{1330,1090,75,62},{},{}}},
+    // Oops: playful three-step slip
+    {{{880,630,108,58},{640,430,100,55},{570,625,82,50},{}}},
+    // Whisper: quiet, descending peeps (not a fake human whisper)
+    {{{590,520,110,40},{510,440,140,37},{},{}}},
+    // Puzzle: thoughtful, suspended question
+    {{{650,700,95,49},{730,725,104,51},{720,1050,130,56},{}}},
+    // Hug: two warm, low rounded notes
+    {{{520,670,150,53},{625,795,150,56},{},{}}},
+    // Magic: shimmering four-step ascent
+    {{{880,1130,70,60},{1070,1350,80,64},{1280,1530,90,66},{1450,1730,125,68}}}
 };
 static_assert(sizeof(kEmotionalPatterns)/sizeof(kEmotionalPatterns[0]) ==
               static_cast<size_t>(EmotionalCue::Count), "one pattern per cue");
