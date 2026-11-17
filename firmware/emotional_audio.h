@@ -13,6 +13,8 @@ enum class EmotionalCue : int {
     Wake, ListenStart, ListenEnd, Thinking, Answer, Joy, Laugh, Surprise,
     Curious, Sigh, Heart, Cheeky, Success, Confused, Yawn, Offline, Shy,
     Fanfare, Giggle, Gasp, Oops, Whisper, Puzzle, Hug, Magic,
+    Dance, EyeRoll, Victory, Eureka, Suspense, Sneaky, Sadness, Sleep,
+    Detective, Robot, Drumroll, Agree,
     Count
 };
 
@@ -74,7 +76,31 @@ inline constexpr CuePattern kEmotionalPatterns[] = {
     // Hug: two warm, low rounded notes
     {{{520,670,150,53},{625,795,150,56},{},{}}},
     // Magic: shimmering four-step ascent
-    {{{880,1130,70,60},{1070,1350,80,64},{1280,1530,90,66},{1450,1730,125,68}}}
+    {{{880,1130,70,60},{1070,1350,80,64},{1280,1530,90,66},{1450,1730,125,68}}},
+    // Dance: a bouncy syncopated tune
+    {{{510,760,66,65},{820,960,88,70},{710,930,70,68},{980,1260,80,72}}},
+    // EyeRoll: dry, mildly sarcastic downward "boop"
+    {{{780,515,115,50},{490,390,130,43},{},{}}},
+    // Victory: four stepped triumphant tones
+    {{{610,760,70,70},{800,960,78,74},{1040,1190,86,77},{1260,1540,105,78}}},
+    // Eureka: rising realization and confident finish
+    {{{540,660,105,55},{810,1010,70,69},{1190,1480,120,77},{}}},
+    // Suspense: three quiet rising pulses, never loud
+    {{{460,470,100,42},{485,550,95,47},{570,715,115,56},{}}},
+    // Sneaky: an almost whispered zig-zag
+    {{{860,700,90,44},{730,990,80,58},{940,620,110,49},{}}},
+    // Sadness: warm, gentle falling phrase
+    {{{605,450,145,39},{450,330,135,37},{},{}}},
+    // Sleep: soft lullaby descent
+    {{{505,470,145,38},{460,315,180,36},{},{}}},
+    // Detective: punctuated search-and-discover
+    {{{610,680,80,51},{590,790,96,56},{770,980,125,61},{}}},
+    // Robot: mechanical staccato with deliberately square rhythm
+    {{{690,690,60,50},{890,890,88,55},{700,700,70,51},{1110,1110,110,56}}},
+    // Drumroll: four quick anticipatory rising pulses
+    {{{480,550,75,46},{560,690,65,51},{720,820,70,58},{960,1240,125,64}}},
+    // Agree: relaxed affirmative pair
+    {{{720,830,110,56},{870,930,100,53},{},{}}}
 };
 static_assert(sizeof(kEmotionalPatterns)/sizeof(kEmotionalPatterns[0]) ==
               static_cast<size_t>(EmotionalCue::Count), "one pattern per cue");
