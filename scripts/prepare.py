@@ -1406,3 +1406,11 @@ replace("main/application.cc",
 replace("main/application.cc",
         '        audio_service_.PlaySound(Lang::Sounds::OGG_POPUP);',
         '        // Espen plays its own short cue through the shared PCM output task.')
+
+# Emotion sometimes arrives before TTS start. Queue the corresponding cue
+# only after ResetDecoder(), otherwise the state transition would erase it.
+replace("main/application.cc",
+        '            audio_service_.ResetDecoder();\n            break;\n        case kDeviceStateNotifying:',
+        '            audio_service_.ResetDecoder();\n'
+        '            extern void EspenResponseCue(); EspenResponseCue();\n'
+        '            break;\n        case kDeviceStateNotifying:')
