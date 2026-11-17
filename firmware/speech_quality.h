@@ -1,4 +1,8 @@
 #pragma once
+// The board and audio engine each receive a copy of this header.
+// A named include guard prevents duplicate definitions in board TUs.
+#ifndef ESPEN_SPEECH_QUALITY_H
+#define ESPEN_SPEECH_QUALITY_H
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -99,3 +103,4 @@ inline int16_t Interpolate16To24(const int16_t* src,size_t n,size_t out_index) {
     return static_cast<int16_t>((a*static_cast<int>(3-num%3)+b*static_cast<int>(num%3))/3);
 }
 }
+#endif // ESPEN_SPEECH_QUALITY_H
