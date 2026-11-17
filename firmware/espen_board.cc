@@ -223,6 +223,7 @@ static espen::EmotionalCueLimiter espen_fx_limiter;
 static std::atomic<bool> espen_fx_enabled{true};
 static std::atomic<int> espen_fx_gain{45};
 static std::atomic<espen::Mood> espen_fx_last_mood{espen::Mood::Neutral};
+static std::atomic<bool> espen_response_ready{false};
 static void EspenLoadFxSettings() {
     static const bool once = [](){
         Settings cfg("espen_audio", false);
@@ -259,6 +260,7 @@ static bool EspenPlayEmotionalCue(espen::EmotionalCue cue, bool new_turn=false) 
     return true;
 }
 void EspenListeningCue() {
+    espen_response_ready.store(false, std::memory_order_release);
     EspenPlayEmotionalCue(espen::EmotionalCue::ListenStart, true);
 }
 static espen::EmotionalCue EspenCueForMood(espen::Mood mood) {
@@ -286,6 +288,7 @@ static espen::EmotionalCue EspenCueForMood(espen::Mood mood) {
 // The LLM emotion can arrive *before* the TTS start packet. It is
 // remembered and applied after the TTS decoder is reset, before first PCM.
 void EspenResponseCue() {
+    espen_response_ready.store(true, std::memory_order_release);
     const auto cue=EspenCueForMood(espen_fx_last_mood.load(std::memory_order_acquire));
     if (cue!=espen::EmotionalCue::Count) EspenPlayEmotionalCue(cue);
 }
@@ -2033,7 +2036,8 @@ public:
         mood_seq_.fetch_add(1,std::memory_order_release);
         // Xiaozhi sends LLM emotion independently of TTS. Keep the face
         // synchronized; insert a short sound before speech only if idle.
-        if (Application::GetInstance().GetDeviceState()==kDeviceStateSpeaking) {
+        if (Application::GetInstance().GetDeviceState()==kDeviceStateSpeaking &&
+            espen_response_ready.load(std::memory_order_acquire)) {
             const auto cue=EspenCueForMood(mood);
             if (cue!=espen::EmotionalCue::Count) EspenPlayEmotionalCue(cue);
         }
