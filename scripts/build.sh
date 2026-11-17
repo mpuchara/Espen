@@ -2,9 +2,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 root="$PWD"
-# Verify all firmware NVS keys obey the 15-byte ESP-IDF limit.\npython3 tests/test_nvs_key_lengths.py
+# Verify all firmware NVS keys obey the 15-byte ESP-IDF limit.
+python3 tests/test_nvs_key_lengths.py
 # Source-level integration guards for the LVGL/MCP bridge (plus host vision gate tests).
-python3 tests/test_photo_chat_integration.py\n# Host-side regression tests for the local wake feature extractor and DTW.
+python3 tests/test_photo_chat_integration.py
+# Host-side regression tests for the local wake feature extractor and DTW.
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_wake_features.cc -o /tmp/espen-wake-test
 /tmp/espen-wake-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -pthread -Itests/stubs tests/test_wake_engine.cc -o /tmp/espen-wake-engine-test
