@@ -33,7 +33,8 @@ class BargeInDetector {
                 xy+=x*y;yy+=y*y;
             }
             if(yy<1.)continue;
-            const float correlation=static_cast<float>(xy/std::sqrt(mic_energy*yy));
+            const float correlation=std::clamp(static_cast<float>(
+                xy/std::sqrt(mic_energy*yy)),-1.f,1.f);
             if(correlation>best.correlation) {
                 best.correlation=correlation;
                 best.reference_rms=std::sqrt(static_cast<float>(yy/(n/2)));
@@ -85,7 +86,7 @@ public:
         const bool speaker=reference_rms_>80 && count_>=160;
         const float expected=std::max(70.f,
             (echo.reference_rms>80?echo.reference_rms:reference_rms_)*gain_);
-        const bool speech_like=crossings>=3 && crossings<=static_cast<int>(n/3);
+        const bool speech_like=crossings>=2 && crossings<=static_cast<int>(n/3);
         // The strong-correlation branch prevents a clean playback echo from
         // counting as an interruption even at high volume.
         const bool distinct=!speaker || echo.correlation<0.68f ||
