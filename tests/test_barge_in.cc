@@ -40,6 +40,15 @@ int main(){
         fired|=detector.Microphone(microphone,160);
     }
     assert(fired); // Voice when no speaker PCM is available.
+    detector.Reset();fired=false;
+    for(int frame=0;frame<45;++frame) {
+        int16_t microphone[160];
+        for(int i=0;i<160;++i)
+            microphone[i]=static_cast<int16_t>(1400*
+                std::sin(2*3.141592653589793*110*(frame*160+i)/16000));
+        fired|=detector.Microphone(microphone,160);
+    }
+    assert(fired); // Low-pitch adult voice also interrupts.
     detector.Reset();
     for(int frame=0;frame<50;++frame) {
         int16_t microphone[160]{};
