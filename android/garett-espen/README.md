@@ -1,34 +1,45 @@
-# Ala / Espen dla Garett Essa 2 AI 4G
+# Ala Watch 0.2.12 — Garett Essa 2 AI 4G (Android 8.1)
 
-Eksperymentalna, **natywna aplikacja Android 8.1** na Garett Essa 2 AI 4G. Osobny projekt; nie zmienia firmware Espen P4. Bazuje na logice emocji, gestów i prywatności z `firmware/face_engine.h`, `social_reactions.h`, `vision_gate.h`. Animacje rysuje wektorowo przez Android Canvas (bez kopiowania C++/LVGL).
+Oddzielna aplikacja od firmware ESP32-P4. Źródła aplikacji zegarka znajdują się w gałęzi `feature/garett-espen-watch`, PR #3; nie nadpisują firmware ESP32. Wersja zegarka `0.2.12-watch`, pakiet `pl.espen.garett`, `minSdk 26`, `targetSdk 27`, podpis APK v1. Android 8.1 zegarka ma własne ograniczenia i sterowniki audio.
 
-## Co jest w MVP
-- Pełnoekranowa buźka Ala (mruganie, spojrzenia, ruch ust przy TTS, emocje z wiadomości `llm`, dotyk: mrugnięcie/głaskanie/zaskoczenie).
-- Tap w przycisk mikrofonu: sesja Xiaozhi OTA → WebSocket → Opus 16 kHz / 60 ms → TTS Opus 24 kHz, transkrypcja oraz napisy.
-- Aktywacja nowego urządzenia Xiaozhi: własne stabilne Device-Id i Client-Id, kod na ekranie, odświeżanie OTA i próba /activate. Sparuj zegarek **osobno**, w konsoli z istniejącym agentem Ala.
-- Zdjęcia: obsługa MCP `self.camera.take_photo`, serwerowego `vision.url`, HTTPS multipart, tylko po włączeniu opcji i jawnym pytaniu użytkownika. Zdjęcie pozostaje w pamięci RAM, nie jest zapisywane na dysku. Rozumienie obrazu zależy od obsługi Vision po stronie serwera Xiaozhi.
-- Konfiguracja OTA z poziomu zegarka. Bez Google Play Services, bez zależności od Garett Tracker w sesji AI.
+## Możliwości
 
-## Budowa i instalacja
-Otwórz folder `android/garett-espen` w Android Studio, lub uruchom:
+- Pełnoekranowa wektorowa buźka Ali: mruganie, oczy i brwi, usta zsynchronizowane z poziomem PCM, emocje z `llm`, głaskanie, reakcje kontekstowe.
+- **20 reakcji** z syntetyzowanymi lokalnie sygnałami PCM **bez nowego AudioTrack**: fanfary, chichot, zdziwienie, ups, sekret, zagadka, przytulenie, magia, taniec, przewrócenie oczami, zwycięstwo, eureka, napięcie, psikus, smutek, senność, detektyw, robot, werble, potakiwanie. Co najwyżej jedna reakcja na wypowiedzianą odpowiedź. Efekty miksowane bezpośrednio do TTS; to nie jest 37 efektów sprzętowego firmware.
+- Xiaozhi przez OTA / WebSocket / Opus z osobnym Device-ID / Client-ID; serwerowy polski agent i emocje. Mikrofon `MIC` 16 kHz, wyjście `STREAM_MUSIC` z routingiem głośnika. Domyślna głośność multimediów: **75% przy pierwszym uruchomieniu**.
+- **Aparat + analiza**: na wyraźną prośbę użytkownika, w tym „co widzisz?” i „zrób zdjęcie”. Analiza Xiaozhi Vision domyślnie włączona; nadal wymaga serwerowego HTTPS Vision. Po wykonaniu zdjęcia pojawia się tymczasowa miniatura na buźce (RAM, nie plik).
+- **Bez odbioru**: przesuń palcem z góry w dół na twarzy albo wypowiedz „bez odbioru” podczas aktywnego słuchania Xiaozhi. Kończy sesję i blokuje automatyczne rozmowy. Dotknięcie budzi Alę i rozpoczyna rozmowę.
+- **Lokalne, uczone hasło**: Ustawienia → Naucz hasła. Powtórz hasło w **trzech osobnych próbach**. W stanie „bez odbioru” rozpoznawanie korzysta z lokalnego porównywania cech krótkich próbek (DTW); żadne nagrania nie idą do serwera. Wymaga uprawnienia mikrofonu i otwartej aplikacji na ekranie. Jest **eksperymentalne**: może mieć fałszywe aktywacje lub nie rozpoznawać hasła, szczególnie w hałasie.
+- **Przerywanie**: dotknij mikrofonu podczas TTS, aby natychmiast zatrzymać poprzednią sesję i rozpocząć nową po zwolnieniu AudioTrack. Opcjonalne „przerywanie głosem” próbuje monitorować mikrofon równolegle z TTS, ale jest **domyślnie wyłączone** z powodu awarii HAL wcześniejszych wersji. Po pierwszym niepowodzeniu tej sesji automatycznie rezygnuje z kolejnych prób. Brak gwarancji działania ani 400 ms pre-roll na tym sprzęcie.
+
+## Sterowanie zegarkiem
+
+Przesuń twarz **w górę**, aby otworzyć panel funkcji Androida, lub otwórz Ustawienia → Sterowanie zegarkiem:
+
+- Odczyt baterii, głośności, statusu Wi-Fi i Bluetooth (jeśli Android udostępnia te dane).
+- Głośność multimediów, lokalna jasność ekranu Ali (10–100%), wibracje i latarka, jeśli jest obsługiwana.
+- Skróty do systemowych ustawień Wi-Fi, Bluetooth, GPS; minutnik i ekran wybierania numeru. Wykonanie połączenia oraz ustawienie minutnika pozostaje po stronie użytkownika.
+- Narzędzia Xiaozhi MCP: `self.watch.get_status`, `set_volume`, `set_brightness`, `vibrate`, `set_flashlight`, `set_timer`, `open_settings`. W każdym przypadku nieobsługiwanego API otrzymuje odpowiedź o braku dostępności.
+
+Aplikacja **nie** ma roota i nie obchodzi ograniczeń Garett: nie może bez uprawnień zmieniać globalnej jasności, wymuszać GPS/4G, zastępować SOS, lokalizatora rodzicielskiego ani blokować systemu. Nie odczytuje listy kontaktów i nie wysyła SMS-ów.
+
+## Instalacja i build
+
+GitHub Actions: **Build Garett Espen Android APK**, artefakt `garett-espen-android81-full-v0.2.12` (ZIP zawierający `app-debug.apk`). APK w trybie debug z kompatybilnym podpisem JAR/v1; `applicationId` jest ten sam co wcześniej, więc instalator może wykonać aktualizację, o ile podpis certyfikatem debug jest zgodny. W innym wypadku Android zgłosi konflikt podpisu i konieczna może być deinstalacja starej aplikacji, co usuwa jej lokalne dane aktywacyjne.
+
+Wymagania: JDK 17, Android SDK 35, Gradle 8.7. W katalogu `android/garett-espen`:
+
 ```bash
-gradle assembleDebug
+gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug
 ```
-Android SDK 35, Gradle 8.7, JDK 17. Debug APK: `app/build/outputs/apk/debug/app-debug.apk`. W GitHub Actions: workflow **Build Garett Espen Android APK**, artefakt `garett-espen-debug-apk`.
 
-Przenieś plik APK na zegarek tą samą metodą Bluetooth → otrzymany plik → instalator, którą udało się zainstalować `pl.garett.hello`. Pakiet jest inny: `pl.espen.garett`.
+W repo jest też lekka aplikacja diagnostyczna w module `lite`, której można użyć do sprawdzenia instalatora zegarka. Instalację APK wykonaj sprawdzoną metodą przesłania pliku na zegarek.
 
-## Obsługa
-- Ekran: przycisk mikrofonu na dole rozpoczyna i kończy rozmowę; mikrofon może poprosić o uprawnienie.
-- Dotykaj/głaszcz buźkę. Przytrzymaj ok. 1,5 s aby otworzyć ustawienia.
-- Po pierwszym starcie pojawi się kod. W Xiaozhi Console → istniejący agent Ala → Add Device wpisz ten kod. Nie wklejaj tam tokenów.
-- W ustawieniach domyślny OTA: `https://api.tenclass.net/xiaozhi/ota/`.
-- Aby analizować obraz, świadomie włącz **Zdjęcia dla AI**. Powiedz np. „Ala, co widzisz?” i poczekaj, aż Xiaozhi wywoła narzędzie kamery.
+## Ważne ograniczenia i prywatność
 
-## Bezpieczeństwo i ograniczenia
-- To wersja developerska; brak testów na fizycznym Essa 2. Poprawność pracy audio/wydajność, kamera legacy, odpowiedzi OTA konkretnego konta i kompatybilność MCP wymagają testów.
-- Bez stale aktywnego mikrofonu / hotword „Hej Ala”. Przy aktywnej sesji mikrofon wysyła dźwięk do Xiaozhi, a po końcu wypowiedzi kończy wysyłanie. W tle i przy zgaszonym ekranie aplikacja nie rejestruje.
-- Serwer musi dostarczyć **WebSocket** w odpowiedzi OTA. Jeśli zwraca tylko MQTT, ta wersja pokaże błąd; nie podstawiamy fikcyjnego endpointu.
-- Zdjęcie jest wysyłane wyłącznie HTTPS do URL podanego przez backend podczas MCP. Brak takiego URL = brak wysyłki. Użytkownik może wyłączyć zdjęcia w ustawieniach.
-- Aplikacja nie ingeruje w SOS, połączenia, GPS ani funkcje rodzicielskie zegarka. Ma własny identyfikator Xiaozhi; nie podszywa się pod ESP32.
-- Przewidywany większy pobór baterii podczas aktywnej rozmowy i animacji. Zadbaj o aktualizację zależności przed dalszą dystrybucją.
+- To build developerski, **wymaga testów na fizycznym Garett Essa 2**. W szczególności nie deklarujemy potwierdzonego wybudzania i przerwania głosem.
+- Nie działa jako usługa w tle; wygaszenie lub zamknięcie aplikacji może wyłączyć lokalne hasło, zgodnie z ograniczeniami Androida i oszczędzaniem baterii.
+- W aktywnej sesji AI dźwięk płynie do Xiaozhi. Tryb lokalnego wybudzania czyta mikrofon tylko do porównania wzorca na urządzeniu; w stanie „bez odbioru” po włączeniu tej opcji i trzech próbkach mikrofon może nadal pracować lokalnie.
+- Zdjęcie jest w RAM; wysyłka wyłącznie do HTTPS Vision dostarczonego przez Xiaozhi, po rozpoznaniu świadomej prośby użytkownika.
+- Przycisk „Diagnostyka” kopiuje logi bez zdjęć, audio i tokenów.
+- Gdy Xiaozhi udostępnia tylko MQTT, a nie WebSocket, ta aplikacja nie ustanowi rozmowy.
