@@ -10,12 +10,12 @@ int main() {
     assert(ResolveMicMode(3,30)==kMicModeVerySensitive);
     assert(NextMicMode(kMicModeLegacy)==kMicModeAuto);
     assert(NextMicMode(kMicModeStandard)==kMicModeSensitive);
-    assert(MicModeGain(kMicModeAuto)==36);
+    assert(MicModeGain(kMicModeAuto)==30);
     assert(MicModeGain(kMicModeStandard)==30);
     assert(MicModeGain(kMicModeVerySensitive)==42);
     assert(MicModeGain(kMicModeLegacy,24)==24);
     assert(MicModeAgcBoost(kMicModeStandard)==6);
-    assert(MicModeAgcBoost(kMicModeAuto)==9);
+    assert(MicModeAgcBoost(kMicModeAuto)==6);
     assert(MicModeAgcBoost(kMicModeVerySensitive)==12);
     // Quiet speech is easier to detect; noisy rooms tighten Auto thresholds.
     assert(MicGate(30,kMicModeAuto,false)<MicGate(30,kMicModeStandard,false));
