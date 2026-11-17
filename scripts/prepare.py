@@ -1555,10 +1555,12 @@ replace("main/application.cc",
         '    if (new_state != kDeviceStateSpeaking) audio_service_.EnableEspenBargeIn(false);\n'
         '    switch (new_state) {\n        case kDeviceStateStarting:')
 replace("main/application.cc",
+        '            audio_service_.ResetDecoder();\n'
         '            extern void EspenResponseCue(); EspenResponseCue();\n'
         '            break;\n        case kDeviceStateNotifying:',
-        '            extern void EspenResponseCue(); EspenResponseCue();\n'
+        '            audio_service_.ResetDecoder();\n'
         '            audio_service_.EnableEspenBargeIn(true);\n'
+        '            extern void EspenResponseCue(); EspenResponseCue();\n'
         '            break;\n        case kDeviceStateNotifying:')
 # Ignore stale TTS start/stop/PCM events from the aborted answer while waiting
 # for the *next* user STT message. Do not block that new answer.
