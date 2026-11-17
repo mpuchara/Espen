@@ -5,7 +5,7 @@ import static org.junit.Assert.*;
 
 public class WatchBehaviorTest {
     @Test public void emotionsMapToExpectedCues(){
-        assertEquals("chuckle",WatchFx.classify("Haha, to był świetny żart!").equals("fanfare")?"chuckle":WatchFx.classify("Haha!"));
+        assertEquals("chuckle",WatchFx.classify("Haha!"));
         assertEquals("victory",WatchFx.classify("Hurra! Wygraliśmy!"));
         assertEquals("sleepy",WatchFx.classify("Dobranoc, śpij dobrze."));
         assertEquals("eureka",WatchFx.classify("Eureka! Znalazłam odpowiedź."));
