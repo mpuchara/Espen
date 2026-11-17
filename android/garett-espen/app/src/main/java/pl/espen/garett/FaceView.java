@@ -2,6 +2,9 @@ package pl.espen.garett;
 
 import android.content.Context;
 import android.graphics.Canvas;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Rect;
 import android.graphics.Color;
 import android.graphics.LinearGradient;
 import android.graphics.Paint;
@@ -17,14 +20,18 @@ import java.util.Random;
 
 /** Watch-friendly vector face: inspired by Espen's expressive face engine, not LVGL code. */
 public final class FaceView extends View {
-    public enum State { IDLE, CONNECTING, LISTENING, THINKING, SPEAKING, ERROR }
-    public interface Actions { void onMicrophone(); void onCamera(); void onSettings(); }
+    public enum State { IDLE, CONNECTING, LISTENING, THINKING, SPEAKING, STANDBY, ERROR }
+    public interface Actions { void onMicrophone(); void onCamera(); void onSettings(); void onStandby(); void onControls(); }
     private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Random rng = new Random();
     private Actions actions;
     private State state = State.IDLE;
     private String emotion = "neutral", subtitle = "", status = "Dotknij mikrofonu";
     private String activationCode = "";
+    private String reaction = "";
+    private long reactionUntil, photoUntil;
+    private Bitmap photo;
+    private int battery = -1;
     private int micLevel = 0, speakerLevel = 0;
     private long moodUntil = 0, nextBlink = 0, blinkUntil = 0, nextLook = 0;
     private long heartUntil = 0, downAt = 0, lastTap = 0;
@@ -44,6 +51,16 @@ public final class FaceView extends View {
         invalidate();
     }
     public void setActivationCode(String c) { activationCode = c == null ? "" : c; invalidate(); }
+    public void setBattery(int n){battery=n;invalidate();}
+    public void setReaction(String cue){reaction=cue==null?"":cue;reactionUntil=SystemClock.uptimeMillis()+2100;invalidate();}
+    public void setPhoto(byte[] compressed){
+        if(compressed==null||compressed.length>300000)return;
+        BitmapFactory.Options opt=new BitmapFactory.Options();opt.inPreferredConfig=Bitmap.Config.RGB_565;
+        Bitmap next=BitmapFactory.decodeByteArray(compressed,0,compressed.length,opt);
+        if(next==null)return;
+        if(photo!=null&&!photo.isRecycled())photo.recycle();
+        photo=next;photoUntil=SystemClock.uptimeMillis()+12500;invalidate();
+    }
     public void setEmotion(String s) {
         emotion = s == null ? "neutral" : s.toLowerCase(Locale.ROOT);
         moodUntil = SystemClock.uptimeMillis() + 3700;
@@ -92,6 +109,7 @@ public final class FaceView extends View {
         color(0xff081721);p.setShader(new RadialGradient(180,174,193,new int[]{0xff142d39,0xff06131d,Color.BLACK},null,Shader.TileMode.CLAMP));
         c.drawCircle(180,172,193,p);p.setShader(null);
         text(c,"A  L  A",180,32,15,0xff91a7b4,true);
+        if(battery>=0)text(c,battery+"%",304,31,11,0xff87b1ca,false);
         int left=state==State.LISTENING?-35:0;
         float bob=(float)Math.sin(now/490.0)*2f;
         boolean sleepy=(now>=moodUntil && state==State.IDLE && now>downAt+25000);
@@ -101,6 +119,14 @@ public final class FaceView extends View {
         boolean sad=now<moodUntil&&(emotion.contains("sad")||emotion.contains("cry"));
         boolean angry=now<moodUntil&&emotion.contains("angry");
         boolean wink=now<moodUntil&&emotion.contains("wink");
+        boolean expression=now<reactionUntil;
+        if(expression){
+            if(reaction.equals("sleepy"))blink=true;
+            if(reaction.equals("surprise")||reaction.equals("eureka"))surprised=true;
+            if(reaction.equals("chuckle")||reaction.equals("dance")||reaction.equals("victory"))laughing=true;
+            if(reaction.equals("sad"))sad=true;
+            if(reaction.equals("eyeroll"))driftY-=16;
+        }
         float eyeH=blink?9:surprised?71:laughing?21:sad?30:angry?29:49;
         float eyeW=surprised?60:76;
         float ey=122+driftY+bob, lx=91+driftX+left,rx=193+driftX+left;
@@ -142,6 +168,13 @@ public final class FaceView extends View {
                 heart.cubicTo(hx+7,hy-16,hx+19,hy-2,hx,hy+10);c.drawPath(heart,p);
             }
         }
+        if(expression){
+            String decoration=(reaction.equals("sleepy")?"Zzz":reaction.equals("sad")?":(":
+                reaction.equals("secret")?"shh":reaction.equals("eureka")?"!":
+                reaction.equals("victory")?"++":reaction.equals("detective")?"?":
+                reaction.equals("drums")?"...":reaction.equals("robot")?"[AI]":"*");
+            text(c,decoration,298,100,22,a,true);
+        }
         if(state==State.LISTENING) {
             float power=micLevel/100f;
             for(int i=0;i<4;i++){
@@ -149,11 +182,18 @@ public final class FaceView extends View {
                 round(c,276+i*13,173-hh/2f,6,hh,3,a);
             }
         }
+        if(photo!=null&&now<photoUntil){
+            color(0xff152c38);c.drawRoundRect(new RectF(224,213,339,295),9,9,p);
+            Rect dst=new Rect(229,218,334,282);
+            c.drawBitmap(photo,null,dst,p);
+            text(c,"ZDJĘCIE",281,292,9,0xffd4edff,true);
+        }
         if(activationCode.length()>0){
             round(c,18,278,324,51,13,0xff173041);
             text(c,"KOD XIAOZHI: "+activationCode,180,310,19,0xffd8efff,true);
         } else {
-            String visible=state==State.SPEAKING && subtitle.length()>0?subtitle:status;
+            String visible=state==State.STANDBY?"BEZ ODBIORU • DOTKNIJ, BY WZNOWIĆ":
+                state==State.SPEAKING && subtitle.length()>0?subtitle:status;
             if(visible.length()>40) visible=visible.substring(0,39)+"…";
             text(c,visible,180,302,13,0xffbed3dd,false);
         }
@@ -168,7 +208,7 @@ public final class FaceView extends View {
         round(c,267,327,67,52,18,0xff172a38);
         color(0xffb5efff);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(3);
         c.drawRoundRect(new RectF(283,342,318,364),4,4,p);c.drawCircle(301,353,7,p);
-        text(c,"",180,393,8,0xff718b9c,false);
+        text(c,state==State.STANDBY?"Uśpiona": "Przesuń ↓ pauza / ↑ sterowanie",180,393,9,0xff718b9c,false);
         real.restore();
         if(getWindowVisibility()==VISIBLE && isAttachedToWindow()) postInvalidateDelayed(state==State.IDLE?180:90);
     }
@@ -191,6 +231,9 @@ public final class FaceView extends View {
             case MotionEvent.ACTION_CANCEL: touching=false;return true;
             case MotionEvent.ACTION_UP:
                 touching=false;isActive=false;
+                if(state==State.STANDBY){if(actions!=null)actions.onMicrophone();return true;}
+                if(y-downY>65 && downY<312){if(actions!=null)actions.onStandby();return true;}
+                if(downY-y>65 && downY<312){if(actions!=null)actions.onControls();return true;}
                 if(now-downAt>=1500 && movement<20){if(actions!=null)actions.onSettings();return true;}
                 if(y>314&&movement<35){
                     if(actions!=null){if(x<105)actions.onSettings();else if(x>251)actions.onCamera();else actions.onMicrophone();}
