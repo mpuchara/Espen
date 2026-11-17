@@ -17,4 +17,8 @@ assert '!output_active || playback_ms_<kProtectedPlaybackMs' in barge
 assert 'kMicModeAuto: return 30;' in gain
 assert 'if(mode==kMicModeAuto)return 6;' in gain
 assert 'NSNet2 disabled' in overlay
+assert 'espen_tv_turn_closing_' in overlay
+assert 'answer fully played; close cloud turn' in overlay
+assert 'if (listening_mode_ == kListeningModeAutoStop)' in overlay
+assert 'audio_service_.IsPlaybackIdle()' in overlay
 print("TV-safe 0.2.14 migration, protected playback and mic policy: OK")
