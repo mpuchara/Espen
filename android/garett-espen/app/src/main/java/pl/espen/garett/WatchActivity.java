@@ -97,7 +97,7 @@ public final class WatchActivity extends Activity implements FaceView.Actions, X
         form.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(form);
         TextView info=new TextView(this);
-        info.setText("Ala Watch 0.2.12 (Espen 0.2.11+)\\n" +
+        info.setText("Ala Watch 0.2.12 (Espen 0.2.11+)\n" +
             "Przesuń w dół: bez odbioru; w górę: sterowanie.\\n" +
             "Podczas mowy Ali dotknij mikrofonu, aby ją przerwać.\\n" +
             "Lokalne hasło wymaga 3 próbek i działa tylko w otwartej aplikacji.\\n");
