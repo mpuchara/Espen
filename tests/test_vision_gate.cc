@@ -2,6 +2,8 @@
 #include <cassert>
 #include <iostream>
 int main(){
+    assert(espen::VisionQuestion("Co widzisz?"));
+    assert(espen::VisionQuestion("Ala, zrób zdjęcie"));
     assert(espen::VisionQuestion("Ala, co trzymam w ręce?"));
     assert(espen::VisionQuestion("Spójrz na mój rysunek"));
     assert(espen::VisionQuestion("Jaka to flaga?"));
