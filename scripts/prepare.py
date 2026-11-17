@@ -12,7 +12,7 @@ for src, dst in [("config.h","config.h"),("config.json","config.json"),
                  ("espen_board.cc","espen_board.cc"),
                  ("board_p4_st7701_init.h","board_p4_st7701_init.h"),
                  ("face_engine.h","face_engine.h"),("dirty_rect.h","dirty_rect.h"),
-                 ("social_reactions.h","social_reactions.h"),("speech_quality.h","speech_quality.h"),("visual_world.h","visual_world.h"),("speaker_audio.h","speaker_audio.h"),("emotional_audio.h","emotional_audio.h"),
+                 ("social_reactions.h","social_reactions.h"),("response_reactions.h","response_reactions.h"),("speech_quality.h","speech_quality.h"),("visual_world.h","visual_world.h"),("speaker_audio.h","speaker_audio.h"),("emotional_audio.h","emotional_audio.h"),
                  ("espen_camera.h","espen_camera.h"),("espen_camera.cc","espen_camera.cc"),("vision_gate.h","vision_gate.h"),("vision_endpoint.h","vision_endpoint.h")]:
     shutil.copyfile(root / "firmware" / src, board / dst)
 shutil.copytree(root / "firmware/camera", up / "components/espen_camera", dirs_exist_ok=True)
