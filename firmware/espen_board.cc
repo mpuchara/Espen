@@ -41,6 +41,7 @@
 #include <atomic>
 #include <esp_timer.h>
 #include <mutex>
+#include <new>
 #include <string>
 #include <vector>
 #include "settings.h"
@@ -511,6 +512,8 @@ class EspenDisplay : public LcdDisplay {
     }
 
     void TickCloud() {
+        // Called by LVGL timer; camera worker only publishes a PSRAM snapshot.
+        AppendChatPhoto();
         std::string state, code;
         CloudSnapshot(state, code);
         // Show a real, newly received code automatically, unless the user
@@ -1031,7 +1034,7 @@ class EspenDisplay : public LcdDisplay {
             camera_cloud_label_=lv_obj_get_child(cloud,0);
             auto* hint=lv_label_create(camera_panel_);lv_obj_set_width(hint,lv_pct(100));
             lv_label_set_long_mode(hint,LV_LABEL_LONG_WRAP);
-            lv_label_set_text(hint,"Podgląd lokalny, bez przesyłania zdjęć. Analiza Xiaozhi wymaga osobnego zezwolenia.");
+            lv_label_set_text(hint,"Analiza Xiaozhi domyślnie WŁ. Zdjęcie trafia do chmury wyłącznie po wyraźnej prośbie głosowej; lokalny podgląd nic nie wysyła.");
             auto* preview=MakeButton(camera_panel_,"Uruchom podgląd lokalny",[](lv_event_t* e){
                 auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
                 if(self->camera_preview_on_){self->StopCameraPreview();return;}
@@ -1782,6 +1785,87 @@ class EspenDisplay : public LcdDisplay {
         Hide(emoji_image_, true);
     }
     static constexpr uint32_t kHistoryLimit = 80;
+    static constexpr uint32_t kPhotoHistoryLimit = 6;
+    static constexpr const char* kPhotoRole = "photo";
+    struct ChatPhotoData {
+        lv_image_dsc_t image{};
+        uint16_t* pixels = nullptr;
+    };
+    void AppendChatPhoto(){
+        if(!button_added_ || !content_)return;
+        auto* pixels=EspenVision().TakeChatPhoto();
+        if(!pixels)return;
+        // Bind the buffer lifetime to its chat image, not to the CSI worker.
+        auto* data=new(std::nothrow) ChatPhotoData();
+        if(!data){heap_caps_free(pixels);return;}
+        data->pixels=pixels;
+        data->image.header.magic=LV_IMAGE_HEADER_MAGIC;
+        data->image.header.cf=LV_COLOR_FORMAT_RGB565;
+        data->image.header.w=320;
+        data->image.header.h=180;
+        data->image.header.stride=320*2;
+        data->image.data_size=320*180*2;
+        data->image.data=reinterpret_cast<const uint8_t*>(pixels);
+
+        lv_obj_update_layout(content_);
+        const bool follow=lv_obj_get_scroll_bottom(content_)<=30;
+        // Bounded visual history: no user photos in flash/NVS, at most six
+        // chat thumbnails in PSRAM, even if a long conversation has 80 turns.
+        uint32_t photos=0;
+        for(uint32_t i=0;i<lv_obj_get_child_cnt(content_);++i)
+            if(lv_obj_get_user_data(lv_obj_get_child(content_,i))==
+               static_cast<const void*>(kPhotoRole))++photos;
+        while(photos>=kPhotoHistoryLimit){
+            bool removed=false;
+            for(uint32_t i=0;i<lv_obj_get_child_cnt(content_);++i){
+                auto* old=lv_obj_get_child(content_,i);
+                if(lv_obj_get_user_data(old)==static_cast<const void*>(kPhotoRole)){
+                    lv_obj_delete(old);--photos;removed=true;break;
+                }
+            }
+            if(!removed)break;
+        }
+        while(lv_obj_get_child_cnt(content_)>=kHistoryLimit)
+            lv_obj_delete(lv_obj_get_child(content_,0));
+
+        auto* row=lv_obj_create(content_);
+        lv_obj_remove_style_all(row);Passive(row);
+        lv_obj_set_user_data(row,const_cast<char*>(kPhotoRole));
+        lv_obj_set_width(row,lv_pct(100));
+        lv_obj_set_height(row,LV_SIZE_CONTENT);
+        lv_obj_set_flex_flow(row,LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(row,LV_FLEX_ALIGN_END,
+                              LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_CENTER);
+        auto* bubble=lv_obj_create(row);
+        Solid(bubble,0x16465B,18);
+        lv_obj_set_width(bubble,344);
+        lv_obj_set_height(bubble,LV_SIZE_CONTENT);
+        lv_obj_set_style_pad_all(bubble,12,0);
+        lv_obj_set_style_pad_row(bubble,8,0);
+        lv_obj_set_flex_flow(bubble,LV_FLEX_FLOW_COLUMN);
+        auto* title=lv_label_create(bubble);
+        Passive(title);
+        lv_obj_set_style_text_font(title,EspenUiFont(),0);
+        lv_obj_set_style_text_color(title,lv_color_hex(0xFFFFFF),0);
+        lv_label_set_text(title,"Zdjęcie z kamery");
+        auto* photo=lv_image_create(bubble);
+        lv_image_set_src(photo,&data->image);
+        lv_obj_set_size(photo,320,180);
+        Passive(photo);
+        lv_obj_add_event_cb(photo,[](lv_event_t* e){
+            auto* attachment=static_cast<ChatPhotoData*>(lv_event_get_user_data(e));
+            if(attachment){
+                if(attachment->pixels)heap_caps_free(attachment->pixels);
+                delete attachment;
+            }
+        },LV_EVENT_DELETE,data);
+        if(follow){
+            lv_obj_update_layout(content_);
+            lv_obj_scroll_to_y(content_,lv_obj_get_scroll_y(content_)+
+                lv_obj_get_scroll_bottom(content_),LV_ANIM_OFF);
+        }
+        ESP_LOGI(TAG,"Photo displayed in chat: 320x180 (local RAM only)");
+    }
     void AddBubble(const char* role, const char* message) {
         const bool user = strcmp(role, "user") == 0;
         const bool system = strcmp(role, "system") == 0;
@@ -1917,6 +2001,7 @@ public:
     void SetChatMessage(const char* role, const char* message) override {
         if (!role || !message || !button_added_) return;
         if (!lvgl_port_lock(1000)) return;
+        if(strcmp(role,"user")!=0)AppendChatPhoto();
         AddBubble(role, message);
         lvgl_port_unlock();
     }
@@ -2069,7 +2154,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.2.8 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.2.9 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();

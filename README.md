@@ -199,3 +199,13 @@ Poprawka: skrócono klucz migracji do `spk_init_v027` (13 bajtów); wartości `s
 
 Po udanym flashowaniu sprawdź log `Speaker defaults migrated: PA ON, volume 75%`, `Audio: ... NS4150 PA GPIO11 enabled` i uruchom lokalny `Test melodii (12 s)`. Dopiero ten test pokaże, czy odtwarzanie na płytce działa; nie oznaczajmy braku dźwięku jako rozwiązany bez testu.
 
+## 0.2.9 — zdjęcie z kamery jako wiadomość na ekranie i analiza Xiaozhi ON
+
+Kiedy użytkownik mówi „co widzisz?” albo „zrób zdjęcie”, Espen udziela jednorazowej zgody dla MCP `self.camera.take_photo` i po **udanym, rzeczywistym** przechwyceniu klatki dodaje do rozmowy kartę ze zdjęciem **320 × 180 RGB565**. To ta sama klatka, z której został utworzony JPEG **768 × 432** wysłany do usługi analizy (nie jest to zrzut z niepowiązanego podglądu ani obraz wygenerowany przez AI). Wygląd karty odpowiada rozmowie na ekranie: podpis „Zdjęcie z kamery”, miniatura, wyrównanie do prawej. Zdjęcie może pojawić się również po komunikacie asystenta, jeśli usługa przetwarza odpowiedź wyjątkowo szybko, ale UI wstawia je przed kolejnymi komunikatami, gdy tylko jest dostępne.
+
+**Analiza Xiaozhi domyślnie WŁ** dla urządzeń bez zapisanej preferencji (`Settings("espen_camera").GetBool("cloud_enabled",true)`). Świadomie wyłączona opcja nadal pozostaje WYŁ po restarcie. Włączenie opcji samo w sobie **nie** wysyła obrazów: `Capture` nadal wymaga wyraźnej prośby użytkownika w bieżącej rozmowie i aktywnej zgody do 45 s; wyłączenie analizy wycofuje zgodę i usuwa oczekujące zdjęcie.
+
+Zdjęcia w czacie są trzymane **wyłącznie w PSRAM**, najwyżej sześć wcześniejszych miniatur; są zwalniane po usunięciu wiadomości lub wyczyszczeniu rozmowy. Kamera i HTTPS nie dotykają LVGL bezpośrednio: wątek kamery publikuje jedno zdjęcie przez niezależny krótki mutex, a zadanie LVGL przejmuje je bez czekania na TLS. Błąd alokacji miniatury nie przerywa analizy JPEG; w takim przypadku informuje o tym log.
+
+Test na płytce: zapytaj „Ala, co widzisz?”, sprawdź `Fresh clockwise JPEG`, `Chat photo ready from same fresh frame`, `Photo displayed in chat`, a następnie odpowiedź Xiaozhi. Dla „zrób zdjęcie” efekt analogiczny. Podgląd lokalny nie wywołuje wysyłania zdjęcia.
+

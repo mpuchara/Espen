@@ -11,6 +11,9 @@ extern "C" {
 // One board-owned Camera implementation, shared by MCP and local preview.
 class EspenCamera final:public Camera {
     std::mutex mutex_;
+    // Independent from the slow HTTP/capture mutex: UI never waits on CSI or TLS.
+    std::mutex chat_photo_mutex_;
+    uint16_t* chat_photo_=nullptr; // most recent authorized photo, RGB565 320x180 in PSRAM
     std::string url_,token_;
     uint8_t* jpeg_=nullptr;
     size_t jpeg_size_=0;
@@ -19,10 +22,14 @@ class EspenCamera final:public Camera {
     std::atomic<uint32_t> grant_{0};
     std::atomic<int> activity_{0}; // 1=capture, 2=upload
     void ClearPhoto();
+    void ClearChatPhoto();
 public:
     EspenCamera();
     ~EspenCamera() override;
     bool StartLocal();
+    // Transfer ownership of the last successful capture to the LVGL chat.
+    // Caller must free with heap_caps_free; no NVS/filesystem persistence.
+    uint16_t* TakeChatPhoto();
     void SetCloudEnabled(bool value);
     bool CloudEnabled()const{return enabled_.load(std::memory_order_acquire);}
     bool EndpointReady()const{return endpoint_.load(std::memory_order_acquire);}
