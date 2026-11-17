@@ -8,6 +8,7 @@
 #include "standby_policy.h"
 #include "speaker_audio.h"
 #include "emotional_audio.h"
+#include "response_reactions.h"
 #include "espen_camera.h"
 #include "visual_world.h"
 #include "dirty_rect.h"
@@ -70,12 +71,13 @@ static std::atomic<uint32_t> espen_playback_meter{0};
 // Protocol sentence mailbox: bounded immutable cues. Only the producer and
 // LVGL lookup use the mutex; audio output publishes a tag without locking.
 namespace {
-struct VisualEntry {uint32_t id=0;espen::Cue cue{};};
+struct VisualEntry {uint32_t id=0;espen::Cue cue{};espen::ReplyBeat beat=espen::ReplyBeat::None;};
 std::mutex visual_mutex;
 espen::VisualContext visual_context;
 VisualEntry visual_entries[32]{};
 uint32_t visual_next=0;
 std::atomic<uint32_t> visual_packet_tag{0},visual_played_tag{0},visual_played_ms{0};
+std::atomic<espen::ReplyBeat> pending_reply_beat{espen::ReplyBeat::None};
 }
 void EspenVisualQuestion(const char* text){
     std::lock_guard<std::mutex> l(visual_mutex);
@@ -84,12 +86,18 @@ void EspenVisualQuestion(const char* text){
 void EspenVisualBegin(){
     std::lock_guard<std::mutex> l(visual_mutex);
     visual_context.Begin();visual_packet_tag.store(0,std::memory_order_release);
+    pending_reply_beat.store(espen::ReplyBeat::None,std::memory_order_release);
 }
 void EspenVisualSentence(const char* text){
     std::lock_guard<std::mutex> l(visual_mutex);
     auto cue=visual_context.Sentence(text?text:"");
+    auto beat=espen::ClassifyReplyBeat(text?text:"");
+    if(beat!=espen::ReplyBeat::None) {
+        auto none=espen::ReplyBeat::None;
+        pending_reply_beat.compare_exchange_strong(none,beat,std::memory_order_acq_rel);
+    }
     if(++visual_next==0)++visual_next;
-    visual_entries[visual_next%32]={visual_next,cue};
+    visual_entries[visual_next%32]={visual_next,cue,beat};
     visual_packet_tag.store(visual_next,std::memory_order_release);
 }
 uint32_t EspenVisualPacketTag(){return visual_packet_tag.load(std::memory_order_acquire);}
@@ -97,10 +105,10 @@ void EspenVisualPlayback(uint32_t tag){
     visual_played_ms.store(static_cast<uint32_t>(esp_timer_get_time()/1000),std::memory_order_relaxed);
     visual_played_tag.store(tag,std::memory_order_release);
 }
-static espen::Cue EspenVisualLookup(uint32_t tag){
+static VisualEntry EspenVisualLookup(uint32_t tag){
     std::lock_guard<std::mutex> l(visual_mutex);
-    auto& e=visual_entries[tag%32];
-    return e.id==tag?e.cue:espen::Cue{espen::Scene::Talk};
+    const auto& e=visual_entries[tag%32];
+    return e.id==tag?e:VisualEntry{tag,espen::Cue{espen::Scene::Talk},espen::ReplyBeat::None};
 }
 static std::atomic<uint32_t> espen_ambient_ms{0},espen_mic_meter{0};
 void EspenMicLevel(int rms) {
@@ -263,6 +271,7 @@ static bool EspenPlayEmotionalCue(espen::EmotionalCue cue, bool new_turn=false) 
 }
 void EspenListeningCue() {
     espen_response_ready.store(false, std::memory_order_release);
+    espen_fx_last_mood.store(espen::Mood::Neutral, std::memory_order_release);
     EspenPlayEmotionalCue(espen::EmotionalCue::ListenStart, true);
 }
 static espen::EmotionalCue EspenCueForMood(espen::Mood mood) {
@@ -291,7 +300,11 @@ static espen::EmotionalCue EspenCueForMood(espen::Mood mood) {
 // remembered and applied after the TTS decoder is reset, before first PCM.
 void EspenResponseCue() {
     espen_response_ready.store(true, std::memory_order_release);
-    const auto cue=EspenCueForMood(espen_fx_last_mood.load(std::memory_order_acquire));
+    const auto beat=pending_reply_beat.load(std::memory_order_acquire);
+    // Prefer the spoken sentence's playful accent over generic happy/neutral
+    // cloud emotion. One non-blocking cue per turn; TTS always wins priority.
+    const auto cue=beat!=espen::ReplyBeat::None?espen::ReplyCue(beat):
+        EspenCueForMood(espen_fx_last_mood.load(std::memory_order_acquire));
     if (cue!=espen::EmotionalCue::Count) EspenPlayEmotionalCue(cue);
 }
 static std::string EspenSpeakerStatus(){
@@ -1406,7 +1419,7 @@ class EspenDisplay : public LcdDisplay {
     lv_obj_t* visual_caption_=nullptr;
     bool visual_enabled_=true;
     int visual_mix_=0;
-    uint32_t visual_id_=0,visual_started_=0,visual_last_draw_=0;
+    uint32_t visual_id_=0,visual_started_=0,visual_last_draw_=0,reply_tag_=0;
     espen::Cue visual_cue_{};
     espen::VisualFrame visual_scratch_{};
     std::string visual_caption_text_;
@@ -1742,14 +1755,20 @@ class EspenDisplay : public LcdDisplay {
         uint32_t wall=static_cast<uint32_t>(esp_timer_get_time()/1000);
         bool loud=ambient!=0&&ambient!=last_ambient_&&wall-ambient<350&&now-last_audio_>2200;
         if(loud)last_ambient_=ambient;
-        auto f=engine_.Tick(now,phase,speech.level,speech.shape,loud);
-        auto& p=f.pose;
         uint32_t tag=visual_played_tag.load(std::memory_order_acquire);
         const bool recent_audio=tag&&wall-visual_played_ms.load(std::memory_order_relaxed)<350;
+        if(recent_audio&&phase==Phase::Speaking&&tag!=reply_tag_) {
+            // React to actual played TTS, not to text still queued in the cloud.
+            const auto played=EspenVisualLookup(tag);
+            reply_tag_=tag;
+            engine_.ReplyReact(played.beat,now);
+        }
+        auto f=engine_.Tick(now,phase,speech.level,speech.shape,loud);
+        auto& p=f.pose;
         const bool scene_on=visual_enabled_&&recent_audio&&
             (phase==Phase::Speaking||(phase==Phase::Listening&&!Application::GetInstance().GetAudioService().IsAudioProcessorRunning()));
         if(scene_on&&tag!=visual_id_){
-            auto next=EspenVisualLookup(tag);
+            auto next=EspenVisualLookup(tag).cue;
             // Keep motion continuous across consecutive sentences on the same subject.
             if(!(next==visual_cue_)||!visual_id_){visual_cue_=next;visual_started_=now;visual_last_draw_=0;}
             visual_id_=tag;
