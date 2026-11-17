@@ -209,3 +209,16 @@ Zdjęcia w czacie są trzymane **wyłącznie w PSRAM**, najwyżej sześć wcześ
 
 Test na płytce: zapytaj „Ala, co widzisz?”, sprawdź `Fresh clockwise JPEG`, `Chat photo ready from same fresh frame`, `Photo displayed in chat`, a następnie odpowiedź Xiaozhi. Dla „zrób zdjęcie” efekt analogiczny. Podgląd lokalny nie wywołuje wysyłania zdjęcia.
 
+
+
+## Tryb „Bez odbioru” — wyłącz Xiaozhi do dotknięcia lub hasła
+
+Podczas aktywnej rozmowy powiedz **„bez odbioru”** (również „Ala, bez odbioru”). Alternatywnie przeciągnij palec **w dół na ekranie głównym** (co najmniej 110 px w ciągu 1,1 s); gest działa również nad przewijaną rozmową, ale nie podczas pracy w panelach ustawień. Espen zamyka kanał audio Xiaozhi, zatrzymuje przesyłanie głosu i odtwarzanie odpowiedzi, a na buźce pokazuje **„Bez odbioru”** oraz „Z z z”. Nie usuwa historii rozmowy ani zapisanych ustawień.
+
+**W trybie „Bez odbioru” przypadkowa mowa nie uruchomi Xiaozhi**, nawet jeśli w ustawieniach wybrano „Wybudzanie: mowa”. Mikrofon pozostaje używany **wyłącznie lokalnie** do porównania z nauczonym w urządzeniu hasłem. Działanie Xiaozhi można wznowić wyłącznie:
+- świeżym **dotknięciem ekranu** (pierwszy dotyk wybudza, nie uruchamia klikniętego przypadkiem przycisku); po nim wraca poprzedni tryb wybudzania;
+- wypowiedzeniem **nauczonego hasła**, np. „Hej Ala”. Dopasowanie lokalnego profilu w NVS odblokowuje tryb standby i normalnie rozpoczyna rozmowę. Jeśli hasła nie zapisano, wznowienie jest możliwe tylko dotknięciem.
+
+Wznowienie po samym dotknięciu przywraca gotowość asystenta, **nie** wysyła od razu audio do serwera. Tryb jest tymczasowy (nie zapisywany w NVS): po restarcie urządzenie uruchamia się normalnie. Funkcje ekranu i Wi-Fi pozostają aktywne — to pauza asystenta, nie wyłączenie zasilania/mikrofonu.
+
+**Test po wgraniu:** 1) włącz „Wybudzanie: mowa”; 2) powiedz „bez odbioru” lub zsuń palcem ekran, obserwuj zamknięcie połączenia; 3) mów przez 30 sekund bez hasła, upewnij się, że nie ma sesji; 4) wypowiedz nauczone hasło, sprawdź rozmowę; 5) ponownie uśpij i dotknij ekranu, następnie sprawdź powrót automatycznej mowy; 6) sprawdź, że gest na ekranie ustawień niczego nie wyłącza. Wymagany jest test na fizycznym GT911, ponieważ testy hostowe weryfikują jedynie politykę stanów i geometrię gestu.
