@@ -1586,3 +1586,11 @@ replace("main/application.cc",
         '                    if (espen_barge_guard_.load(std::memory_order_acquire)) return;\n'
         '                    aborted_ = false;\n'
         '                    SetDeviceState(kDeviceStateSpeaking);')
+
+# Do not play a second local robot cue over the user's first words while
+# an interrupted TTS turn is handing control to the microphone.
+replace("main/application.cc",
+        '    extern void EspenListeningCue(); EspenListeningCue();',
+        '    if (!espen_barge_guard_.load(std::memory_order_acquire)) {\n'
+        '        extern void EspenListeningCue(); EspenListeningCue();\n'
+        '    }')
