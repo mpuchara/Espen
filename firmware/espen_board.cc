@@ -6,6 +6,7 @@
 #include "face_engine.h"
 #include "speech_quality.h"
 #include "speaker_audio.h"
+#include "emotional_audio.h"
 #include "espen_camera.h"
 #include "visual_world.h"
 #include "dirty_rect.h"
@@ -216,6 +217,82 @@ static void EspenSaveSpeakerVolume(int volume){
     speaker_preview_volume.store(espen::SpeakerVolume(volume),std::memory_order_release);
     Application::GetInstance().Schedule([volume](){EspenSetSpeakerVolume(volume,true);});
 }
+// Sound requests arrive from the app loop, never directly from the speaker ISR.
+// A failed, busy request is simply dropped; spoken audio always has priority.
+static std::mutex espen_fx_mutex;
+static espen::EmotionalCueLimiter espen_fx_limiter;
+static std::atomic<bool> espen_fx_enabled{true};
+static std::atomic<int> espen_fx_gain{45};
+static std::atomic<espen::Mood> espen_fx_last_mood{espen::Mood::Neutral};
+static std::atomic<bool> espen_response_ready{false};
+static void EspenLoadFxSettings() {
+    static const bool once = [](){
+        Settings cfg("espen_audio", false);
+        espen_fx_enabled.store(cfg.GetBool("fx_enabled", true), std::memory_order_relaxed);
+        espen_fx_gain.store(std::clamp(cfg.GetInt("fx_gain", 45), 0, 100), std::memory_order_relaxed);
+        return true;
+    }();
+    (void)once;
+}
+static void EspenSaveFxSettings(bool enabled, int gain) {
+    EspenLoadFxSettings();
+    gain = std::clamp(gain, 0, 100);
+    espen_fx_enabled.store(enabled, std::memory_order_release);
+    espen_fx_gain.store(gain, std::memory_order_release);
+    Settings cfg("espen_audio", true);
+    cfg.SetBool("fx_enabled", enabled);
+    cfg.SetInt("fx_gain", gain);
+}
+static bool EspenPlayEmotionalCue(espen::EmotionalCue cue, bool new_turn=false) {
+    if (!espen_speaker_pa.load(std::memory_order_acquire) ||
+        speaker_test_running.load(std::memory_order_acquire) ||
+        diag.busy.load(std::memory_order_acquire)) return false;
+    EspenLoadFxSettings();
+    std::lock_guard<std::mutex> l(espen_fx_mutex);
+    if (new_turn) espen_fx_limiter.NewTurn();
+    if (!espen_fx_enabled.load(std::memory_order_acquire)) return false;
+    const uint32_t now = static_cast<uint32_t>(esp_timer_get_time()/1000);
+    if (!espen_fx_limiter.CanPlay(cue, now)) return false;
+    const int gain = espen_fx_gain.load(std::memory_order_acquire);
+    if (!Application::GetInstance().GetAudioService().QueueEspenEmotionalCue(
+            static_cast<int>(cue), gain)) return false;
+    espen_fx_limiter.Played(cue, now);
+    ESP_LOGI(TAG, "Emotional cue queued: id=%d gain=%d", static_cast<int>(cue), gain);
+    return true;
+}
+void EspenListeningCue() {
+    espen_response_ready.store(false, std::memory_order_release);
+    EspenPlayEmotionalCue(espen::EmotionalCue::ListenStart, true);
+}
+static espen::EmotionalCue EspenCueForMood(espen::Mood mood) {
+    using espen::Mood;
+    using espen::EmotionalCue;
+    switch (mood) {
+        case Mood::Happy: return EmotionalCue::Joy;
+        case Mood::Laugh: return EmotionalCue::Laugh;
+        case Mood::Surprise: return EmotionalCue::Surprise;
+        case Mood::Thinking: return EmotionalCue::Curious;
+        case Mood::Sad: return EmotionalCue::Sigh;
+        case Mood::Love: return EmotionalCue::Heart;
+        case Mood::Confident: return EmotionalCue::Success;
+        case Mood::Shy: return EmotionalCue::Shy;
+        case Mood::Confused: return EmotionalCue::Confused;
+        case Mood::Fear: return EmotionalCue::Confused;
+        case Mood::Wink: return EmotionalCue::Cheeky;
+        case Mood::Bored: return EmotionalCue::Sigh;
+        case Mood::Sleepy: return EmotionalCue::Yawn;
+        case Mood::Excited: return EmotionalCue::Success;
+        case Mood::Angry: return EmotionalCue::Sigh;
+        default: return EmotionalCue::Count;
+    }
+}
+// The LLM emotion can arrive *before* the TTS start packet. It is
+// remembered and applied after the TTS decoder is reset, before first PCM.
+void EspenResponseCue() {
+    espen_response_ready.store(true, std::memory_order_release);
+    const auto cue=EspenCueForMood(espen_fx_last_mood.load(std::memory_order_acquire));
+    if (cue!=espen::EmotionalCue::Count) EspenPlayEmotionalCue(cue);
+}
 static std::string EspenSpeakerStatus(){
     if(!espen_speaker_pa.load(std::memory_order_acquire))return "Włącz SPK i uruchom ponownie.";
     if(speaker_test_running.load(std::memory_order_acquire))return "Odtwarzam melodię testową…";
@@ -279,10 +356,19 @@ static bool EspenDiagPlay(bool raw,bool tone=false){
     return true;
 }
 static std::atomic<bool> espen_network_error{false},espen_turn_waiting{false};
-void EspenTurnWaiting(bool waiting) {espen_turn_waiting.store(waiting,std::memory_order_relaxed);}
+void EspenTurnWaiting(bool waiting) {
+    bool previous = espen_turn_waiting.exchange(waiting, std::memory_order_acq_rel);
+    if (waiting && !previous) EspenPlayEmotionalCue(espen::EmotionalCue::ListenEnd);
+}
 static std::atomic<uint32_t> espen_local_wake_seq{0},espen_sleep_seq{0};
-void EspenLocalWakePulse() {espen_local_wake_seq.fetch_add(1,std::memory_order_relaxed);}
-void EspenSleepNow() {espen_sleep_seq.fetch_add(1,std::memory_order_relaxed);}
+void EspenLocalWakePulse() {
+    espen_local_wake_seq.fetch_add(1, std::memory_order_relaxed);
+    EspenPlayEmotionalCue(espen::EmotionalCue::Wake);
+}
+void EspenSleepNow() {
+    espen_sleep_seq.fetch_add(1, std::memory_order_relaxed);
+    EspenPlayEmotionalCue(espen::EmotionalCue::Yawn);
+}
 bool EspenNetworkAvailable() {
     auto& wifi=WifiManager::GetInstance();
     return wifi.IsInitialized()&&wifi.IsConnected();
@@ -478,6 +564,10 @@ class EspenDisplay : public LcdDisplay {
     lv_obj_t* speaker_slider_=nullptr;
     lv_obj_t* speaker_mode_label_=nullptr;
     lv_obj_t* speaker_volume_label_=nullptr;
+    lv_obj_t* fx_mode_label_=nullptr;
+    lv_obj_t* fx_gain_label_=nullptr;
+    bool fx_on_=true;
+    int fx_gain_=45;
     bool speaker_pa_requested_=false;
     int speaker_volume_=espen::kSpeakerVolumeDefault;
     int speaker_last_nonzero_=espen::kSpeakerVolumeDefault;
@@ -803,6 +893,12 @@ class EspenDisplay : public LcdDisplay {
         lv_obj_clear_flag(wake_panel_,LV_OBJ_FLAG_HIDDEN);lv_obj_move_foreground(wake_panel_);
         RefreshWake();
     }
+    void RefreshFxControls() {
+        if (fx_mode_label_) lv_label_set_text(fx_mode_label_,
+            fx_on_ ? "Odgłosy emocji: WŁ" : "Odgłosy emocji: WYŁ");
+        if (fx_gain_label_) lv_label_set_text_fmt(fx_gain_label_,
+            "Głośność odgłosów: %d%%", fx_gain_);
+    }
     void RefreshSpeakerControls(){
         if(speaker_mode_label_){
             bool active=espen_speaker_pa.load(std::memory_order_acquire);
@@ -876,6 +972,25 @@ class EspenDisplay : public LcdDisplay {
                 auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
                 self->SetSpeakerVolume(self->speaker_volume_?0:self->speaker_last_nonzero_,true);
             },this,420);
+            auto* fx=MakeButton(speaker_panel_,"Odgłosy emocji",[](lv_event_t* e){
+                auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                self->fx_on_=!self->fx_on_;
+                EspenSaveFxSettings(self->fx_on_,self->fx_gain_);
+                self->RefreshFxControls();
+            },this,420);
+            fx_mode_label_=lv_obj_get_child(fx,0);
+            auto* gain=MakeButton(speaker_panel_,"Głośność odgłosów",[](lv_event_t* e){
+                auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                self->fx_gain_=self->fx_gain_==25?45:self->fx_gain_==45?65:25;
+                EspenSaveFxSettings(self->fx_on_,self->fx_gain_);
+                self->RefreshFxControls();
+            },this,420);
+            fx_gain_label_=lv_obj_get_child(gain,0);
+            MakeButton(speaker_panel_,"Test emocji (radość)",[](lv_event_t*){
+                Application::GetInstance().Schedule([](){
+                    EspenPlayEmotionalCue(espen::EmotionalCue::Joy, true);
+                });
+            },this,420);
             MakeButton(speaker_panel_,"Test melodii (12 s)",[](lv_event_t*){
                 Application::GetInstance().Schedule([](){if(!speaker_test_running.load())EspenDiagPlay(false,true);});
             },this,420);
@@ -894,10 +1009,15 @@ class EspenDisplay : public LcdDisplay {
                 lv_obj_add_flag(self->speaker_panel_,LV_OBJ_FLAG_HIDDEN);
             },this,420);
         }
-        {Settings cfg("espen_audio",false);speaker_pa_requested_=cfg.GetBool("speaker_pa",true);}
+        EspenLoadFxSettings();
+        {Settings cfg("espen_audio",false);
+            speaker_pa_requested_=cfg.GetBool("speaker_pa",true);
+            fx_on_=cfg.GetBool("fx_enabled",true);
+            fx_gain_=std::clamp(cfg.GetInt("fx_gain",45),0,100);}
         {Settings cfg("audio",false);speaker_volume_=espen::SpeakerVolume(cfg.GetInt("output_volume",espen::kSpeakerVolumeDefault));}
         if(speaker_volume_>0)speaker_last_nonzero_=speaker_volume_;
         RefreshSpeakerControls();
+        RefreshFxControls();
         lv_label_set_text(speaker_status_,EspenSpeakerStatus().c_str());
         lv_obj_clear_flag(speaker_panel_,LV_OBJ_FLAG_HIDDEN);lv_obj_move_foreground(speaker_panel_);
     }
@@ -1994,8 +2114,17 @@ public:
     }
 
     void SetEmotion(const char* emotion) override {
-        pending_mood_.store(espen::ParseMood(emotion),std::memory_order_relaxed);
+        auto mood = espen::ParseMood(emotion);
+        pending_mood_.store(mood,std::memory_order_relaxed);
+        espen_fx_last_mood.store(mood,std::memory_order_release);
         mood_seq_.fetch_add(1,std::memory_order_release);
+        // Xiaozhi sends LLM emotion independently of TTS. Keep the face
+        // synchronized; insert a short sound before speech only if idle.
+        if (Application::GetInstance().GetDeviceState()==kDeviceStateSpeaking &&
+            espen_response_ready.load(std::memory_order_acquire)) {
+            const auto cue=EspenCueForMood(mood);
+            if (cue!=espen::EmotionalCue::Count) EspenPlayEmotionalCue(cue);
+        }
     }
 
     void SetChatMessage(const char* role, const char* message) override {

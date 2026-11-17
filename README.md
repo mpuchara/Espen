@@ -199,6 +199,7 @@ Poprawka: skrócono klucz migracji do `spk_init_v027` (13 bajtów); wartości `s
 
 Po udanym flashowaniu sprawdź log `Speaker defaults migrated: PA ON, volume 75%`, `Audio: ... NS4150 PA GPIO11 enabled` i uruchom lokalny `Test melodii (12 s)`. Dopiero ten test pokaże, czy odtwarzanie na płytce działa; nie oznaczajmy braku dźwięku jako rozwiązany bez testu.
 
+
 ## 0.2.9 — zdjęcie z kamery jako wiadomość na ekranie i analiza Xiaozhi ON
 
 Kiedy użytkownik mówi „co widzisz?” albo „zrób zdjęcie”, Espen udziela jednorazowej zgody dla MCP `self.camera.take_photo` i po **udanym, rzeczywistym** przechwyceniu klatki dodaje do rozmowy kartę ze zdjęciem **320 × 180 RGB565**. To ta sama klatka, z której został utworzony JPEG **768 × 432** wysłany do usługi analizy (nie jest to zrzut z niepowiązanego podglądu ani obraz wygenerowany przez AI). Wygląd karty odpowiada rozmowie na ekranie: podpis „Zdjęcie z kamery”, miniatura, wyrównanie do prawej. Zdjęcie może pojawić się również po komunikacie asystenta, jeśli usługa przetwarza odpowiedź wyjątkowo szybko, ale UI wstawia je przed kolejnymi komunikatami, gdy tylko jest dostępne.
@@ -209,3 +210,14 @@ Zdjęcia w czacie są trzymane **wyłącznie w PSRAM**, najwyżej sześć wcześ
 
 Test na płytce: zapytaj „Ala, co widzisz?”, sprawdź `Fresh clockwise JPEG`, `Chat photo ready from same fresh frame`, `Photo displayed in chat`, a następnie odpowiedź Xiaozhi. Dla „zrób zdjęcie” efekt analogiczny. Podgląd lokalny nie wywołuje wysyłania zdjęcia.
 
+## 0.2.10 — Emotional Audio Engine (zawiera całość 0.2.9) (proponowane, wymagany test sprzętowy)
+
+Ala zyskała **17 lokalnie syntezowanych, krótkich sygnałów**: pobudka, początek/koniec słuchania, zastanawianie, rozpoczęcie odpowiedzi, radość, śmiech, zdziwienie, zaciekawienie, westchnienie, sympatia, figlarność, sukces, dezorientacja, ziewanie, problem z siecią i nieśmiałość. Nie są to nagrania ludzkiego głosu: dźwięki mają robotyczny charakter. Są generowane jako krótkie PCM16 24 kHz i korzystają z **tego samego zadania odtwarzania oraz kodeka ES8311** co mowa Xiaozhi. Nie uruchamiamy drugiego sterownika I2S, nie tworzymy strumienia do chmury i nie zmieniamy konfiguracji wzmacniacza NS4150 ani domyślnego SPK ON/75%.
+
+Automatyczne wyzwalanie: lokalne hasło wybudzenia, rzeczywiste rozpoczęcie słuchania po resecie dekodera, przejście do oczekiwania na odpowiedź oraz wybrane emocje przesyłane przez Xiaozhi w komunikacie `llm.emotion` podczas mówienia. Istniejąca animowana twarz korzysta z tej samej emocji. W odróżnieniu od wstawiania znaczników do tekstu odpowiedzi, **nie wypowiadamy** nazw efektów. Z uwagi na płynność rozmowy gramy najwyżej jeden dźwięk emocji na turę, pomijamy efekt przy zajętym torze TTS i ograniczamy częstotliwość krótkich sygnałów stanu.
+
+Ustawienia → Głośność: przyciski `Odgłosy emocji` (WŁ/WYŁ), `Głośność odgłosów` (25/45/65%) i `Test emocji (radość)`. Preferencje są zapisywane jako krótkie klucze NVS `fx_enabled` i `fx_gain` w `espen_audio`. Regulacja efektów jest niezależna od poziomu PCM, natomiast globalny suwak i wyciszenie nadal dotyczą całego dźwięku.
+
+**Ważne:** jeśli emocja przyjdzie już podczas odtwarzania TTS, efekt zostanie pominięty zamiast przerywać słowa. To celowy priorytet niezawodności; pełny miks pod głosem wymaga osobnego etapu. Kod podlega buildowi CI, ale dopóki nie ma zielonego CI i odsłuchu na fizycznym P4, nie uznajemy brzmienia ani stabilności za potwierdzone.
+
+Test fizyczny: z włączonym SPK i głośnością 75% otwórz Głośność → `Test emocji`, potem wywołaj hasło, zadaj kilka pytań i sprawdź, czy słychać początek i koniec słuchania oraz czy model podsyła emocję `llm.emotion`. W logach szukaj `Emotional cue queued: id=... gain=...`. Sprawdź, czy nie występują restarty, trzaski ani opóźnienia odpowiedzi, także po 10 kolejnych turach. Aktualizuj aplikację i assets bez kasowania NVS.
