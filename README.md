@@ -289,3 +289,36 @@ Wersja **0.2.12** zachowuje wszystkie funkcje 0.2.11 (kamera/Xiaozhi, wybudzenie
 Dźwięk jest opcjonalny i nieblokujący, a rozpoznawanie gestów działa wyłącznie na tekście wypowiadanym przez asystenta, nie na STT użytkownika. Animacje uruchamia znacznik **rzeczywiście odtwarzanego** PCM, trwają maksymalnie 1,8 s, respektują emocje Xiaozhi i nie zmieniają ruchu ust sterowanego PCM. Wydawanie dźwięku **nie ma pierwszeństwa przed mową**: jeśli odpowiedź już płynie lub kolejki są zajęte, sygnał jest pomijany. Priorytet mają wyłączenie rozmowy, wake-word i barge-in. Żaden nowy efekt nie wymaga internetu, dodatkowych plików dźwiękowych ani trwałych buforów nagrań.
 
 **Testy:** `tests/test_reply_reactions.cc` (20 klasyfikacji, mimika, priorytety), `tests/test_emotional_audio.cc` (37 efektów, obwiednia/limiter), komplet istniejących testów w `scripts/build.sh`, kompilacja firmware w GitHub Actions. Realne opóźnienie względem TTS i głośność należy zweryfikować na ESP32-P4 po wgraniu.
+
+## Espen 0.2.13 — Inteligentny mikrofon
+
+**Ustawienia → Diagnostyka mowy → Profil mikrofonu:**
+Automatyczny (domyślnie **36 dB**), Standardowy (30 dB),
+Czuły (36 dB), Bardzo czuły (42 dB). Po zmianie wybierz
+**Zastosuj / restart**. Profil zapisujemy w `espen_audio/mic_profile`.
+Starsze instalacje bez tego klucza zachowują dotychczasowe `mic_gain`
+(24/30/36/42 dB) jako „Poprzednie ustawienie”. Nie kasujemy NVS,
+Wi-Fi, parowania Xiaozhi ani nauczonego hasła.
+
+- **Automatyczny:** przy niskim szumie łagodniejszy próg startu mowy
+  i hasła głosowego, przy większym hałasie próg podnosi się.
+  Pozostałe tryby mają progi o rosnącej czułości. Dwa detektory
+  używają tego samego strumienia mikrofonu i nie wysyłają audio do
+  chmury w oczekiwaniu na hasło.
+- **Aktywna rozmowa:** WebRTC AGC, kompensacja 6 dB (standardowy/stary
+  ręczny), 9 dB (Auto/Czuły), 12 dB (Bardzo czuły). AGC można wyłączyć.
+  NSNet2 nadal jest wyłączony z powodu wcześniejszego błędu FFT P4;
+  VADNet1 pozostaje aktywny, nie włączamy AEC. To wartości do
+  przetestowania, nie gwarancja rozpoznania polskiej mowy.
+- **Diagnostyka:** pasek aktualnego poziomu mikrofonu oraz RMS, peak,
+  szum i przesterowanie; stary test RAW/Opus do 12 s w RAM pozostaje.
+  Bez zmian w torze głośnika, barge-in i trybie „Bez odbioru”.
+
+**Test fizyczny:** porównaj Auto 36 dB ze Standardowym 30 dB,
+następnie Czułym i opcjonalnie 42 dB. Powtórz „Hej Ala” i pytania
+z bliska oraz z 1–2 metrów, w ciszy i przy telewizorze. Obejrzyj
+RMS/peak/clipping, odsłuch RAW/Opus i transkrypcje Xiaozhi.
+Przetestuj 10 przerwań TTS, brak samowybudzania, 10 dialogów
+bez restartu. Gdy 42 dB powoduje przester lub fałszywe wybudzenia,
+wróć do Auto lub Standardowego. Kompilacja CI nie zastąpi testu
+na fizycznym ESP32-P4.

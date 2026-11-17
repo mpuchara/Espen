@@ -15,6 +15,22 @@ int main(){
     for(int i=0;i<5;++i)assert(!vad.Feed(quiet.data(),quiet.size(),20,25));
     for(int i=0;i<5;++i)assert(!vad.Feed(voice.data(),voice.size(),400,25));
     assert(vad.Feed(voice.data(),voice.size(),400,25));
+    // Same quiet voice is rejected by Standard but captured by Sensitive.
+    espen::SpeechOnset standard,sensitive;
+    std::array<int16_t,320> soft{};
+    for(size_t i=0;i<soft.size();++i)
+        soft[i]=static_cast<int16_t>(105*std::sin(6.2831853*240*i/16000.0));
+    for(int i=0;i<5;++i) {
+        assert(!standard.Feed(quiet.data(),quiet.size(),20,30,espen::kMicModeStandard));
+        assert(!sensitive.Feed(quiet.data(),quiet.size(),20,30,espen::kMicModeSensitive));
+    }
+    for(int i=0;i<5;++i) {
+        assert(!standard.Feed(soft.data(),soft.size(),72,30,espen::kMicModeStandard));
+        assert(!sensitive.Feed(soft.data(),soft.size(),72,30,espen::kMicModeSensitive));
+    }
+    assert(!standard.Feed(soft.data(),soft.size(),72,30,espen::kMicModeStandard));
+    assert(sensitive.Feed(soft.data(),soft.size(),72,30,espen::kMicModeSensitive));
+    assert(!sensitive.Feed(soft.data(),soft.size(),72,30,espen::kMicModeSensitive));
     std::array<int16_t,8> buf{},out{};
     espen::SpeechRing ring;ring.Attach(buf.data(),buf.size());
     const int16_t a[]={1,2,3,4,5,6},b[]={7,8,9,10,11,12};
