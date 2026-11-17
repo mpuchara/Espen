@@ -1348,15 +1348,15 @@ replace("main/application.cc",
 # The request is nonblocking and dropped if an assistant packet has priority.
 replace("main/audio/audio_service.h",
         '    uint32_t playback_id = 0;',
-        '    uint32_t playback_id = 0;\\n'
-        '    int espen_cue = -1;\\n'
+        '    uint32_t playback_id = 0;\n'
+        '    int espen_cue = -1;\n'
         '    int espen_cue_gain = 45;')
 replace("main/audio/audio_service.h",
         '    bool QueueEspenDiagnosticPcm(std::vector<int16_t>&& pcm);',
-        '    bool QueueEspenDiagnosticPcm(std::vector<int16_t>&& pcm);\\n'
+        '    bool QueueEspenDiagnosticPcm(std::vector<int16_t>&& pcm);\n'
         '    bool QueueEspenEmotionalCue(int cue, int gain);')
 replace("main/audio/audio_service.cc", '#include <esp_heap_caps.h>',
-        '#include <esp_heap_caps.h>\\n#include "emotional_audio.h"')
+        '#include <esp_heap_caps.h>\n#include "emotional_audio.h"')
 replace("main/audio/audio_service.cc",
         'bool AudioService::QueueEspenDiagnosticPcm(std::vector<int16_t>&& pcm) {',
         """bool AudioService::QueueEspenEmotionalCue(int cue, int gain) {
@@ -1377,31 +1377,31 @@ replace("main/audio/audio_service.cc",
 
 bool AudioService::QueueEspenDiagnosticPcm(std::vector<int16_t>&& pcm) {""")
 replace("main/audio/audio_service.cc",
-        '        auto task = std::move(audio_playback_queue_.front());\\n        audio_playback_queue_.pop_front();',
-        '        auto task = std::move(audio_playback_queue_.front());\\n'
-        '        const uint32_t espen_generation = playback_generation_;\\n'
+        '        auto task = std::move(audio_playback_queue_.front());\n        audio_playback_queue_.pop_front();',
+        '        auto task = std::move(audio_playback_queue_.front());\n'
+        '        const uint32_t espen_generation = playback_generation_;\n'
         '        audio_playback_queue_.pop_front();')
 replace("main/audio/audio_service.cc",
-        '        EspenVisualPlayback(task.espen_visual_cue);\\n'
-        '        EspenPlaybackLevel(task.pcm.data(), task.pcm.size());\\n'
+        '        EspenVisualPlayback(task.espen_visual_cue);\n'
+        '        EspenPlaybackLevel(task.pcm.data(), task.pcm.size());\n'
         '        codec_->OutputData(task.pcm);',
-        '        if (task.espen_cue >= 0) {\\n'
-        '            task.pcm = espen::RenderEmotionalCue(\\n'
-        '                static_cast<espen::EmotionalCue>(task.espen_cue),\\n'
-        '                codec_->output_sample_rate(), task.espen_cue_gain);\\n'
-        '            std::lock_guard<std::mutex> cue_lock(audio_queue_mutex_);\\n'
-        '            if (espen_generation != playback_generation_) task.pcm.clear();\\n'
-        '        }\\n'
-        '        if (!task.pcm.empty()) {\\n'
-        '            EspenVisualPlayback(task.espen_visual_cue);\\n'
-        '            EspenPlaybackLevel(task.pcm.data(), task.pcm.size());\\n'
-        '            codec_->OutputData(task.pcm);\\n'
+        '        if (task.espen_cue >= 0) {\n'
+        '            task.pcm = espen::RenderEmotionalCue(\n'
+        '                static_cast<espen::EmotionalCue>(task.espen_cue),\n'
+        '                codec_->output_sample_rate(), task.espen_cue_gain);\n'
+        '            std::lock_guard<std::mutex> cue_lock(audio_queue_mutex_);\n'
+        '            if (espen_generation != playback_generation_) task.pcm.clear();\n'
+        '        }\n'
+        '        if (!task.pcm.empty()) {\n'
+        '            EspenVisualPlayback(task.espen_visual_cue);\n'
+        '            EspenPlaybackLevel(task.pcm.data(), task.pcm.size());\n'
+        '            codec_->OutputData(task.pcm);\n'
         '        }')
 # The stock upstream OGG popup is replaced to avoid playing twice and
 # prevent its large decoder start from obscuring the new short listening cue.
 replace("main/application.cc",
         '    // Play popup sound after ResetDecoder (in EnableVoiceProcessing) has been called',
-        '    extern void EspenListeningCue(); EspenListeningCue();\\n\\n'
+        '    extern void EspenListeningCue(); EspenListeningCue();\n\n'
         '    // Play popup sound after ResetDecoder (in EnableVoiceProcessing) has been called')
 replace("main/application.cc",
         '        audio_service_.PlaySound(Lang::Sounds::OGG_POPUP);',
