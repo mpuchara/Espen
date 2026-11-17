@@ -1,4 +1,5 @@
 #pragma once
+#include "speech_quality.h"
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -12,9 +13,9 @@ class SpeechOnset {
     bool ready_=false;
 public:
     void Reset() {voiced_=quiet_=0;ready_=false;}
-    bool Feed(const int16_t* pcm,size_t n,float rms,float noise) {
+    bool Feed(const int16_t* pcm,size_t n,float rms,float noise,int mic_mode=kMicModeStandard) {
         if(!pcm||n<2)return false;
-        const float gate=std::max(65.f,noise*2.6f);
+        const float gate=MicGate(noise,mic_mode,false);
         if(rms<gate) {
             voiced_=0;
             if(++quiet_>=5)ready_=true;
