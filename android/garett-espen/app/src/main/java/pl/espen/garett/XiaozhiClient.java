@@ -46,6 +46,9 @@ public final class XiaozhiClient {
         void emotion(String emotion);
         void level(int value, boolean microphone);
         void activation(String code);
+        void reaction(String cue);
+        void photo(byte[] jpeg);
+        void standby();
     }
     public static final class Identity {
         public final String deviceId, clientId;
@@ -57,6 +60,9 @@ public final class XiaozhiClient {
     private final Events events;
     private final Vision vision;
     private final WatchAudio audio;
+    private final WatchControls controls;
+    private final WatchBargeIn barge;
+    private volatile int speakerPower;
     private final ScheduledExecutorService worker=Executors.newSingleThreadScheduledExecutor();
     private final AtomicBoolean otaBusy=new AtomicBoolean();
     private final OkHttpClient http=new OkHttpClient.Builder()
@@ -79,10 +85,25 @@ public final class XiaozhiClient {
 
     public XiaozhiClient(Activity a, Events listener) {
         activity=a;events=listener;identity=id(a);vision=new Vision(a,http);
+        controls=new WatchControls(a);
+        if(!prefs(a).getBoolean("initial_volume_set",false)){
+            controls.setVolume(75);
+            prefs(a).edit().putBoolean("initial_volume_set",true).apply();
+        }
+        vision.setImageListener(events::photo);
+        barge=new WatchBargeIn(a,new WatchBargeIn.Callback(){
+            @Override public boolean canMonitor(){return talking&&sessionReady&&!closed;}
+            @Override public int outputLevel(){return speakerPower;}
+            @Override public void interrupted(){interrupt();}
+            @Override public void unavailable(String why){events.status("Przerywanie głosem niedostępne ("+why+"); użyj dotyku");}
+        });
         vision.setEnabled(prefs(a).getBoolean("vision",true)); // enabled by default, explicit voice request required before upload
         audio=new WatchAudio(a,new WatchAudio.Reporter(){
             @Override public void report(String message){events.status(message);}
-            @Override public void pcmLevel(int value){events.level(value,false);}
+            @Override public void pcmLevel(int value){
+                speakerPower=value;events.level(value,false);
+                if(value>0&&talking&&prefs(activity).getBoolean("barge_in",false))barge.start();
+            }
         });
     }
     private static SharedPreferences prefs(Context c){return c.getSharedPreferences("espen_watch_v1",Context.MODE_PRIVATE);}
@@ -111,6 +132,25 @@ public final class XiaozhiClient {
         prefs(activity).edit().putBoolean("vision",enable).apply();vision.setEnabled(enable);
     }
     public boolean isVisionEnabled(){return vision.isEnabled();}
+    public WatchControls controls(){return controls;}
+    public void setBargeIn(boolean enabled){
+        prefs(activity).edit().putBoolean("barge_in",enabled).apply();
+        if(!enabled)barge.stop();
+    }
+    public boolean bargeIn(){return prefs(activity).getBoolean("barge_in",false);}
+    public void standby(){stop();}
+    public void interrupt(){
+        if(!talking){toggle();return;}
+        barge.stop();
+        // Shut down playback before reopening the microphone. The vendor audio
+        // HAL may crash if new AudioRecord and AudioTrack overlap.
+        worker.execute(()->{
+            finishSession();
+            if(!closed)worker.schedule(()->{
+                if(socket==null&&!sessionStarting)toggle();
+            },550,TimeUnit.MILLISECONDS);
+        });
+    }
     public void testSpeaker(){
         if(socket!=null||sessionStarting){events.status("Zakończ rozmowę przed testem dźwięku");return;}
         WatchAudio.testSpeaker(activity,new WatchAudio.Reporter(){
@@ -276,6 +316,7 @@ public final class XiaozhiClient {
             events.status("Zezwól aplikacji na mikrofon");return;
         }
         micSentFrames=0;peakMicRms=0;sttResponses=0;ttsResponses=0;micStage="start";
+        ttsStoppedAt=0;
         sessionStarting=true;events.state(FaceView.State.CONNECTING);events.status("Łączę z Alą…");
         worker.execute(()->{
             try {
@@ -356,6 +397,13 @@ public final class XiaozhiClient {
                 case "stt":
                     sttResponses++;
                     String phrase=o.optString("text","");
+                    String normalized=java.text.Normalizer.normalize(phrase.toLowerCase(java.util.Locale.ROOT),
+                        java.text.Normalizer.Form.NFD).replaceAll("\\p{M}+","").replace('ł','l');
+                    if(normalized.contains("bez odbioru")){
+                        finishSession();
+                        events.standby();
+                        break;
+                    }
                     vision.noteUserSpeech(phrase);
                     events.caption(phrase);
                     events.state(FaceView.State.THINKING);
@@ -367,6 +415,7 @@ public final class XiaozhiClient {
                 case "tts":
                     String state=o.optString("state","");
                     if("start".equals(state)){
+                        barge.stop();
                         ttsResponses++;
                         talking=true;ttsStoppedAt=0;endMic();
                         // Avoid simultaneous AudioRecord and AudioTrack initialization
@@ -378,9 +427,14 @@ public final class XiaozhiClient {
                         events.state(FaceView.State.SPEAKING);
                         events.status("Odbieram odpowiedź głosową…");
                     }
-                    else if("sentence_start".equals(state))events.caption(o.optString("text",""));
+                    else if("sentence_start".equals(state)){
+                        String spoken=o.optString("text","");
+                        events.caption(spoken);
+                        String cue=audio.reaction(spoken);
+                        if(!cue.isEmpty())events.reaction(cue);
+                    }
                     else if("stop".equals(state)){
-                        talking=false;ttsStoppedAt=SystemClock.elapsedRealtime();
+                        talking=false;barge.stop();ttsStoppedAt=SystemClock.elapsedRealtime();
                         worker.schedule(this::finishAfterAudio,1200,TimeUnit.MILLISECONDS);
                     }
                     break;
@@ -500,7 +554,7 @@ public final class XiaozhiClient {
     private void finishSession(){
         if(closed)return;
         WebSocket s=socket;socket=null;sessionReady=false;sessionStarting=false;
-        endMic();
+        endMic();barge.stop();
         if(s!=null)s.close(1000,"Done");
         closeAudio();
         events.state(FaceView.State.IDLE);
@@ -565,7 +619,10 @@ public final class XiaozhiClient {
             JSONObject volume=new JSONObject().put("name","self.audio_speaker.set_volume")
                 .put("description","Ustaw głośność zegarka (0–100)")
                 .put("inputSchema",volumeSchema);
-            mcpResult(id,new JSONObject().put("tools",new JSONArray().put(camera).put(volume)),modern);
+            JSONArray advertised=new JSONArray().put(camera).put(volume);
+            JSONArray watch=WatchControls.tools();
+            for(int i=0;i<watch.length();i++)advertised.put(watch.get(i));
+            mcpResult(id,new JSONObject().put("tools",advertised),modern);
             return;
         }
         if(!"tools/call".equals(method)){mcpError(id,-32601,"Nieznana metoda");return;}
@@ -580,6 +637,9 @@ public final class XiaozhiClient {
                 audio.setStreamVolume(AudioManager.STREAM_MUSIC,max*v/100,0);
             }
             mcpText(id,"OK",false,modern);return;
+        }
+        if(WatchControls.handles(tool)){
+            mcpText(id,controls.command(tool,args),false,modern);return;
         }
         if("self.camera.take_photo".equals(tool)){
             String question=args.optString("question","Co widzisz?");
@@ -600,7 +660,7 @@ public final class XiaozhiClient {
         mcpError(id,-32602,"Nieznane narzędzie");
     }
     private JSONObject serverInfo() throws JSONException{
-        return new JSONObject().put("name","Garett Espen").put("version","0.1.0");
+        return new JSONObject().put("name","Garett Espen").put("version","0.2.12-watch");
     }
     private void mcpResult(Object id,JSONObject value,boolean modern) throws JSONException{
         if(modern){
@@ -622,7 +682,7 @@ public final class XiaozhiClient {
                 new JSONObject().put("code",code).put("message",message))));
     }
     public void shutdown(){
-        closed=true;recording=false;
+        closed=true;recording=false;barge.stop();
         WebSocket s=socket;socket=null;if(s!=null)s.cancel();
         sessionReady=false;vision.shutdown();worker.shutdownNow();
         closeAudio();http.dispatcher().executorService().shutdown();
