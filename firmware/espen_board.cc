@@ -229,7 +229,7 @@ static void EspenLoadFxSettings() {
     static const bool once = [](){
         Settings cfg("espen_audio", false);
         espen_fx_enabled.store(cfg.GetBool("fx_enabled", true), std::memory_order_relaxed);
-        espen_fx_gain.store(std::clamp(cfg.GetInt("fx_gain", 45), 0, 100), std::memory_order_relaxed);
+        espen_fx_gain.store(std::clamp(static_cast<int>(cfg.GetInt("fx_gain", 45)), 0, 100), std::memory_order_relaxed);
         return true;
     }();
     (void)once;
@@ -1013,7 +1013,7 @@ class EspenDisplay : public LcdDisplay {
         {Settings cfg("espen_audio",false);
             speaker_pa_requested_=cfg.GetBool("speaker_pa",true);
             fx_on_=cfg.GetBool("fx_enabled",true);
-            fx_gain_=std::clamp(cfg.GetInt("fx_gain",45),0,100);}
+            fx_gain_=std::clamp(static_cast<int>(cfg.GetInt("fx_gain",45)),0,100);}
         {Settings cfg("audio",false);speaker_volume_=espen::SpeakerVolume(cfg.GetInt("output_volume",espen::kSpeakerVolumeDefault));}
         if(speaker_volume_>0)speaker_last_nonzero_=speaker_volume_;
         RefreshSpeakerControls();
