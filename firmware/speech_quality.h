@@ -47,7 +47,7 @@ inline const char* MicModeName(int mode) {
 }
 inline int MicModeGain(int mode,int legacy_gain=30) {
     switch(mode) {
-        case kMicModeAuto: return 36;
+        case kMicModeAuto: return 30;
         case kMicModeStandard: return 30;
         case kMicModeSensitive: return 36;
         case kMicModeVerySensitive: return 42;
@@ -56,7 +56,8 @@ inline int MicModeGain(int mode,int legacy_gain=30) {
     }
 }
 inline int MicModeAgcBoost(int mode) {
-    if(mode==kMicModeAuto||mode==kMicModeSensitive)return 9;
+    if(mode==kMicModeAuto)return 6;
+    if(mode==kMicModeSensitive)return 9;
     if(mode==kMicModeVerySensitive)return 12;
     return 6;
 }
