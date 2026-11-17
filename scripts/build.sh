@@ -8,12 +8,13 @@ python3 - <<'PYVERSION'
 import json
 from pathlib import Path
 for file in ("web/manifest.json", "web/manifest-full.json"):
-    assert json.loads(Path(file).read_text())["version"] == "0.2.13", file
-assert "0.2.13 EXPERIMENTAL" in Path("web/index.html").read_text()
-assert "Espen 0.2.13 boot:" in Path("firmware/espen_board.cc").read_text()
+    assert json.loads(Path(file).read_text())["version"] == "0.2.14", file
+assert "0.2.14 EXPERIMENTAL" in Path("web/index.html").read_text()
+assert "Espen 0.2.14 boot:" in Path("firmware/espen_board.cc").read_text()
 PYVERSION
 # Source-level integration guards for the LVGL/MCP bridge (plus host vision gate tests).
 python3 tests/test_photo_chat_integration.py
+python3 tests/test_tv_safe_release.py
 # Host-side regression tests for the local wake feature extractor and DTW.
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_wake_features.cc -o /tmp/espen-wake-test
 /tmp/espen-wake-test
