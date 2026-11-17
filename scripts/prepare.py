@@ -663,7 +663,7 @@ replace("main/application.cc",
         '    EspenWake().Load();\n    espen_wake_ready_ = true;',
         '    EspenWake().Load();\n'
         '    Settings espen_ui("espen_ui", false);\n'
-        '    EspenWake().SetAutoSpeech(espen_ui.GetBool("auto_speech", true));\n'
+        '    EspenWake().SetAutoSpeech(espen_ui.GetBool("auto_speech", false));\n'
         '    espen_wake_ready_ = true;')
 replace("main/application.cc",
         '    const bool allowed = state == kDeviceStateStarting || state == kDeviceStateActivating ||',
