@@ -349,6 +349,12 @@ przypadkową aktywacją to **nauczone hasło wybudzające** albo dotyk.
   nie powinny uciąć odpowiedzi. Głośny TV nadal może dać fałszywy
   sygnał — to ograniczenie pojedynczego mikrofonu bez AEC.
   Dotyk nadal przerywa odpowiedź od razu.
+- **Tury odpowiedzi:** po pierwszym pytaniu w normalnym trybie AutoStop
+  robot nie wraca już automatycznie do ciągłego słuchania Xiaozhi.
+  Pozostaje w fazie mówienia do faktycznego opróżnienia buforów TTS,
+  dopiero wtedy zamyka sesję i przechodzi na lokalne „Hej Ala”.
+  Zachowujemy historię tekstową czatu na ekranie, jawne sterowanie
+  dotykiem i inne tryby serwera.
 - Zostawiliśmy VADNet1, zachowaliśmy wyłączony NSNet2 (crash FFT na
   ESP32-P4 rev1), nie dodaliśmy obciążającego drugiego AFE ani
   nowych nagrań trwałych. Zapis hasła i poprzednie funkcje 0.2.13
