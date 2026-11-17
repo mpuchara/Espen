@@ -22,13 +22,15 @@ final class WatchBargeIn {
     private final Activity a;
     private final Callback cb;
     private volatile boolean running;
+    private volatile boolean unavailable;
     private Thread thread;
     WatchBargeIn(Activity a,Callback cb){this.a=a;this.cb=cb;}
     synchronized void start(){
-        if(running||a.checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED)return;
+        if(running||unavailable||a.checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED)return;
         running=true;thread=new Thread(this::monitor,"ala-barge-in");
         thread.setDaemon(true);thread.start();
     }
+    synchronized void reset(){unavailable=false;stop();}
     synchronized void stop(){
         running=false;
         if(thread!=null)thread.interrupt();
@@ -69,7 +71,7 @@ final class WatchBargeIn {
                 }
             }
         }catch(Throwable e){
-            if(running)cb.unavailable(e.getClass().getSimpleName());
+            if(running){unavailable=true;cb.unavailable(e.getClass().getSimpleName());}
         }finally{
             if(record!=null){try{record.stop();}catch(Throwable ignored){}
                 try{record.release();}catch(Throwable ignored){}}
