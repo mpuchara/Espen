@@ -308,11 +308,14 @@ static espen::EmotionalCue EspenCueForMood(espen::Mood mood) {
 // the first sentence whenever possible, rather than consuming the limiter on
 // generic cloud happiness before the more specific spoken phrase arrives.
 static void EspenTryResponseCue(espen::ReplyBeat beat) {
-    if(!espen_response_ready.load(std::memory_order_acquire)||
-       espen_fx_response_attempted.exchange(true,std::memory_order_acq_rel))return;
+    if(!espen_response_ready.load(std::memory_order_acquire))return;
     const auto cue=beat!=espen::ReplyBeat::None?espen::ReplyCue(beat):
         EspenCueForMood(espen_fx_last_mood.load(std::memory_order_acquire));
-    if(cue!=espen::EmotionalCue::Count)EspenPlayEmotionalCue(cue);
+    // No emotion specified? Leave the single cue slot free for a later
+    // meaningful sentence rather than permanently consuming it.
+    if(cue==espen::EmotionalCue::Count||
+       espen_fx_response_attempted.exchange(true,std::memory_order_acq_rel))return;
+    EspenPlayEmotionalCue(cue);
 }
 void EspenResponseCue() {
     espen_response_ready.store(true,std::memory_order_release);
