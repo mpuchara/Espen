@@ -96,6 +96,8 @@ class FaceEngine {
     Social social_=Social::None;
     ReplyBeat reply_=ReplyBeat::None;
     uint32_t reply_at_=0;
+    uint32_t blush_at_=0;
+    bool blush_active_=false;
     uint32_t social_at_=0,social_until_=0,last_startle_=0;
     Affinity affinity_;
     bool initialized_=false, blink_active_=false, double_blink_=false, second_blink_=false;
@@ -109,6 +111,7 @@ class FaceEngine {
     void ResetIdle(uint32_t now) { idle_since_=now; next_micro_=now+20000+Rand(15000); micro_active_=false; }
 public:
     static constexpr uint32_t kSleepMs=5000;
+    static constexpr uint32_t kBlushMs=47000;
     void Celebrate(uint32_t now) {celebrating_=true;celebrate_at_=now;ResetIdle(now);}
     void LocalWake(uint32_t now) {local_waking_=true;local_wake_at_=now;wake_anim_=true;wake_anim_at_=now;force_sleep_=false;ResetIdle(now);}
     void SleepNow(uint32_t now) {force_sleep_=true;idle_since_=now-kSleepMs;}
@@ -134,10 +137,15 @@ public:
         force_sleep_=false;
         if(phase_==Phase::Idle||phase_==Phase::Offline||phase_==Phase::Startup) ResetIdle(now);
     }
-    // A short acting cue synchronized to the currently played assistant sentence.
-    // Does not change listening, wake-word, cloud emotion or microphone ownership.
+    // Reply cues usually last for one sentence. The shy blush has a separate
+    // 47-second visual afterglow that survives speech-to-listening transitions.
+    // Neither cue changes the microphone, wake word or speech ownership.
     void ReplyReact(ReplyBeat beat,uint32_t now) {
         reply_=beat; reply_at_=now;
+        if(beat==ReplyBeat::Blush) {
+            blush_active_=true;
+            blush_at_=now;
+        }
     }
     void SocialReact(Social reaction,uint32_t now) {
         if(reaction==Social::None)return;
@@ -184,6 +192,7 @@ public:
             }
         }
         if(gesture_active_ && Due(now,gesture_until_)) gesture_active_=false;
+        if(blush_active_ && now-blush_at_>=kBlushMs) blush_active_=false;
         if(social_!=Social::None&&Due(now,social_until_))social_=Social::None;
         if(micro_active_ && Due(now,micro_until_)) micro_active_=false;
         if(celebrating_ && now-celebrate_at_>=2200) celebrating_=false;
@@ -191,7 +200,9 @@ public:
         bool quiet=phase==Phase::Idle||phase==Phase::Offline||phase==Phase::Startup;
         bool dance=celebrating_&&quiet;
         uint32_t idle=quiet?now-idle_since_:0;
-        bool asleep=quiet && (force_sleep_||idle>=kSleepMs) && !touch_ && !gesture_active_ && social_==Social::None && !dance && !local_waking_;
+        // Keep the face awake while the blush is visible, unless explicitly asleep.
+        bool asleep=quiet && (force_sleep_||idle>=kSleepMs) && !touch_ && !gesture_active_ && social_==Social::None && !dance && !local_waking_
+            && !(blush_active_ && !force_sleep_);
         if(loud && quiet && !touch_ && !gesture_active_ && social_==Social::None &&
            !dance && !local_waking_ && (!last_startle_||now-last_startle_>=3500)) {
             last_startle_=now;gesture_=Mood::Surprise;gesture_active_=true;gesture_until_=now+1100;
@@ -270,6 +281,12 @@ public:
         }
         if(asleep) mood=Mood::Sleepy;
         Pose p=Expression(mood);
+        // Pink cheeks persist independently of sentence cues and phase changes.
+        // Leave lip-sync and gaze responsiveness intact while Ala is talking/listening.
+        if(blush_active_ && !asleep && !force_sleep_) {
+            p.accent=Accent::Blush;
+            p.color=BlendColor(p.color,0xFFADC9,65);
+        }
         // A goodnight wish is a friendly sleepy face, not a command to
         // interrupt ongoing speech or listening.
         if(social_==Social::Goodnight && phase==Phase::Speaking) {
