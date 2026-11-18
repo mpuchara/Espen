@@ -15,6 +15,7 @@ PYVERSION
 # Source-level integration guards for the LVGL/MCP bridge (plus host vision gate tests).
 python3 tests/test_photo_chat_integration.py
 python3 tests/test_tv_safe_release.py
+python3 tests/test_phone_panel.py
 # Host-side regression tests for the local wake feature extractor and DTW.
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_wake_features.cc -o /tmp/espen-wake-test
 /tmp/espen-wake-test
