@@ -15,6 +15,7 @@ PYVERSION
 # Source-level integration guards for the LVGL/MCP bridge (plus host vision gate tests).
 python3 tests/test_photo_chat_integration.py
 python3 tests/test_tv_safe_release.py
+python3 tests/test_phone_panel.py
 # Host-side regression tests for the local wake feature extractor and DTW.
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_wake_features.cc -o /tmp/espen-wake-test
 /tmp/espen-wake-test
@@ -77,6 +78,7 @@ test -s upstream/local_components/espressif__esp_hosted/common/protobuf-c/protob
 test -s upstream/local_components/espressif__esp_hosted/common/protobuf-c/protobuf-c/protobuf-c.h
 
 python3 scripts/prepare.py upstream
+python3 scripts/prepare_phone.py upstream
 # Verify both hardware-unmute and 75% defaults in the generated source.
 grep -Fq 'int output_volume_ = 75;' upstream/main/audio/audio_codec.h
 grep -Fq 'Espen speaker: PA GPIO%d level=%d DAC volume=%d%% output=%d gpio_err=%s' upstream/main/audio/codecs/es8311_audio_codec.cc

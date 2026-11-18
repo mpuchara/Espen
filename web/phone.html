@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b1220"><title>Ala · Pilot na telefon</title>
+<style>
+:root{font-family:system-ui,-apple-system,sans-serif;color-scheme:dark;color:#eff6ff;background:#080e19}
+*{box-sizing:border-box}body{margin:0;padding:env(safe-area-inset-top) 14px calc(env(safe-area-inset-bottom) + 34px);background:radial-gradient(circle at top,#203652 0%,#080e19 52%);min-height:100vh}
+main{max-width:640px;margin:auto}.top{display:flex;justify-content:space-between;align-items:center;padding:20px 3px 8px}.eyebrow{font-size:12px;color:#89e6dc;font-weight:700;letter-spacing:.15em}h1{font-size:30px;margin:4px 0 2px}p{line-height:1.45;color:#acc0d6}section{border:1px solid #2b4056;background:#122034eb;padding:18px;border-radius:20px;margin:17px 0;box-shadow:0 10px 40px #0002}h2{margin:0 0 8px;font-size:19px}
+#connection{font-size:12px;padding:8px 10px;border-radius:30px;background:#293d50;color:#bfe1f2}
+label{color:#c9d8e8;font-size:14px}input,textarea{width:100%;background:#091726;border:1px solid #3b536d;color:#fff;border-radius:13px;padding:14px;font:inherit;outline:none}input:focus,textarea:focus{border-color:#66dcce}textarea{min-height:115px;resize:vertical;line-height:1.5;margin-top:10px}
+button{border:0;background:#79e3d4;color:#062331;border-radius:13px;padding:13px 15px;font:inherit;font-weight:750;cursor:pointer}button:active{transform:scale(.98)}button.secondary{background:#283a52;color:#e8f7ff}button.danger{background:#5b3346;color:#fff}button:disabled{opacity:.5;cursor:wait}
+.inline{display:flex;gap:9px;align-items:center}.inline input{flex:1}.inline button{flex:none}.emotions{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:14px 0}
+.emotion{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:73px;padding:8px 2px;background:#23344e;color:#edf7ff;font-size:11px;border:1px solid transparent;gap:4px}
+.emotion .emoji{font-size:26px}.emotion.selected{border:2px solid #70e8dc;background:#254958}
+.options{display:flex;align-items:center;justify-content:space-between;gap:12px;color:#bacbdb;font-size:14px}.options input{width:20px;height:20px;accent-color:#79e3d4}
+.buttons{display:flex;gap:8px;margin-top:12px}.buttons button{flex:1}
+#preview,#answer{white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid #2e4d64;background:#0c1929;border-radius:12px;padding:14px;margin:10px 0;font-size:15px;min-height:56px}
+small{display:block;color:#96aabe;margin-top:9px;line-height:1.5}.status{color:#a9dece;min-height:22px;font-size:14px;margin-top:11px}
+</style></head>
+<body><main>
+<div class="top"><div><div class="eyebrow">HOMEMIND · ESPEN</div><h1>💙 Pilot Ali</h1></div><span id="connection">Łączenie…</span></div>
+<section><h2>🔐 Połącz z Alą</h2><p>Telefon i Ala muszą być w tej samej sieci Wi-Fi. Kod zobaczysz na ekranie Ali w Ustawieniach.</p>
+<div class="inline"><input id="pin" type="password" maxlength="8" inputmode="numeric" autocomplete="off" placeholder="8-cyfrowy kod z Ali"><button id="savePin">Połącz</button></div><div id="authStatus" class="status" role="status"></div>
+</section>
+<section><h2>🎭 Emocje Ali</h2><p>Dotknij emocji. Ala pokaże ją na ekranie za 5 sekund.</p>
+<div id="emotions" class="emotions"></div>
+<div class="options"><label class="inline"><input type="checkbox" id="sticky" checked> Na stałe — aż nacisnę X</label><span>Opóźnienie: 5 s</span></div>
+<div class="buttons"><button id="stop" class="danger">✕ Wyłącz emocję</button></div><div class="status" id="emotionStatus" role="status"></div>
+</section>
+<section><h2>✍️ Co Ala ma powiedzieć?</h2><p>Wpisz zdanie, nawet z błędami. Najpierw uporządkujemy pisownię, a Ala poprosi Xiaozhi o poprawienie treści i wypowie odpowiedź swoim głosem.</p>
+<textarea id="sentence" maxlength="220" placeholder="np. czesc wszystkim bardzo sie ciesze ze was widze"></textarea>
+<div class="buttons"><button id="correct" class="secondary">✨ Wstępnie popraw</button><button id="say">🔊 Niech Ala powie</button></div>
+<small>Wstępna korekta poprawia odstępy, wielką literę i interpunkcję. Pełną korektę językową wykonuje AI podczas wypowiedzi.</small>
+<div id="preview" aria-label="Wstępnie poprawione zdanie">Poprawiony tekst pojawi się tutaj.</div>
+<div id="speechStatus" class="status" role="status"></div>
+<h2 style="font-size:16px;margin-top:18px">Odpowiedź Ali</h2><div id="answer" aria-live="polite">Jeszcze nic nie powiedziała.</div>
+</section><small>Panel działa lokalnie przez Wi-Fi. Nie udostępniaj kodu sterowania innym osobom. Połączenie ze sztuczną inteligencją Xiaozhi wymaga Internetu i działającego głośnika.</small>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const moods=[['happy','😄','Radość'],['laugh','😂','Śmiech'],['sad','😢','Smutek'],['surprise','😲','Zdziwienie'],['angry','😠','Złość'],['thinking','🤔','Myślenie'],['sleepy','😴','Senność'],['love','😍','Zakochanie'],['confident','😎','Pewność'],['shy','😊','Rumieńce'],['confused','😕','Zmieszanie'],['fear','😨','Strach'],['wink','😉','Oczko'],['bored','😐','Nuda'],['excited','🤩','Ekscytacja'],['neutral','🙂','Spokój']];
+let pin=localStorage.getItem('alaPhonePin')||'',selected='';
+$('pin').value=pin;
+for(const [id,emoji,name] of moods){const b=document.createElement('button');b.className='emotion';b.type='button';b.innerHTML='<span class="emoji">'+emoji+'</span><span>'+name+'</span>';b.onclick=()=>changeMood(id,name,b);$('emotions').append(b)}
+async function request(path,method='GET',body){const ctrl=new AbortController();const timer=setTimeout(()=>ctrl.abort(),8500);try{
+const r=await fetch(path,{method,body,cache:'no-store',signal:ctrl.signal,headers:{'X-Ala-Pin':pin,...(body===undefined?{}:{'Content-Type':'text/plain;charset=UTF-8'})}});
+const message=await r.text();if(!r.ok)throw Error(r.status===401?'Błędny kod. Sprawdź kod na Ali.':(message||'Błąd połączenia '+r.status));return message;
+}finally{clearTimeout(timer)}}
+async function verify(){try{await request('/api/status');$('connection').textContent='● Ala połączona';$('authStatus').textContent='Połączono. Możesz sterować Alą.'}catch(e){$('connection').textContent='● Brak dostępu';$('authStatus').textContent=e.message}}
+$('savePin').onclick=()=>{pin=$('pin').value.trim();localStorage.setItem('alaPhonePin',pin);verify()};
+async function changeMood(mood,name,button){try{await request('/api/emotion','POST',mood+'|'+($('sticky').checked?'1':'0'));selected=mood;document.querySelectorAll('.emotion').forEach(b=>b.classList.toggle('selected',b===button));$('emotionStatus').textContent='Za 5 sekund: '+name+($('sticky').checked?' (do naciśnięcia X).':' (na chwilę).')}catch(e){$('emotionStatus').textContent='Nie udało się: '+e.message}}
+$('stop').onclick=async()=>{try{await request('/api/emotion','POST','reset');selected='';document.querySelectorAll('.emotion').forEach(b=>b.classList.remove('selected'));$('emotionStatus').textContent='Emocja wyłączona.'}catch(e){$('emotionStatus').textContent=e.message}};
+function normalize(s){s=s.trim().replace(/\s+/g,' ').replace(/\s+([.,!?;:])/g,'$1').replace(/([.,!?;:])(?=\S)/g,'$1 ');if(!s)return '';s=s[0].toLocaleUpperCase('pl-PL')+s.slice(1);if(!/[.!?…]$/.test(s))s+='.';return s}
+function preview(){const s=normalize($('sentence').value);$('preview').textContent=s||'Wpisz najpierw zdanie.';return s}
+$('correct').onclick=()=>{const s=preview();if(s)$('sentence').value=s};
+let poll=null;
+$('say').onclick=async()=>{const s=preview();if(!s)return;$('say').disabled=true;$('answer').textContent='Czekam na odpowiedź Ali…';try{
+await request('/api/say','POST',s);$('speechStatus').textContent='Wysłano. Ala poprawia zdanie i przygotowuje wypowiedź.';
+if(poll)clearInterval(poll);let count=0;poll=setInterval(async()=>{try{const t=await request('/api/reply');if(t.trim()){clearInterval(poll);poll=null;$('answer').textContent=t;$('speechStatus').textContent='Ala otrzymała odpowiedź. Odtwarzanie zależy od połączenia Xiaozhi.'}}catch(e){}if(++count>=35){clearInterval(poll);poll=null;$('speechStatus').textContent='Nie otrzymano tekstu odpowiedzi. Sprawdź połączenie Xiaozhi.'}},1000);
+}catch(e){$('speechStatus').textContent=e.message;$('answer').textContent='Nie udało się wysłać zdania.'}finally{$('say').disabled=false}};
+verify();
+</script></body></html>

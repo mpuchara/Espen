@@ -1,0 +1,50 @@
+name: Publish Ala pilot firmware
+on:
+  push:
+    branches:
+      - feat/ala-phone-emotions-speech-panel
+    paths:
+      - .github/workflows/publish-ala-pilot.yml
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download verified firmware artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download 44334001820 --repo mpuchara/Espen \
+            --name espen-guition-p4 --dir downloaded
+
+      - name: Verify and prepare installation files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          for name in espen-app.bin espen-assets.bin espen.bin espen-update.sha256 espen.bin.sha256; do
+            source_file="$(find downloaded -type f -name "$name" -print -quit)"
+            test -n "$source_file"
+            test -s "$source_file"
+            cp "$source_file" "release/$name"
+          done
+          cd release
+          sha256sum --check espen-update.sha256
+          sha256sum --check espen.bin.sha256
+
+      - name: Publish a separate test release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create ala-pilot-v0.2.14-test1 \
+            --repo mpuchara/Espen \
+            --target a1ce7a1539f8f0a0afaa620ac08881995f302899 \
+            --title "Ala Pilot 0.2.14 test 1 — kod i IP na ekranie" \
+            --notes "Firmware testowe dla GUITION JC4880P443C ESP32-P4 rev1 (16 MB). W Ustawieniach naciśnij Pilot telefonu / kod. Ala automatycznie tworzy 8 cyfr, zapisuje je w NVS i pokazuje aktualny IP. Telefon i Ala muszą być w tym samym Wi-Fi. Aktualizacja istniejącego Espen bez kasowania danych: espen-app.bin @ 0x20000 oraz espen-assets.bin @ 0x800000. Nie wgrywaj pełnego espen.bin @ 0x0, jeśli chcesz zachować Wi-Fi i parowanie Xiaozhi. Wymaga kabla USB i odpowiedniego instalatora, test na fizycznym urządzeniu nadal potrzebny. Wgranie firmware przez przeglądarkę Androida może nie być obsługiwane. Kod pilota jest inny niż kod Xiaozhi. Test release z PR #24, nie wersja main." \
+            --prerelease \
+            release/*
