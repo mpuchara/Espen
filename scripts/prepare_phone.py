@@ -26,8 +26,8 @@ assert ")ALA_PHONE_HTML\"" not in html
 # The HTTP listener is only enabled for our board; ESP-IDF 6 requires an
 # explicit component dependency rather than relying on transitive headers.
 cmake = up / "main/CMakeLists.txt"
-replace(cmake, 'set(MAIN_PRIV_REQUIRES_EXTRA "")',
-        'set(MAIN_PRIV_REQUIRES_EXTRA "esp_http_server")')
+replace(cmake, '                    PRIV_REQUIRES\n',
+        '                    PRIV_REQUIRES\n                        esp_http_server\n')
 
 header = up / "main/application.h"
 replace(header, '    void WakeWordInvoke(const std::string& wake_word);',
