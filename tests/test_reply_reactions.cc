@@ -44,6 +44,25 @@ int main() {
         assert(CueDurationMs(cue) <= 400);
     }
     assert(ReplyCue(ReplyBeat::None) == EmotionalCue::Count);
+    // A reply-triggered blush lasts for precisely 47 seconds, including idle
+    // and listening time, and doesn't seize audio or prevent a forced sleep.
+    FaceEngine rosy;
+    rosy.Tick(100,Phase::Idle,0,MouthShape::Closed);
+    rosy.ReplyReact(ReplyBeat::Blush,1000);
+    assert(rosy.Tick(1200,Phase::Speaking,70,MouthShape::Open).pose.accent==Accent::Blush);
+    assert(rosy.Tick(3000,Phase::Listening,0,MouthShape::Closed).pose.accent==Accent::Blush);
+    auto during_blush=rosy.Tick(47999,Phase::Idle,0,MouthShape::Closed);
+    assert(during_blush.pose.accent==Accent::Blush && !during_blush.asleep);
+    assert(rosy.Tick(48000,Phase::Idle,0,MouthShape::Closed).pose.accent!=Accent::Blush);
+    // Another shy response restarts the timer.
+    rosy.ReplyReact(ReplyBeat::Blush,50000);
+    rosy.Tick(51000,Phase::Idle,0,MouthShape::Closed);
+    rosy.ReplyReact(ReplyBeat::Blush,60000);
+    assert(rosy.Tick(106999,Phase::Idle,0,MouthShape::Closed).pose.accent==Accent::Blush);
+    assert(rosy.Tick(107000,Phase::Idle,0,MouthShape::Closed).pose.accent!=Accent::Blush);
+    rosy.ReplyReact(ReplyBeat::Blush,110000);
+    rosy.SleepNow(110100);
+    assert(rosy.Tick(110200,Phase::Idle,0,MouthShape::Closed).asleep);
     FaceEngine face;
     face.Tick(100, Phase::Idle, 0, MouthShape::Closed);
     face.ReplyReact(ReplyBeat::Giggle, 200);
