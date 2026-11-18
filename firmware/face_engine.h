@@ -13,6 +13,8 @@ enum class Persona { Friendly, Energetic, Calm, Playful, Shy, Robotic, Count };
 enum class Gesture { Tap, DoubleTap, Stroke, Tickle, TripleTap, Boop };
 enum class MouthShape { Closed, Open, Round, Wide };
 enum class Accent { None, Heart, Star, Tear, Blush, Dots, Sleep };
+// User-selectable face expression. Stored in NVS by the display controller.
+enum class PinnedFace : uint8_t { None=0, Blush=1, Love=2 };
 struct Pose {
     int eye_h=44, eye_w=76, tilt=0, brow=0, asym=0;
     int mouth_w=88, mouth_h=8, smile=14;
@@ -96,8 +98,7 @@ class FaceEngine {
     Social social_=Social::None;
     ReplyBeat reply_=ReplyBeat::None;
     uint32_t reply_at_=0;
-    uint32_t blush_at_=0;
-    bool blush_active_=false;
+    PinnedFace pinned_face_=PinnedFace::None;
     uint32_t social_at_=0,social_until_=0,last_startle_=0;
     Affinity affinity_;
     bool initialized_=false, blink_active_=false, double_blink_=false, second_blink_=false;
@@ -111,7 +112,13 @@ class FaceEngine {
     void ResetIdle(uint32_t now) { idle_since_=now; next_micro_=now+20000+Rand(15000); micro_active_=false; }
 public:
     static constexpr uint32_t kSleepMs=5000;
-    static constexpr uint32_t kBlushMs=47000;
+    void PinFace(PinnedFace mode) {
+        pinned_face_=mode;
+        if(mode==PinnedFace::None &&
+           (reply_==ReplyBeat::Blush || reply_==ReplyBeat::Lovestruck))
+            reply_=ReplyBeat::None;
+    }
+    PinnedFace Pinned() const {return pinned_face_;}
     void Celebrate(uint32_t now) {celebrating_=true;celebrate_at_=now;ResetIdle(now);}
     void LocalWake(uint32_t now) {local_waking_=true;local_wake_at_=now;wake_anim_=true;wake_anim_at_=now;force_sleep_=false;ResetIdle(now);}
     void SleepNow(uint32_t now) {force_sleep_=true;idle_since_=now-kSleepMs;}
@@ -137,15 +144,13 @@ public:
         force_sleep_=false;
         if(phase_==Phase::Idle||phase_==Phase::Offline||phase_==Phase::Startup) ResetIdle(now);
     }
-    // Reply cues usually last for one sentence. The shy blush has a separate
-    // 47-second visual afterglow that survives speech-to-listening transitions.
-    // Neither cue changes the microphone, wake word or speech ownership.
+    // A shy or lovestruck sentence can pin the corresponding playful face.
+    // It remains selected until the X button clears it, even across speech turns.
+    // The UI saves this choice to NVS; no audio or microphone state is changed.
     void ReplyReact(ReplyBeat beat,uint32_t now) {
         reply_=beat; reply_at_=now;
-        if(beat==ReplyBeat::Blush) {
-            blush_active_=true;
-            blush_at_=now;
-        }
+        if(beat==ReplyBeat::Blush) pinned_face_=PinnedFace::Blush;
+        else if(beat==ReplyBeat::Lovestruck) pinned_face_=PinnedFace::Love;
     }
     void SocialReact(Social reaction,uint32_t now) {
         if(reaction==Social::None)return;
@@ -192,7 +197,6 @@ public:
             }
         }
         if(gesture_active_ && Due(now,gesture_until_)) gesture_active_=false;
-        if(blush_active_ && now-blush_at_>=kBlushMs) blush_active_=false;
         if(social_!=Social::None&&Due(now,social_until_))social_=Social::None;
         if(micro_active_ && Due(now,micro_until_)) micro_active_=false;
         if(celebrating_ && now-celebrate_at_>=2200) celebrating_=false;
@@ -200,9 +204,9 @@ public:
         bool quiet=phase==Phase::Idle||phase==Phase::Offline||phase==Phase::Startup;
         bool dance=celebrating_&&quiet;
         uint32_t idle=quiet?now-idle_since_:0;
-        // Keep the face awake while the blush is visible, unless explicitly asleep.
+        // A pinned expression remains visible during idle, but explicit standby wins.
         bool asleep=quiet && (force_sleep_||idle>=kSleepMs) && !touch_ && !gesture_active_ && social_==Social::None && !dance && !local_waking_
-            && !(blush_active_ && !force_sleep_);
+            && !(pinned_face_!=PinnedFace::None && !force_sleep_);
         if(loud && quiet && !touch_ && !gesture_active_ && social_==Social::None &&
            !dance && !local_waking_ && (!last_startle_||now-last_startle_>=3500)) {
             last_startle_=now;gesture_=Mood::Surprise;gesture_active_=true;gesture_until_=now+1100;
@@ -276,17 +280,16 @@ public:
                 case ReplyBeat::Drumroll: mood=Mood::Excited;break;
                 case ReplyBeat::Agree: mood=Mood::Happy;break;
                 case ReplyBeat::Blush: mood=Mood::Shy;break;
+                case ReplyBeat::Lovestruck: mood=Mood::Love;break;
                 default:break;
             }
         }
+        if(!asleep && !force_sleep_) {
+            if(pinned_face_==PinnedFace::Love) mood=Mood::Love;
+            else if(pinned_face_==PinnedFace::Blush && mood==Mood::Neutral) mood=Mood::Shy;
+        }
         if(asleep) mood=Mood::Sleepy;
         Pose p=Expression(mood);
-        // Pink cheeks persist independently of sentence cues and phase changes.
-        // Leave lip-sync and gaze responsiveness intact while Ala is talking/listening.
-        if(blush_active_ && !asleep && !force_sleep_) {
-            p.accent=Accent::Blush;
-            p.color=BlendColor(p.color,0xFFADC9,65);
-        }
         // A goodnight wish is a friendly sleepy face, not a command to
         // interrupt ongoing speech or listening.
         if(social_==Social::Goodnight && phase==Phase::Speaking) {
@@ -327,7 +330,22 @@ public:
                 case ReplyBeat::Blush: p.accent=Accent::Blush;p.color=0xFFADC9;
                     p.eye_h=std::min(p.eye_h,26);p.tilt=-8;
                     p.asym=(age/350)%2?8:-8;break;
+                case ReplyBeat::Lovestruck: p.accent=Accent::Heart;
+                    p.color=0xFF91C6;p.eye_h=std::min(67,p.eye_h+8);
+                    p.tilt=(age/250)%2?9:-9;break;
                 default:break;
+            }
+        }
+        // Draw the chosen expression on top of short-lived reactions, with
+        // normal blinking, gaze and PCM-driven lip-sync still responsive.
+        if(pinned_face_!=PinnedFace::None && !asleep && !force_sleep_) {
+            if(pinned_face_==PinnedFace::Blush) {
+                p.accent=Accent::Blush;
+                p.color=BlendColor(p.color,0xFFADC9,65);
+            } else {
+                p.accent=Accent::Heart;
+                p.color=0xFF91C6;
+                p.eye_h=std::max(43,p.eye_h);
             }
         }
         if(phase==Phase::Listening && mood==Mood::Neutral) {p.eye_h=54;p.color=0x7CF6DA;}
@@ -470,8 +488,9 @@ public:
         }
         f.bob=Approach(f.bob,bob,std::max(1,speed));f.mood=mood;f.asleep=asleep;
         const bool reply_hearts=reply_active&&reply_==ReplyBeat::Warmth;
-        f.hearts=social_==Social::Affection||(social_==Social::Comfort&&now-social_at_>=650)||reply_hearts;
-        f.heart_age=f.hearts?(reply_hearts?now-reply_at_:now-social_at_)%1950:0;
+        const bool pinned_hearts=pinned_face_==PinnedFace::Love && !asleep && !force_sleep_;
+        f.hearts=pinned_hearts||social_==Social::Affection||(social_==Social::Comfort&&now-social_at_>=650)||reply_hearts;
+        f.heart_age=f.hearts?(pinned_hearts?now:(reply_hearts?now-reply_at_:now-social_at_))%1950:0;
         f.effect=affinity_.Effect(now);f.effect_age=affinity_.Age(now);
         return f;
     }
