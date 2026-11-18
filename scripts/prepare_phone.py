@@ -22,6 +22,7 @@ assert ")ALA_PHONE_HTML\"" not in html
     + html + ')ALA_PHONE_HTML";\n}\n',
     encoding="utf-8")
 (board / "phone_panel.h").write_bytes((root / "firmware/phone_panel.h").read_bytes())
+(board / "robot_name.h").write_bytes((root / "firmware/robot_name.h").read_bytes())
 
 # The HTTP listener is only enabled for our board; ESP-IDF 6 requires an
 # explicit component dependency rather than relying on transitive headers.
@@ -32,8 +33,8 @@ replace(cmake, '                    PRIV_REQUIRES\n',
 header = up / "main/application.h"
 replace(header, '    void WakeWordInvoke(const std::string& wake_word);',
         '    void WakeWordInvoke(const std::string& wake_word);\n'
-        '    void EspenSayText(const std::string& text);\n'
-        '    void EspenAskText(const std::string& text, bool only_hello);')
+        '    void EspenSayText(const std::string& text, const std::string& robot_name);\n'
+        '    void EspenAskText(const std::string& text, bool only_hello, const std::string& robot_name);')
 
 app = up / "main/application.cc"
 speech_method = r'''
@@ -41,19 +42,19 @@ speech_method = r'''
 // This is an experimental text-to-LLM-to-TTS path, not an offline TTS engine.
 // Only an idle device can accept it; all protocol operations happen on the
 // application task (never inside an HTTP handler or LVGL callback).
-void Application::EspenSayText(const std::string& text) {
-    Schedule([this, text]() {
+void Application::EspenSayText(const std::string& text, const std::string& robot_name) {
+    Schedule([this, text, robot_name]() {
         if (!protocol_ || GetDeviceState() != kDeviceStateIdle) return;
         if (!SetDeviceState(kDeviceStateConnecting)) return;
-        Schedule([this, text]() {
+        Schedule([this, text, robot_name]() {
             if (GetDeviceState() != kDeviceStateConnecting) return;
             if (!protocol_->IsAudioChannelOpened() && !protocol_->OpenAudioChannel()) {
                 SetDeviceState(kDeviceStateIdle);
                 return;
             }
             std::string prompt =
-                "Popraw pisownie i gramatyke zdania. Wypowiedz wylacznie "
-                "poprawiona wersje po polsku, bez komentarzy. Zdanie: " + text;
+                "Masz imie " + robot_name + ". Popraw pisownie i gramatyke zdania. "
+                "Wypowiedz wylacznie poprawiona wersje po polsku, bez komentarzy. Zdanie: " + text;
             protocol_->SendWakeWordDetected(prompt);
             play_popup_on_listening_ = false;
             SetListeningMode(kListeningModeAutoStop);
@@ -62,21 +63,21 @@ void Application::EspenSayText(const std::string& text) {
 }
 
 
-void Application::EspenAskText(const std::string& text, bool only_hello) {
+void Application::EspenAskText(const std::string& text, bool only_hello, const std::string& robot_name) {
     // Unlike EspenSayText, this mode asks the cloud assistant to generate
     // a reply; a second tap asks it for one greeting word only.
-    Schedule([this, text, only_hello]() {
+    Schedule([this, text, only_hello, robot_name]() {
         if (!protocol_ || GetDeviceState() != kDeviceStateIdle) return;
         if (!SetDeviceState(kDeviceStateConnecting)) return;
-        Schedule([this, text, only_hello]() {
+        Schedule([this, text, only_hello, robot_name]() {
             if (GetDeviceState() != kDeviceStateConnecting) return;
             if (!protocol_->IsAudioChannelOpened() && !protocol_->OpenAudioChannel()) {
                 SetDeviceState(kDeviceStateIdle);
                 return;
             }
             const std::string prompt = only_hello
-                ? "Powiedz wylacznie jedno slowo: Czesc. Bez innych slow."
-                : "Odpowiedz na te wiadomosc po polsku, naturalnie i krotko. "
+                ? "Masz imie " + robot_name + ". Powiedz wylacznie jedno slowo: Czesc. Bez innych slow."
+                : "Masz imie " + robot_name + ". Odpowiedz na te wiadomosc po polsku, naturalnie i krotko. "
                   "Nie cytuj instrukcji. Wiadomosc: " + text;
             protocol_->SendWakeWordDetected(prompt);
             play_popup_on_listening_ = false;
