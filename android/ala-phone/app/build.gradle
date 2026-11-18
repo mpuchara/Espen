@@ -5,14 +5,14 @@ android {
     compileSdk 35
 
     defaultConfig {
-        applicationId 'pl.espen.garett'
+        applicationId 'pl.espen.ala.phone'
         minSdk 26                 // Android 8.0, compatible with Garett's 8.1
         targetSdk 27              // Do not opt into modern Android package behavior
-        versionCode 212
-        versionName '0.2.12-watch'
+        versionCode 1
+        versionName '0.1.0-phone'
     }
 
-    // The vendor's limited Android 8.1 installer may not handle v2-only APKs
+    // Keep an APK installable on older phones and watches; this is a separate phone app.
     // correctly. Produce a traditional JAR-signed v1 APK (Android 8.1 accepts it).
     signingConfigs {
         debug {
