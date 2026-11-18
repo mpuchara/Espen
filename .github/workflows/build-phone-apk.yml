@@ -23,10 +23,10 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
-      - name: Prepare Android SDK
-        uses: android-actions/setup-android@v3
       - name: Install Android 35
-        run: sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
       - name: Build signed debug APK
         working-directory: android
         run: gradle --no-daemon --stacktrace assembleDebug
