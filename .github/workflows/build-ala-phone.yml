@@ -1,0 +1,42 @@
+name: Build Ala Phone Android APK
+
+on:
+  push:
+    paths:
+      - 'android/ala-phone/**'
+      - '.github/workflows/build-ala-phone.yml'
+  pull_request:
+    paths:
+      - 'android/ala-phone/**'
+      - '.github/workflows/build-ala-phone.yml'
+  workflow_dispatch:
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: android/ala-phone
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Accept Android SDK and install platform
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+      - name: Test and build APK
+        run: gradle --no-daemon --stacktrace :app:testDebugUnitTest :app:assembleDebug
+      - name: Upload Ala Phone APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ala-phone-android-apk
+          path: android/ala-phone/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
