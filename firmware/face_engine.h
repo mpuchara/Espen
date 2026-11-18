@@ -97,6 +97,8 @@ class FaceEngine {
     ReplyBeat reply_=ReplyBeat::None;
     uint32_t reply_at_=0;
     uint32_t social_at_=0,social_until_=0,last_startle_=0;
+    uint32_t affection_at_=0;
+    uint8_t affection_level_=0;
     Affinity affinity_;
     bool initialized_=false, blink_active_=false, double_blink_=false, second_blink_=false;
     bool gesture_active_=false, micro_active_=false, touch_=false;
@@ -139,8 +141,17 @@ public:
     void ReplyReact(ReplyBeat beat,uint32_t now) {
         reply_=beat; reply_at_=now;
     }
+    // Playful affection state: short-lived, local and never tied to a person's identity.
+    uint8_t AffectionLevel(uint32_t now) const {
+        return affection_level_ && now-affection_at_<90000 ? affection_level_ : 0;
+    }
     void SocialReact(Social reaction,uint32_t now) {
         if(reaction==Social::None)return;
+        if(reaction==Social::Affection) {
+            if(!affection_level_ || now-affection_at_>=90000) affection_level_=1;
+            else if(now-affection_at_>=1800) affection_level_=std::min<int>(3,affection_level_+1);
+            affection_at_=now;
+        }
         affinity_.Record(reaction,now);
         // Sustained petting extends the effect without restarting each frame.
         if(social_!=reaction||Due(now,social_until_))social_at_=now;
@@ -225,7 +236,7 @@ public:
         if(dance) mood=Mood::Excited;
         if(social_!=Social::None) {
             switch(social_) {
-                case Social::Affection:mood=Mood::Love;break;
+                case Social::Affection:mood=AffectionLevel(now)==1?Mood::Shy:Mood::Love;break;
                 case Social::Praise:case Social::Thanks:case Social::Greeting:mood=Mood::Happy;break;
                 case Social::Celebration:mood=Mood::Excited;break;
                 case Social::Tickle:mood=Mood::Laugh;break;
@@ -269,6 +280,14 @@ public:
         }
         if(asleep) mood=Mood::Sleepy;
         Pose p=Expression(mood);
+        // Multiple separate kind interactions unlock a more expressive heart animation.
+        // The state fades after 90 seconds and does not persist or claim real feelings.
+        if(social_==Social::Affection && AffectionLevel(now)>=2) {
+            p.accent=Accent::Heart;
+            p.color=AffectionLevel(now)>=3?0xFF78B8:0xFF91C6;
+            p.tilt=(now/300)%2?8:-8;
+            if(AffectionLevel(now)>=3) p.eye_h=std::min(65,p.eye_h+9);
+        }
         // A goodnight wish is a friendly sleepy face, not a command to
         // interrupt ongoing speech or listening.
         if(social_==Social::Goodnight && phase==Phase::Speaking) {
