@@ -118,10 +118,10 @@ public final class WatchActivity extends Activity implements FaceView.Actions, X
         form.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(form);
         TextView info=new TextView(this);
-        info.setText("Ala Phone 0.1.0 (Android)\\n" +
-            "PANEL EMOCJI: przyciski z opóźnieniem 5 sekund.\\n" +
-            "Zakochanie/rumieńce pozostają do naciśnięcia X.\\n" +
-            "Ala na telefonie działa niezależnie od robota i zegarka.\\n");
+        info.setText("Ala Phone 0.1.0 (Android)\n" +
+            "PANEL EMOCJI: przyciski z opóźnieniem 5 sekund.\n" +
+            "Zakochanie/rumieńce pozostają do naciśnięcia X.\n" +
+            "Ala na telefonie działa niezależnie od robota i zegarka.\n");
         info.setTextSize(14);form.addView(info);
         EditText ota=new EditText(this);ota.setSingleLine(false);ota.setMaxLines(3);
         ota.setText(XiaozhiClient.getOta(this));ota.setTextSize(13);ota.setHint("Adres OTA HTTPS");
