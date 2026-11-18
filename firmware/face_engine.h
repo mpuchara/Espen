@@ -58,33 +58,92 @@ inline Pose Expression(Mood m) {
       default: return {};
     }
 }
-// Staged 850 ms emotional entrances; they never delay the TTS audio.
+// Every one of the 16 moods has its own 850 ms expression entrance.
+// The face transitions on the existing LVGL tick; no animation task, delay,
+// extra framebuffer or audio ownership is needed.
 inline void AnimateEmotionIntro(Mood mood,uint32_t age,Pose& p) {
     if(age>=850)return;
     switch(mood){
+      case Mood::Neutral:
+        // Take a calm breath: the eyes relax and the mouth unfolds.
+        if(age<250){p.eye_h=24;p.mouth_w=62;p.smile=4;}
+        else if(age<570){p.eye_h=33;p.mouth_w=76;p.smile=10;}
+        break;
+      case Mood::Happy:
+        // Eyes brighten, briefly squint, then a full grin grows.
+        if(age<180){p.eye_h=53;p.mouth_w=72;p.smile=8;}
+        else if(age<470){p.eye_h=17;p.tilt=(age/100)%2?7:-7;p.smile=18;}
+        break;
+      case Mood::Laugh:
+        // Suppress a giggle, then pop into a bouncing open-mouthed laugh.
+        if(age<210){p.eye_h=29;p.mouth_h=6;p.mouth_w=62;p.smile=18;}
+        else if(age<580){p.eye_h=6;p.mouth_h=35;p.tilt=(age/100)%2?8:-8;}
+        break;
       case Mood::Sad:
-        // Blink, sink into a frown, only then reveal the tear.
+        // Blink, sink into a frown, only then reveal the falling tear.
         if(age<220){p.eye_h=8;p.mouth_w=56;p.mouth_h=5;p.smile=0;p.accent=Accent::None;}
         else if(age<650){p.eye_h=17+static_cast<int>((age-220)*13/430);
             p.mouth_w=63;p.smile=-8-static_cast<int>((age-220)*14/430);p.accent=Accent::None;}
         break;
-      case Mood::Happy:
-        if(age<180){p.eye_h=53;p.mouth_w=72;p.smile=8;}
-        else if(age<470){p.eye_h=17;p.tilt=(age/100)%2?7:-7;}
-        break;
       case Mood::Surprise:
+        // A sharp double-take: wide eyes first, round mouth follows.
         if(age<260){p.eye_h=78;p.mouth_h=8;p.mouth_w=50;}
         else if(age<520){p.eye_h=75;p.mouth_h=48;}
         break;
       case Mood::Angry:
+        // Squint and furrow brows before the annoyed grimace.
         if(age<260){p.eye_h=10;p.brow=26;p.mouth_w=54;}
         else if(age<530){p.eye_h=20;p.tilt=21;p.brow=24;}
         break;
+      case Mood::Thinking:
+        // Look sideways before a trail of thinking dots appears.
+        if(age<230){p.eye_h=55;p.asym=0;p.mouth_w=82;p.accent=Accent::None;}
+        else if(age<580){p.eye_h=33;p.asym=24;p.tilt=8;p.accent=Accent::None;}
+        break;
+      case Mood::Sleepy:
+        // A slow yawn makes the eyes heavy, then the sleep Z appears.
+        if(age<250){p.eye_h=36;p.mouth_w=48;p.mouth_h=26;p.accent=Accent::None;}
+        else if(age<650){p.eye_h=15;p.mouth_w=42;p.mouth_h=35;p.accent=Accent::None;}
+        break;
       case Mood::Love:
-        if(age<360){p.eye_h=26;p.mouth_w=67;p.accent=Accent::None;}
+        // Bashful look first; hearts appear only after a smile forms.
+        if(age<360){p.eye_h=26;p.mouth_w=67;p.smile=12;p.accent=Accent::None;}
+        else if(age<620){p.eye_h=42;p.smile=20;}
+        break;
+      case Mood::Confident:
+        // A cheeky half-squint slowly becomes a self-assured grin.
+        if(age<220){p.eye_h=44;p.tilt=-11;p.mouth_w=74;p.smile=1;}
+        else if(age<560){p.eye_h=18;p.asym=16;p.tilt=9;p.smile=9;}
         break;
       case Mood::Shy:
+        // Look away, then bring up the blush on both cheeks.
         if(age<330){p.eye_h=22;p.tilt=-13;p.accent=Accent::None;}
+        else if(age<620){p.eye_h=27;p.smile=6;}
+        break;
+      case Mood::Confused:
+        // One eye opens wider, head tilts, lips make a question mark.
+        if(age<220){p.eye_h=55;p.asym=0;p.mouth_w=82;p.smile=3;}
+        else if(age<590){p.eye_h=36;p.asym=38;p.tilt=-12;p.mouth_w=48;}
+        break;
+      case Mood::Fear:
+        // A flinch, then startled wide-open eyes and quivering lips.
+        if(age<170){p.eye_h=9;p.mouth_w=72;p.mouth_h=5;}
+        else if(age<550){p.eye_h=75;p.mouth_h=19;p.tilt=(age/100)%2?8:-8;}
+        break;
+      case Mood::Wink:
+        // Start with two open eyes, then close one mischievously.
+        if(age<210){p.eye_h=51;p.asym=0;p.mouth_w=78;p.smile=8;}
+        else if(age<570){p.eye_h=42;p.asym=52;p.tilt=-9;}
+        break;
+      case Mood::Bored:
+        // Eyelids slowly droop and the smile fades flat.
+        if(age<270){p.eye_h=42;p.smile=12;p.mouth_w=91;}
+        else if(age<600){p.eye_h=24;p.smile=2;p.mouth_w=72;}
+        break;
+      case Mood::Excited:
+        // Anticipation, then a bright, sparkling excited expression.
+        if(age<230){p.eye_h=75;p.mouth_w=66;p.mouth_h=7;p.accent=Accent::None;}
+        else if(age<620){p.eye_h=67;p.mouth_w=116;p.tilt=(age/90)%2?12:-12;}
         break;
       default:break;
     }
