@@ -1094,7 +1094,7 @@ class EspenDisplay : public LcdDisplay {
             lv_bar_set_range(speech_meter_bar_,0,100);
             auto* hint=lv_label_create(speech_diag_);lv_obj_set_width(hint,lv_pct(100));
             lv_label_set_long_mode(hint,LV_LABEL_LONG_WRAP);
-            lv_label_set_text(hint,"TV-safe 0.2.14: Auto 30 dB, hasło zamiast szumu/TV. Mowa bez hasła opcjonalna. TTS chroniony 900 ms. RAW/Opus do 12 s tylko w RAM.");
+            lv_label_set_text(hint,"TV-safe 0.2.15: Auto 30 dB, hasło zamiast szumu/TV. Mowa bez hasła opcjonalna. TTS chroniony 900 ms. RAW/Opus do 12 s tylko w RAM.");
             Settings cfg("espen_audio",false);
             int legacy=cfg.GetInt("mic_gain",-1);
             speech_mode_=espen::ResolveMicMode(cfg.GetInt("mic_profile",-1),legacy);
@@ -1652,12 +1652,12 @@ class EspenDisplay : public LcdDisplay {
     }
     void BuildFace() {
         Settings cfg("espen_ui",true);
-        // v0.2.14 one-time safety migration: TV speech used to open sessions.
+        // v0.2.15 one-time safety migration: TV speech used to open sessions.
         // Later deliberate re-enabling of hands-free speech survives reboot.
         if(!cfg.GetBool("tv_guard_v14",false)){
             cfg.SetBool("auto_speech",false);
             cfg.SetBool("tv_guard_v14",true);
-            ESP_LOGW(TAG,"TV guard v0.2.14: auto-speech disabled; wake phrase and touch remain");
+            ESP_LOGW(TAG,"TV guard v0.2.15: auto-speech disabled; wake phrase and touch remain");
         }
         engine_.SetPersona(static_cast<espen::Persona>(std::clamp<int32_t>(cfg.GetInt("persona",0),0,static_cast<int32_t>(espen::Persona::Count)-1)));
         auto_speech_=cfg.GetBool("auto_speech",false);
@@ -2430,7 +2430,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.2.14 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.2.15 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();
