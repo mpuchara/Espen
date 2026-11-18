@@ -4,6 +4,24 @@
 #include <iostream>
 using namespace espen;
 int main() {
+    assert(ClassifyReplyBeat("Jestem genialna!") == ReplyBeat::ShowOff);
+    assert(ClassifyReplyBeat("Patrz, jaka jestem mądra!") == ReplyBeat::ShowOff);
+    assert(ReplyCue(ReplyBeat::ShowOff) == EmotionalCue::Victory);
+    assert(ClassifyReplyBeat("Jesteś genialna!") != ReplyBeat::ShowOff);
+    assert(ClassifyReplyBeat("Ojej, mam motylki w procesorze!") == ReplyBeat::Lovestruck);
+    assert(ClassifyReplyBeat("Chyba się zakochałam!") == ReplyBeat::Lovestruck);
+    assert(ReplyCue(ReplyBeat::Lovestruck) == EmotionalCue::Heart);
+    assert(ClassifyReplyBeat("Ktoś się w tobie zakochał") != ReplyBeat::Lovestruck);
+    FaceEngine affection;
+    affection.SocialReact(Social::Affection, 10000);
+    assert(affection.AffectionLevel(10000) == 1);
+    affection.SocialReact(Social::Affection, 13000);
+    assert(affection.AffectionLevel(13000) == 2);
+    affection.SocialReact(Social::Affection, 16000);
+    assert(affection.AffectionLevel(16000) == 3);
+    assert(affection.AffectionLevel(106001) == 0);
+    affection.SocialReact(Social::Affection, 110000);
+    assert(affection.AffectionLevel(110000) == 1);
     assert(ClassifyReplyBeat("Brawo, udało się!") == ReplyBeat::Celebrate);
     assert(ClassifyReplyBeat("Ha ha, żartuję!") == ReplyBeat::Giggle);
     assert(ClassifyReplyBeat("Wow! Nie do wiary!") == ReplyBeat::Astonished);
