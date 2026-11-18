@@ -13,6 +13,22 @@ int main() {
     for(int m=0;m<static_cast<int>(Mood::Count);++m) {
         auto p=Expression(static_cast<Mood>(m)); assert(p.eye_h>0&&p.eye_w>0&&p.mouth_w>0);
     }
+    // Expression entrances are distinctive, then settle without lingering.
+    for(auto mood:{Mood::Sad,Mood::Happy,Mood::Surprise,Mood::Angry,Mood::Love,Mood::Shy}){
+        auto regular=Expression(mood), opening=regular;
+        AnimateEmotionIntro(mood,0,opening);
+        assert(opening.eye_h!=regular.eye_h||opening.mouth_h!=regular.mouth_h||
+               opening.mouth_w!=regular.mouth_w||opening.accent!=regular.accent);
+        auto finished=regular;AnimateEmotionIntro(mood,900,finished);
+        assert(finished.eye_h==regular.eye_h&&finished.mouth_h==regular.mouth_h&&
+               finished.accent==regular.accent);
+    }
+    auto sad=Expression(Mood::Sad);AnimateEmotionIntro(Mood::Sad,500,sad);
+    assert(sad.accent==Accent::None&&sad.smile<0);
+    FaceEngine sad_engine;sad_engine.Tick(100,Phase::Idle,0,MouthShape::Closed);
+    sad_engine.Emotion(Mood::Sad,300);
+    assert(sad_engine.Tick(300,Phase::Speaking,0,MouthShape::Closed).pose.accent==Accent::None);
+    assert(sad_engine.Tick(1050,Phase::Speaking,0,MouthShape::Closed).pose.accent==Accent::Tear);
     FaceEngine e;
     e.Tick(100,Phase::Idle,0,MouthShape::Closed);
     e.Tick(200,Phase::Wake,0,MouthShape::Closed);

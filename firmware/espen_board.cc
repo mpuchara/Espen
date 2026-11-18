@@ -2399,7 +2399,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.2.15 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.2.16 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();
@@ -2433,6 +2433,19 @@ public:
                     audio.SetInt("output_volume",espen::kSpeakerVolumeDefault);
                     migration.SetBool("spk_init_v027",true);
                     ESP_LOGI(TAG,"Speaker defaults migrated: PA ON, volume 75%%");
+                }
+                // v0.2.16: once-only recovery of persisted PA OFF or inaudible output,
+                // retaining Wi-Fi, personal wake words, and other NVS settings.
+                if(!migration.GetBool("spk_init_v216",false)){
+                    Settings audio("audio",true);
+                    const int old_volume=audio.GetInt("output_volume",espen::kSpeakerVolumeDefault);
+                    const bool pa_on=migration.GetBool("speaker_pa",true);
+                    if(!pa_on || old_volume<35){
+                        migration.SetBool("speaker_pa",true);
+                        audio.SetInt("output_volume",espen::kSpeakerVolumeDefault);
+                        ESP_LOGW(TAG,"Recovered silent speaker: old PA=%d old volume=%d new volume=75",pa_on,old_volume);
+                    }
+                    migration.SetBool("spk_init_v216",true);
                 }
             }
             Settings cfg("espen_audio",false);

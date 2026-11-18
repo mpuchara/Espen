@@ -58,6 +58,37 @@ inline Pose Expression(Mood m) {
       default: return {};
     }
 }
+// Staged 850 ms emotional entrances; they never delay the TTS audio.
+inline void AnimateEmotionIntro(Mood mood,uint32_t age,Pose& p) {
+    if(age>=850)return;
+    switch(mood){
+      case Mood::Sad:
+        // Blink, sink into a frown, only then reveal the tear.
+        if(age<220){p.eye_h=8;p.mouth_w=56;p.mouth_h=5;p.smile=0;p.accent=Accent::None;}
+        else if(age<650){p.eye_h=17+static_cast<int>((age-220)*13/430);
+            p.mouth_w=63;p.smile=-8-static_cast<int>((age-220)*14/430);p.accent=Accent::None;}
+        break;
+      case Mood::Happy:
+        if(age<180){p.eye_h=53;p.mouth_w=72;p.smile=8;}
+        else if(age<470){p.eye_h=17;p.tilt=(age/100)%2?7:-7;}
+        break;
+      case Mood::Surprise:
+        if(age<260){p.eye_h=78;p.mouth_h=8;p.mouth_w=50;}
+        else if(age<520){p.eye_h=75;p.mouth_h=48;}
+        break;
+      case Mood::Angry:
+        if(age<260){p.eye_h=10;p.brow=26;p.mouth_w=54;}
+        else if(age<530){p.eye_h=20;p.tilt=21;p.brow=24;}
+        break;
+      case Mood::Love:
+        if(age<360){p.eye_h=26;p.mouth_w=67;p.accent=Accent::None;}
+        break;
+      case Mood::Shy:
+        if(age<330){p.eye_h=22;p.tilt=-13;p.accent=Accent::None;}
+        break;
+      default:break;
+    }
+}
 inline int Approach(int v,int t,int step) { return v<t?std::min(v+step,t):std::max(v-step,t); }
 inline bool Due(uint32_t n,uint32_t t) { return static_cast<int32_t>(n-t)>=0; }
 inline uint32_t BlendColor(uint32_t a,uint32_t b,int amount) {
@@ -102,6 +133,8 @@ class FaceEngine {
     bool gesture_active_=false, micro_active_=false, touch_=false;
     int target_x_=0,target_y_=0, touch_x_=0,touch_y_=0;
     Mood cloud_=Mood::Neutral, gesture_=Mood::Neutral, micro_=Mood::Neutral;
+    Mood animated_mood_=Mood::Neutral;
+    uint32_t animated_since_=0;
     Phase phase_=Phase::Idle;
     Persona persona_=Persona::Friendly;
     Frame frame_{};
@@ -268,7 +301,9 @@ public:
             }
         }
         if(asleep) mood=Mood::Sleepy;
+        if(mood!=animated_mood_){animated_mood_=mood;animated_since_=now;}
         Pose p=Expression(mood);
+        AnimateEmotionIntro(mood,now-animated_since_,p);
         // A goodnight wish is a friendly sleepy face, not a command to
         // interrupt ongoing speech or listening.
         if(social_==Social::Goodnight && phase==Phase::Speaking) {
