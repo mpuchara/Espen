@@ -4,6 +4,7 @@
 #include "button.h"
 #include "config.h"
 #include "face_engine.h"
+#include "espen_remote.h"
 #include "speech_quality.h"
 #include "standby_policy.h"
 #include "speaker_audio.h"
@@ -43,6 +44,7 @@
 #include <algorithm>
 #include <atomic>
 #include <esp_timer.h>
+#include <esp_netif.h>
 #include <mutex>
 #include <new>
 #include <string>
@@ -163,7 +165,7 @@ struct DiagCapture {
 };
 DiagCapture diag;
 }
-bool EspenDiagnosticBusy(){return diag.busy.load(std::memory_order_acquire);}
+bool EspenDiagnosticBusy(){return diag.busy.load(std::memory_order_acquire) || espen_remote::audio_busy.load(std::memory_order_acquire);}
 void EspenDiagBegin(){
     std::lock_guard<std::mutex> l(diag.mutex);
     if(!diag.armed||diag.busy.load())return;
@@ -216,6 +218,7 @@ static std::string EspenDiagSummary(){
     return diag.note.empty()?std::string(b):std::string(b)+"\n"+diag.note;
 }
 static std::atomic<bool> espen_speaker_pa{false};
+bool EspenRemoteSpeakerReady(){return espen_speaker_pa.load(std::memory_order_acquire);}
 static std::atomic<bool> speaker_test_running{false},speaker_test_stop{false};
 static std::atomic<int> speaker_preview_volume{espen::kSpeakerVolumeDefault};
 static std::atomic<bool> speaker_preview_pending{false};
@@ -1283,6 +1286,20 @@ class EspenDisplay : public LcdDisplay {
                 auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
                 self->CloseSettings();self->OpenCameraPanel();
             },this,420);
+            MakeButton(settings_,"Panel telefonu / kod parowania",[](lv_event_t* e){
+                auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                esp_netif_ip_info_t ip{};
+                esp_netif_t* iface=esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+                if(iface && esp_netif_get_ip_info(iface,&ip)==ESP_OK) {
+                    lv_label_set_text_fmt(self->settings_status_,
+                        "Telefon i Ala: ta sama sieć Wi-Fi.\\nAdres Ali: " IPSTR ":8787\\nKod: %06lu",
+                        IP2STR(&ip.ip),static_cast<unsigned long>(espen_remote::Pin()));
+                } else {
+                    lv_label_set_text_fmt(self->settings_status_,
+                        "Sprawdź adres IP Ali w routerze (port 8787).\\nKod: %06lu",
+                        static_cast<unsigned long>(espen_remote::Pin()));
+                }
+            },this,420);
             MakeButton(settings_,"Głośność / test głośnika",[](lv_event_t* e){
                 auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
                 self->CloseSettings();self->OpenSpeakerPanel();
@@ -1820,6 +1837,20 @@ class EspenDisplay : public LcdDisplay {
             engine_.ReplyReact(played.beat,now);
         }
         auto f=engine_.Tick(now,phase,speech.level,speech.shape,loud);
+        espen::Mood remote_mood=espen::Mood::Neutral;
+        if(espen_remote::CurrentMood(static_cast<uint32_t>(esp_timer_get_time()/1000),remote_mood)) {
+            // The chosen remote expression wins over automatic/cloud emotion,
+            // while mouth motion stays synchronized with the real PCM stream.
+            auto expression=espen::Expression(remote_mood);
+            if(phase==Phase::Speaking) {
+                expression.mouth_w=f.pose.mouth_w;
+                expression.mouth_h=f.pose.mouth_h;
+            }
+            f.pose=expression;
+            f.eye_left=f.eye_right=expression.eye_h;
+            f.mood=remote_mood;
+            f.asleep=false;
+        }
         auto& p=f.pose;
         const bool scene_on=visual_enabled_&&recent_audio&&
             (phase==Phase::Speaking||(phase==Phase::Listening&&!Application::GetInstance().GetAudioService().IsAudioProcessorRunning()));
@@ -2464,6 +2495,7 @@ public:
         ImportStagedWifi();
         EspenCloudInfo("Łączenie z siecią Wi-Fi", "");
         WifiBoard::StartNetwork();
+        espen_remote::Start();
     }
     // Mains-powered assistant: don't put the C6 in modem sleep between turns.
     void SetPowerSaveLevel(PowerSaveLevel) override {
