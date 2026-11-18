@@ -376,11 +376,12 @@ public:
             if(pinned_face_==PinnedFace::Blush) {
                 p.accent=Accent::Blush;
                 p.color=BlendColor(p.color,0xFFADC9,65);
-            } else {
+            } else if(pinned_face_==PinnedFace::Love) {
                 p.accent=Accent::Heart;
                 p.color=0xFF91C6;
                 p.eye_h=std::max(43,p.eye_h);
             }
+            // Other choices retain the proper Expression(mood) pose and accents.
         }
         if(phase==Phase::Listening && mood==Mood::Neutral) {p.eye_h=54;p.color=0x7CF6DA;}
         if(phase==Phase::Wake) {p.eye_h=58;p.mouth_w=111;}
