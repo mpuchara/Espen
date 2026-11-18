@@ -31,12 +31,31 @@ int main() {
     assert(thinking.accent==Accent::None);
     auto love=Expression(Mood::Love);AnimateEmotionIntro(Mood::Love,200,love);
     assert(love.accent==Accent::None);
+    // Love repeats distinct blush, heart and wink phases after its introduction.
+    auto shy_love=Expression(Mood::Love);AnimateEmotionLoop(Mood::Love,900,shy_love);
+    assert(shy_love.accent==Accent::Blush);
+    auto heart_love=Expression(Mood::Love);AnimateEmotionLoop(Mood::Love,3000,heart_love);
+    assert(heart_love.accent==Accent::Heart);
+    auto wink_love=Expression(Mood::Love);AnimateEmotionLoop(Mood::Love,6900,wink_love);
+    assert(wink_love.accent==Accent::Blush&&wink_love.asym>0);
+    for(int index=0;index<static_cast<int>(Mood::Count);++index){
+        auto mood=static_cast<Mood>(index);
+        auto pose=Expression(mood);
+        AnimateEmotionLoop(mood,1900,pose);
+        assert(pose.eye_h>0&&pose.mouth_w>0);
+    }
     auto excited=Expression(Mood::Excited);AnimateEmotionIntro(Mood::Excited,200,excited);
     assert(excited.accent==Accent::None);
     auto sleep=Expression(Mood::Sleepy);AnimateEmotionIntro(Mood::Sleepy,300,sleep);
     assert(sleep.accent==Accent::None);
     auto sad=Expression(Mood::Sad);AnimateEmotionIntro(Mood::Sad,500,sad);
     assert(sad.accent==Accent::None&&sad.smile<0);
+    FaceEngine loving_engine;
+    loving_engine.Tick(100,Phase::Idle,0,MouthShape::Closed);
+    loving_engine.Emotion(Mood::Love,200);
+    auto loving=loving_engine.Tick(300,Phase::Speaking,0,MouthShape::Closed);
+    assert(loving.mood==Mood::Love&&loving.hearts);
+    assert(loving_engine.Tick(2400,Phase::Speaking,0,MouthShape::Closed).hearts);
     FaceEngine sad_engine;sad_engine.Tick(100,Phase::Idle,0,MouthShape::Closed);
     sad_engine.Emotion(Mood::Sad,300);
     auto early=sad_engine.Tick(300,Phase::Speaking,0,MouthShape::Closed);
