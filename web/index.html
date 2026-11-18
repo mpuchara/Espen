@@ -39,17 +39,47 @@ Telefon i robot muszą być w tym samym Wi-Fi.</p>
 <p><a href="https://github.com/mpuchara/Espen">Kod i instrukcje</a> · <a href="https://github.com/mpuchara/Espen/actions">Status kompilacji</a></p>
 <script type="module">
 const status=document.getElementById("status");
-try {
-  const r=await fetch("espen.bin",{method:"HEAD",cache:"no-store"});
-  if(!r.ok)throw Error("Firmware niedostępne");
-  const size=r.headers.get("content-length");
-  if(size!==null && (Number(size)<9000000||Number(size)>16777216))
-    throw Error("Nieprawidłowy rozmiar pełnego firmware");
-  status.textContent="✅ Pełny firmware 0.2.16 jest dostępny.";
+const activate=()=> {
+  status.textContent="✅ Pełny firmware 0.2.16 jest dostępny. Podłącz Alę do komputera.";
   for(const id of ["full-installer","bin","hash"])document.getElementById(id).hidden=false;
-} catch(e) {
-  status.textContent="❌ Pełny obraz nie jest dostępny. Nie uruchamiaj instalacji.";
+};
+async function checkFirmware(){
+  // Web Serial is not supported by Samsung Internet and other mobile browsers.
+  // Do not misreport a missing firmware image merely because a phone cannot flash it.
+  if(!window.isSecureContext || !("serial" in navigator)){
+    status.textContent="📱 Instalacja przez USB nie jest obsługiwana w tej przeglądarce. Otwórz tę stronę w Chrome lub Edge na komputerze i podłącz Alę do portu USB ESP32-P4.";
+    return;
+  }
+  try {
+    const r=await fetch("espen.bin",{method:"HEAD",cache:"no-store"});
+    if(!r.ok)throw Error("HTTP "+r.status);
+    const size=r.headers.get("content-length");
+    if(size!==null && (Number(size)<9000000||Number(size)>16777216))
+      throw Error("Nieprawidłowy rozmiar firmware: "+size+" B");
+    activate();
+  } catch(firstError) {
+    // Some browsers, CDNs and proxies block HEAD even if the binary is there.
+    // Probe one byte at the expected ESP32-P4 bootloader offset via a Range GET.
+    try {
+      const probe=await fetch("espen.bin",{method:"GET",headers:{"Range":"bytes=8192-8192"},cache:"no-store"});
+      if(probe.status!==206) {
+        if(probe.body)await probe.body.cancel();
+        throw Error("HTTP "+probe.status+" (brak obsługi sprawdzania pliku)");
+      }
+      const range=probe.headers.get("content-range")||"";
+      const match=/^bytes 8192-8192\/(\d+)$/.exec(range);
+      if(!match||Number(match[1])<9000000||Number(match[1])>16777216)
+        throw Error("Brak pełnego firmware w odpowiedzi serwera");
+      const bytes=new Uint8Array(await probe.arrayBuffer());
+      if(bytes.length!==1 || bytes[0]!==0xe9)
+        throw Error("Nieprawidłowy nagłówek bootloadera P4");
+      activate();
+    } catch(secondError) {
+      status.textContent="❌ Nie można potwierdzić pliku espen.bin ("+secondError.message+"). Nie uruchamiaj instalacji. Sprawdź sieć lub otwórz stronę ponownie w Chrome na komputerze.";
+    }
+  }
 }
+checkFirmware();
 </script><script type="module">
 const output=document.getElementById("serial-log");
 const open=document.getElementById("serial-open"), close=document.getElementById("serial-close");
