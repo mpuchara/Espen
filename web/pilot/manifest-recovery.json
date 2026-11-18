@@ -1,6 +1,6 @@
 {
   "name": "Ala Pilot – PEŁNE PRZYWRACANIE (bootloop) • P4 rev1 / 16MB",
-  "version": "0.2.14-pilot-test1-full-recovery",
+  "version": "0.2.15",
   "new_install_prompt_erase": true,
   "builds": [
     {
