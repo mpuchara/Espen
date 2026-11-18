@@ -29,7 +29,7 @@ public final class FaceView extends View {
     private String emotion = "neutral", subtitle = "", status = "Dotknij mikrofonu";
     private String activationCode = "";
     private String reaction = "";
-    private boolean persistentBlush;
+    private boolean persistentBlush,pinnedMood;
     private long reactionUntil, photoUntil;
     private Bitmap photo;
     private int battery = -1;
@@ -55,13 +55,14 @@ public final class FaceView extends View {
     public void setBattery(int n){battery=n;invalidate();}
     public void setBlush(boolean on){persistentBlush=on;invalidate();}
     public void setEmotionPersistent(String mood){
+        pinnedMood=true;
         emotion=mood==null?"love":mood.toLowerCase(Locale.ROOT);
         moodUntil=Long.MAX_VALUE;
         if(emotion.contains("love"))heartUntil=Long.MAX_VALUE;
         invalidate();
     }
     public void resetPhoneEmotion(){
-        emotion="neutral";moodUntil=0;heartUntil=0;
+        emotion="neutral";pinnedMood=false;moodUntil=0;heartUntil=0;
         reactionUntil=0;reaction="";persistentBlush=false;invalidate();
     }
     public void setReaction(String cue){reaction=cue==null?"":cue;reactionUntil=SystemClock.uptimeMillis()+2100;invalidate();}
@@ -74,6 +75,7 @@ public final class FaceView extends View {
         photo=next;photoUntil=SystemClock.uptimeMillis()+12500;invalidate();
     }
     public void setEmotion(String s) {
+        if(pinnedMood)return;
         emotion = s == null ? "neutral" : s.toLowerCase(Locale.ROOT);
         moodUntil = SystemClock.uptimeMillis() + 3700;
         if (emotion.equals("loving") || emotion.equals("love")) heartUntil = moodUntil;
@@ -244,7 +246,7 @@ public final class FaceView extends View {
             case MotionEvent.ACTION_DOWN:
                 downX=x;downY=y;downAt=now;movement=0;touching=true;isActive=true;return true;
             case MotionEvent.ACTION_MOVE:
-                if(touching){movement=Math.max(movement,Math.abs(x-downX)+Math.abs(y-downY));if(movement>25&&downY<318){emotion="love";moodUntil=now+1700;heartUntil=now+1700;}}
+                if(touching){movement=Math.max(movement,Math.abs(x-downX)+Math.abs(y-downY));if(!pinnedMood&&movement>25&&downY<318){emotion="love";moodUntil=now+1700;heartUntil=now+1700;}}
                 return true;
             case MotionEvent.ACTION_CANCEL: touching=false;return true;
             case MotionEvent.ACTION_UP:
@@ -255,7 +257,7 @@ public final class FaceView extends View {
                 if(now-downAt>=1500 && movement<20){if(actions!=null)actions.onSettings();return true;}
                 if(y>314&&movement<35){
                     if(actions!=null){if(x<105)actions.onSettings();else if(x>251)actions.onCamera();else actions.onMicrophone();}
-                }else if(movement<25){
+                }else if(movement<25&&!pinnedMood){
                     if(now-lastTap<420){emotion="surprised";moodUntil=now+1600;}
                     else{emotion="winking";moodUntil=now+950;}
                     lastTap=now;
