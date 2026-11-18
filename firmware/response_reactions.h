@@ -12,7 +12,7 @@ namespace espen {
 enum class ReplyBeat : uint8_t {
     None, Celebrate, Giggle, Astonished, Oops, Whisper, Puzzle, Warmth, Magic,
     Dance, EyeRoll, Victory, Eureka, Suspense, Sneaky, Sadness, Sleep,
-    Detective, Robot, Drumroll, Agree, Lovestruck
+    Detective, Robot, Drumroll, Agree, Lovestruck, ShowOff
 };
 
 inline ReplyBeat ClassifyReplyBeat(std::string_view text) {
@@ -31,6 +31,12 @@ inline ReplyBeat ClassifyReplyBeat(std::string_view text) {
         has("chyba sie zakochalam") || has("serduszka mi wiruja") ||
         has("ale mnie zauroczyles") || has("ale mnie zauroczylas"))
         return ReplyBeat::Lovestruck;
+    // Playful self-praise only when Ala herself says it; no forced dialogue.
+    if (has("jestem najlepszym robotem") || has("jestem najlepsza robotka") ||
+        has("mam ladniejsze oczka") || has("jestem genialna") ||
+        has("podziwiaj moj geniusz") || has("patrz jaka jestem madra") ||
+        has("jestem gwiazda robotlandii"))
+        return ReplyBeat::ShowOff;
     if (has("ups") || has("oops") || has("moja pomylka") ||
         has("ojej pomylilem") || has("ojej pomylilam"))
         return ReplyBeat::Oops;
@@ -119,6 +125,7 @@ inline EmotionalCue ReplyCue(ReplyBeat beat) {
         case ReplyBeat::Drumroll: return EmotionalCue::Drumroll;
         case ReplyBeat::Agree: return EmotionalCue::Agree;
         case ReplyBeat::Lovestruck: return EmotionalCue::Heart;
+        case ReplyBeat::ShowOff: return EmotionalCue::Victory;
         default: return EmotionalCue::Count;
     }
 }
