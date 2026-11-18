@@ -84,7 +84,14 @@ int main() {
     assert(love.pose.accent==Accent::Heart && love.hearts);
     assert(love.pose.mouth_h>10);
     rosy.PinFace(PinnedFace::Angry);
-    assert(rosy.Tick(202000,Phase::Listening,0,MouthShape::Closed).mood==Mood::Angry);
+    auto angry=rosy.Tick(202000,Phase::Listening,0,MouthShape::Closed);
+    assert(angry.mood==Mood::Angry && angry.pose.accent!=Accent::Heart);
+    rosy.PinFace(PinnedFace::Sad);
+    auto sad=rosy.Tick(202100,Phase::Listening,0,MouthShape::Closed);
+    assert(sad.mood==Mood::Sad && sad.pose.accent==Accent::Tear);
+    rosy.PinFace(PinnedFace::Happy);
+    auto happy=rosy.Tick(202200,Phase::Listening,0,MouthShape::Closed);
+    assert(happy.mood==Mood::Happy && happy.pose.accent!=Accent::Heart);
     rosy.PinFace(PinnedFace::None);
     assert(rosy.Pinned()==PinnedFace::None);
     assert(rosy.Tick(208000,Phase::Idle,0,MouthShape::Closed).pose.accent!=Accent::Blush);
