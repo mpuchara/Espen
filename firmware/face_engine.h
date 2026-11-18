@@ -264,6 +264,7 @@ public:
                 case ReplyBeat::Robot: mood=Mood::Confident;break;
                 case ReplyBeat::Drumroll: mood=Mood::Excited;break;
                 case ReplyBeat::Agree: mood=Mood::Happy;break;
+                case ReplyBeat::Blush: mood=Mood::Shy;break;
                 default:break;
             }
         }
@@ -306,6 +307,9 @@ public:
                 case ReplyBeat::Robot: p.eye_h=43;p.eye_w=61;p.tilt=0;p.color=0x63E6FF;break;
                 case ReplyBeat::Drumroll: p.brow=-13;p.accent=Accent::Star;break;
                 case ReplyBeat::Agree: p.eye_h=28;p.tilt=5;break;
+                case ReplyBeat::Blush: p.accent=Accent::Blush;p.color=0xFFADC9;
+                    p.eye_h=std::min(p.eye_h,26);p.tilt=-8;
+                    p.asym=(age/350)%2?8:-8;break;
                 default:break;
             }
         }
