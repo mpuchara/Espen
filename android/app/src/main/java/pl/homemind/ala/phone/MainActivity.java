@@ -46,12 +46,22 @@ public final class MainActivity extends Activity {
     private int pollCount = 0;
     private boolean polling = false;
     private boolean nextHello = false;
+    private long emotionRequest = 0;
+    private boolean supportsEmotionVoice = true;
     private final String[] moods = {"happy","laugh","sad","surprise","angry","thinking","sleepy","love",
             "confident","shy","confused","fear","wink","bored","excited","neutral"};
     private final String[] titles = {"😄 Radość","😂 Śmiech","😢 Smutek","😲 Zdziwienie",
             "😠 Złość","🤔 Myślenie","😴 Senność","😍 Zakochanie","😎 Pewność",
             "😊 Rumieńce","😕 Zmieszanie","😨 Strach","😉 Oczko","😐 Nuda",
             "🤩 Ekscytacja","🙂 Spokój"};
+    private final String[] oldFirmwareMoodPhrases = {
+        "Cześć! Mam dziś świetny humor!", "Ha, ha! Ale zabawnie!", "Oj, trochę mi smutno.",
+        "Łał! Co za niespodzianka!", "Grrr! Zaraz się uspokoję.", "Hmm, muszę pomyśleć.",
+        "Ziew! Ale jestem śpiąca.", "Ale miło cię widzieć! Posyłam ci serduszka.",
+        "Dam radę! Jestem gotowa.", "Ojej, aż się zarumieniłam.", "Hmm, trochę się pogubiłam.",
+        "Ojej! Ale mnie przestraszyłeś!", "Mrugam do ciebie!", "Może wymyślimy jakąś zabawę?",
+        "Hurra! Nie mogę się doczekać!", "Cześć! Jestem gotowa do rozmowy."
+    };
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -118,19 +128,28 @@ public final class MainActivity extends Activity {
             call("/api/status","GET",null,
                  result -> call("/api/name","GET",null,
                      name->{showRobotName(name);connectStatus.setText("✅ Połączono z robotem "+name+".");},
-                     error -> connectStatus.setText("❌ Nie odczytano imienia: "+error)),
+                     error -> {
+                         supportsEmotionVoice=false;
+                         connectStatus.setText("✅ Połączono. Starsza wersja Ali nie obsługuje zmiany imienia; emocje i głos spróbują działać.");
+                     }),
                  error -> connectStatus.setText("❌ "+error));
         });
 
         LinearLayout faces=card(root);
         faces.addView(text("🎭 Emocje Ali",20,LIGHT,true));
-        faces.addView(text("Po dotknięciu emocja pojawi się na Ali po 5 sekundach.",14,MUTED,false));
+        faces.addView(text("Po dotknięciu emocja pojawi się po 5 sekundach. Ala może wtedy powiedzieć zdanie pasujące do nastroju.",14,MUTED,false));
         sticky = new CheckBox(this);
         sticky.setText("Na stałe — aż nacisnę X");
         sticky.setTextColor(LIGHT);
         sticky.setButtonTintList(ColorStateList.valueOf(ACCENT));
         sticky.setChecked(true);
         faces.addView(sticky);
+        CheckBox speakMood = new CheckBox(this);
+        speakMood.setText("🔊 Niech Ala mówi miłe i zabawne słowa dla każdej emocji");
+        speakMood.setTextColor(LIGHT);
+        speakMood.setButtonTintList(ColorStateList.valueOf(ACCENT));
+        speakMood.setChecked(true);
+        faces.addView(speakMood);
 
         GridLayout grid=new GridLayout(this);
         grid.setColumnCount(4);
@@ -151,25 +170,51 @@ public final class MainActivity extends Activity {
             lp.setMargins(dp(2),dp(2),dp(2),dp(2));
             grid.addView(button,lp);
             button.setOnClickListener(v -> {
+                final long requestId=++emotionRequest;
+                final boolean withVoice=speakMood.isChecked();
+                final String command=mood+"|"+(sticky.isChecked()?"1":"0");
                 moodStatus.setText("Wysyłam: "+label);
-                call("/api/emotion","POST",mood+"|"+(sticky.isChecked()?"1":"0"),
-                     result -> moodStatus.setText("✅ "+label+" — pojawi się za 5 sekund."),
-                     error -> moodStatus.setText("❌ "+error));
+                if(!withVoice || !supportsEmotionVoice) {
+                    call("/api/emotion","POST",command,
+                        result -> {
+                            moodStatus.setText("✅ "+label+" — za 5 sekund.");
+                            if(withVoice)fallbackMoodSpeech(requestId, mood);
+                        }, error -> moodStatus.setText("❌ "+error));
+                } else {
+                    call("/api/emotion","POST",command+"|1",
+                        result -> moodStatus.setText("✅ "+label+" — za 5 sekund animacja i słowa Ali."),
+                        error -> {
+                            if(error.contains("Niepoprawna emocja") || error.contains("HTTP 400")) {
+                                supportsEmotionVoice=false;
+                                call("/api/emotion","POST",command,
+                                    ok -> {
+                                        moodStatus.setText("✅ "+label+" — za 5 sekund (starsza wersja Ali).");
+                                        fallbackMoodSpeech(requestId, mood);
+                                    },
+                                    fail -> moodStatus.setText("❌ "+fail));
+                            } else moodStatus.setText("❌ "+error);
+                        });
+                }
             });
         }
         Button reset=action("✕ Wyłącz emocję",false);
         faces.addView(reset);
         moodStatus=text("Wybierz emocję.",14,ACCENT,false);
         faces.addView(moodStatus);
-        reset.setOnClickListener(v -> call("/api/emotion","POST","reset",
+        reset.setOnClickListener(v -> {
+            emotionRequest++;
+            call("/api/emotion","POST","reset",
                 result -> moodStatus.setText("Emocja wyłączona."),
-                error -> moodStatus.setText("❌ "+error)));
+                error -> moodStatus.setText("❌ "+error));
+        });
 
         LinearLayout speech=card(root);
         speech.addView(text("✍️ Co Ala ma powiedzieć?",20,LIGHT,true));
         speech.addView(text("Wpisz tekst. Możesz poprawić jego zapis, poprosić Alę o wypowiedzenie go albo zapytać Xiaozhi o odpowiedź.",14,MUTED,false));
         final TextView typedPreview = text("Napisane: (jeszcze nic)",16,LIGHT,false);
         speech.addView(typedPreview);
+        final TextView correctedPreview = text("Po wstępnej poprawie: (jeszcze nic)",15,ACCENT,false);
+        speech.addView(correctedPreview);
         sentence=edit("Np. czesc wszystkim, jak sie macie", "",InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
         sentence.setMinLines(3);
         sentence.setMaxLines(7);
@@ -181,6 +226,8 @@ public final class MainActivity extends Activity {
             public void beforeTextChanged(CharSequence s,int start,int count,int after) {}
             public void onTextChanged(CharSequence s,int start,int before,int count) {
                 typedPreview.setText(s.length()==0 ? "Napisane: (jeszcze nic)" : "Napisane: "+s);
+                String corrected=normalize(s.toString());
+                correctedPreview.setText(corrected.isEmpty()?"Po wstępnej poprawie: (jeszcze nic)":"Po wstępnej poprawie: "+corrected);
             }
             public void afterTextChanged(Editable e) {}
         });
@@ -274,6 +321,21 @@ public final class MainActivity extends Activity {
         root.addView(text("Pilot lokalny • wymagane Wi-Fi i firmware Ali z obsługą panelu. Połączenie HTTP nie jest szyfrowane — używaj prywatnej sieci.",12,MUTED,false));
     }
 
+    // Older firmware only accepts mood|sticky, so the phone sends the matching
+    // phrase once after its five-second preview. Never repeat it for sticky moods.
+    private void fallbackMoodSpeech(long requestId, String mood) {
+        int index=-1;
+        for(int i=0;i<moods.length;i++)if(moods[i].equals(mood)){index=i;break;}
+        if(index<0)return;
+        final String phrase=oldFirmwareMoodPhrases[index];
+        main.postDelayed(() -> {
+            if(isFinishing() || requestId!=emotionRequest)return;
+            call("/api/say","POST",phrase,
+                ok -> moodStatus.setText("🔊 Ala dostała zdanie do powiedzenia."),
+                error -> moodStatus.setText("Animacja działa, ale mówienie nie wyszło: "+error));
+        },5200);
+    }
+
     private void showRobotName(String value) {
         titleView.setText("💙 Pilot: "+value);
         robotName.setText(value);
@@ -298,7 +360,13 @@ public final class MainActivity extends Activity {
         String s=value.trim().replaceAll("\\s+"," ").replaceAll("\\s+([.,!?;:])","$1")
                 .replaceAll("([.,!?;:])(?=\\S)","$1 ");
         if(s.isEmpty())return s;
+        // Safe local hints; complete spelling and grammar corrections belong to Xiaozhi.
+        s=s.replaceAll("(?iu)\\bczesc\\b","cześć")
+           .replaceAll("(?iu)\\bmaviej\\b","Maciej")
+           .replaceAll("(?iu)\\bmaciej\\b","Maciej")
+           .replaceAll("(?iu)\\bsię\\b","się");
         s=s.substring(0,1).toUpperCase(java.util.Locale.forLanguageTag("pl-PL"))+s.substring(1);
+        if(s.matches("(?iu)^cześć\\s+Maciej[.!?]?$"))return "Cześć, Maciej!";
         if (!s.matches("(?s).*[.!?…]$"))s+=".";
         return s;
     }
