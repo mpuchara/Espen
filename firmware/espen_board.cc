@@ -566,6 +566,8 @@ class EspenDisplay : public LcdDisplay {
         lv_display_flush_ready(disp);
     }
 
+    lv_obj_t* robot_name_label_ = nullptr;
+    uint32_t seen_robot_name_revision_ = 0;
     lv_obj_t* wake_panel_ = nullptr;
     lv_obj_t* wake_name_ = nullptr;
     lv_obj_t* wake_state_ = nullptr;
@@ -1700,6 +1702,18 @@ class EspenDisplay : public LcdDisplay {
         lv_label_set_long_mode(wake_indicator_,LV_LABEL_LONG_DOT);
         lv_obj_set_pos(wake_indicator_,15,264);
         Passive(wake_indicator_);RefreshWake();
+        // Persistent local name, refreshed on the LVGL task after a phone edit.
+        // Place it in the top-right corner without obscuring the face or mic bar.
+        robot_name_label_=lv_label_create(face_);
+        lv_obj_set_style_text_font(robot_name_label_,EspenUiFont(),0);
+        lv_obj_set_style_text_color(robot_name_label_,lv_color_hex(0x78E1CB),0);
+        lv_obj_set_style_text_align(robot_name_label_,LV_TEXT_ALIGN_RIGHT,0);
+        lv_obj_set_width(robot_name_label_,156);
+        lv_label_set_long_mode(robot_name_label_,LV_LABEL_LONG_DOT);
+        lv_obj_set_pos(robot_name_label_,203,9);
+        lv_label_set_text(robot_name_label_,espen::PhonePanel::Instance().Name().c_str());
+        seen_robot_name_revision_=espen::PhonePanel::Instance().NameRevision();
+        Passive(robot_name_label_);
         camera_indicator_=lv_label_create(face_);
         lv_obj_set_style_text_font(camera_indicator_,EspenUiFont(),0);
         lv_obj_set_style_text_color(camera_indicator_,lv_color_hex(0xFFD66B),0);
@@ -1781,6 +1795,13 @@ class EspenDisplay : public LcdDisplay {
         uint32_t now=lv_tick_get();
         RefreshCameraPanel(now);
         if(!face_||OverlayVisible())return;
+        auto& phone=espen::PhonePanel::Instance();
+        const uint32_t name_rev=phone.NameRevision();
+        if(name_rev!=seen_robot_name_revision_ && robot_name_label_) {
+            seen_robot_name_revision_=name_rev;
+            const auto name=phone.Name();
+            lv_label_set_text(robot_name_label_,name.c_str());
+        }
         const int vision_activity=EspenVision().Activity();
         Hide(camera_indicator_,vision_activity==0);
         if(vision_activity){
