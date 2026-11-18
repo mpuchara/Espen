@@ -14,7 +14,34 @@ enum class Gesture { Tap, DoubleTap, Stroke, Tickle, TripleTap, Boop };
 enum class MouthShape { Closed, Open, Round, Wide };
 enum class Accent { None, Heart, Star, Tear, Blush, Dots, Sleep };
 // User-selectable face expression. Stored in NVS by the display controller.
-enum class PinnedFace : uint8_t { None=0, Blush=1, Love=2 };
+enum class PinnedFace : uint8_t {
+    None=0, Blush=1, Love=2, Happy=3, Laugh=4, Sad=5,
+    Angry=6, Surprise=7, Sleepy=8
+};
+// Runs on the LVGL thread. No background timer, heap or cross-thread callbacks.
+class EmotionDelay {
+    PinnedFace selected_=PinnedFace::None;
+    uint32_t started_=0;
+    bool pending_=false;
+public:
+    static constexpr uint32_t kDelayMs=5000;
+    void Schedule(PinnedFace face,uint32_t now) {
+        if(face==PinnedFace::None){Cancel();return;}
+        selected_=face;started_=now;pending_=true;
+    }
+    void Cancel(){pending_=false;selected_=PinnedFace::None;}
+    bool Pending() const{return pending_;}
+    PinnedFace Selected() const{return selected_;}
+    uint32_t SecondsLeft(uint32_t now) const {
+        if(!pending_)return 0;
+        uint32_t elapsed=now-started_;
+        return elapsed>=kDelayMs?0:(kDelayMs-elapsed+999)/1000;
+    }
+    bool TakeReady(uint32_t now,PinnedFace& output) {
+        if(!pending_||now-started_<kDelayMs)return false;
+        output=selected_;Cancel();return true;
+    }
+};
 struct Pose {
     int eye_h=44, eye_w=76, tilt=0, brow=0, asym=0;
     int mouth_w=88, mouth_h=8, smile=14;
@@ -144,13 +171,11 @@ public:
         force_sleep_=false;
         if(phase_==Phase::Idle||phase_==Phase::Offline||phase_==Phase::Startup) ResetIdle(now);
     }
-    // A shy or lovestruck sentence can pin the corresponding playful face.
-    // It remains selected until the X button clears it, even across speech turns.
-    // The UI saves this choice to NVS; no audio or microphone state is changed.
+    // Spoken response cues remain transient; the panel pins the face.
+    // The UI saves manual choices to NVS; no microphone/audio state is changed.
     void ReplyReact(ReplyBeat beat,uint32_t now) {
         reply_=beat; reply_at_=now;
-        if(beat==ReplyBeat::Blush) pinned_face_=PinnedFace::Blush;
-        else if(beat==ReplyBeat::Lovestruck) pinned_face_=PinnedFace::Love;
+        // Spoken reactions are brief. Only a manual panel selection is pinned.
     }
     void SocialReact(Social reaction,uint32_t now) {
         if(reaction==Social::None)return;
@@ -285,8 +310,17 @@ public:
             }
         }
         if(!asleep && !force_sleep_) {
-            if(pinned_face_==PinnedFace::Love) mood=Mood::Love;
-            else if(pinned_face_==PinnedFace::Blush && mood==Mood::Neutral) mood=Mood::Shy;
+            switch(pinned_face_) {
+                case PinnedFace::Blush:mood=Mood::Shy;break;
+                case PinnedFace::Love:mood=Mood::Love;break;
+                case PinnedFace::Happy:mood=Mood::Happy;break;
+                case PinnedFace::Laugh:mood=Mood::Laugh;break;
+                case PinnedFace::Sad:mood=Mood::Sad;break;
+                case PinnedFace::Angry:mood=Mood::Angry;break;
+                case PinnedFace::Surprise:mood=Mood::Surprise;break;
+                case PinnedFace::Sleepy:mood=Mood::Sleepy;break;
+                default:break;
+            }
         }
         if(asleep) mood=Mood::Sleepy;
         Pose p=Expression(mood);
