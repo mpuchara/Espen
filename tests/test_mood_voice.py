@@ -23,7 +23,7 @@ assert "phone_voice = false;" in bridge
 assert "TrySpeakMood(phone_mood)" in bridge
 assert "phone_due = now + 5000;" in bridge
 assert "phone_voice = false;" in bridge[bridge.index("TrySpeakMood(phone_mood)"):]
-assert "caly tekst" in bridge and "pelna, poprawiona wersje" in bridge
+assert "calego tekstu" in bridge and "pelna, poprawiona wersje" in bridge
 assert "AnimateEmotionLoop(Mood mood" in face
 assert "f.hearts=mood==Mood::Love" in face
 assert "🔊 Niech Ala mówi" in android
