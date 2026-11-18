@@ -182,8 +182,8 @@ public final class MainActivity extends Activity {
             if (!hello && textToSend.isEmpty()) {
                 speechStatus.setText("Wpisz pytanie dla Ali.");return;
             }
-            if(textToSend.contains("\\"") || textToSend.contains("\\\\") ||
-               textToSend.contains("\\n") || textToSend.contains("\\r") ||
+            if(textToSend.indexOf((char)34)>=0 || textToSend.indexOf((char)92)>=0 ||
+               textToSend.indexOf((char)10)>=0 || textToSend.indexOf((char)13)>=0 ||
                textToSend.getBytes(StandardCharsets.UTF_8).length>400) {
                 speechStatus.setText("Skróć tekst i usuń cudzysłowy oraz nowe linie.");return;
             }
