@@ -1,0 +1,20 @@
+{
+  "name": "Ala Pilot – kod i IP (ESP32-P4 GUITION, aktualizacja bez kasowania)",
+  "version": "0.2.14-pilot-test1",
+  "new_install_prompt_erase": false,
+  "builds": [
+    {
+      "chipFamily": "ESP32-P4",
+      "parts": [
+        {
+          "path": "espen-app.bin",
+          "offset": 131072
+        },
+        {
+          "path": "espen-assets.bin",
+          "offset": 8388608
+        }
+      ]
+    }
+  ]
+}
