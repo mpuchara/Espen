@@ -6,8 +6,8 @@ Panel jest częścią firmware ESP32-P4 w repozytorium Espen. **Nie jest to APK 
 
 1. Wgraj firmware z gałęzi zawierającej tę funkcję. Panel nie zadziała z wcześniej wgraną wersją.
 2. Podłącz Alę i telefon do **tej samej lokalnej sieci Wi-Fi**.
-3. Na Ali otwórz **Ustawienia**. Pod adresem IP pojawi się wiersz `Pilot: http://<IP>/` oraz ośmiocyfrowy `Kod`.
-4. W telefonie otwórz w Chrome adres `http://<IP>/` (dokładnie adres wyświetlony przez Alę, nie adres GitHub Pages). Możesz dodać stronę do ekranu głównego.
+3. Na Ali otwórz **Ustawienia → Pilot telefonu / kod**. Na osobnym, czytelnym ekranie znajdziesz **Adres IP** oraz duży **8-cyfrowy kod pilota**. Nie pomyl go z kodem aktywacji Xiaozhi. Kod powstaje automatycznie przy pierwszym użyciu, jest zapisany w NVS i pozostaje taki sam po zwykłej aktualizacji. Jeśli nie ma Wi-Fi, Ala pokaże komunikat zamiast fikcyjnego IP.
+4. W aplikacji **Pilot Ali na Androida** wpisz dokładnie podany IP i 8 cyfr. Możesz też otworzyć w Chrome adres `http://<IP>/` (dokładnie adres wyświetlony przez Alę, nie adres GitHub Pages). Możesz dodać stronę do ekranu głównego.
 5. Wpisz ośmiocyfrowy kod i dotknij **Połącz**. Kod jest unikatowy dla danego urządzenia i zapisywany w jego NVS; aktualizacja aplikacji nie powinna go skasować.
 6. Wybierz emocję: za 5 sekund pojawi się na twarzy Ali. Domyślnie zostaje aż do kliknięcia **X Wyłącz emocję**; możesz odznaczyć opcję „Na stałe”.
 7. Wpisz zdanie, użyj **Wstępnie popraw**, a potem **Niech Ala powie**. Robot poprosi tego samego agenta Xiaozhi o językową korektę zdania i wypowiedzenie samej poprawionej wersji.
