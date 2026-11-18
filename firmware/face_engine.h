@@ -89,6 +89,21 @@ inline void AnimateEmotionIntro(Mood mood,uint32_t age,Pose& p) {
       default:break;
     }
 }
+// A visible tear starts only after the sad eyes and mouth have settled.
+// One drop glides down the cheek, disappears and restarts after a short pause.
+// Calculated from animation age: deterministic, no separate timer or allocations.
+struct TearMotion {
+    bool visible=false;
+    int x=304, y=140, height=20;
+};
+inline TearMotion FallingTear(Mood mood,uint32_t age,bool accent_visible=true) {
+    if(mood!=Mood::Sad||!accent_visible||age<650)return {};
+    const uint32_t cycle=(age-650)%2700;
+    if(cycle>=1650)return {};
+    const int progress=static_cast<int>(cycle);
+    const int height=progress<1400?20:std::max(4,20-(progress-1400)*16/250);
+    return {true,304-progress*6/1650,140+progress*82/1650,height};
+}
 inline int Approach(int v,int t,int step) { return v<t?std::min(v+step,t):std::max(v-step,t); }
 inline bool Due(uint32_t n,uint32_t t) { return static_cast<int32_t>(n-t)>=0; }
 inline uint32_t BlendColor(uint32_t a,uint32_t b,int amount) {
@@ -117,6 +132,7 @@ struct Frame {
     uint32_t heart_age=0,effect_age=0;
     PetEffect effect=PetEffect::None;
     Mood mood=Mood::Neutral;
+    TearMotion tear{};
 };
 class FaceEngine {
     uint32_t rng_=0x45a9b3e1u, idle_since_=0, phase_since_=0, emotion_at_=0;
@@ -487,6 +503,7 @@ public:
         f.hearts=social_==Social::Affection||(social_==Social::Comfort&&now-social_at_>=650)||reply_hearts;
         f.heart_age=f.hearts?(reply_hearts?now-reply_at_:now-social_at_)%1950:0;
         f.effect=affinity_.Effect(now);f.effect_age=affinity_.Age(now);
+        f.tear=FallingTear(mood,now-animated_since_,p.accent==Accent::Tear&&!asleep);
         return f;
     }
 };
