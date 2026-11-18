@@ -26,7 +26,9 @@ jobs:
       - name: Install Android 35
         run: |
           echo "ANDROID_HOME=$ANDROID_HOME"
-          sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
+          sdkmanager_bin="$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | head -n 1)"
+          test -n "$sdkmanager_bin"
+          "$sdkmanager_bin" --install "platforms;android-35" "build-tools;35.0.0"
       - name: Build signed debug APK
         working-directory: android
         run: gradle --no-daemon --stacktrace assembleDebug
