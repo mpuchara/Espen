@@ -1886,8 +1886,11 @@ class EspenDisplay : public LcdDisplay {
             Hide(shapes_[7+i],!blush);
             if(blush)Shape(7+i,(i==0?51:294)+shift,155+f.bob,36,13);
         }
-        Hide(shapes_[9],p.accent!=Accent::Tear);
-        if(p.accent==Accent::Tear)Shape(9,304+shift,139+static_cast<int>((now/150)%12),12,20);
+        // Move the drop from below the eye down the cheek, rather than
+        // jittering it according to global uptime. FaceEngine gates its
+        // appearance until the eyes and mouth have finished turning sad.
+        Hide(shapes_[9],!f.tear.visible);
+        if(f.tear.visible)Shape(9,f.tear.x+shift,f.tear.y+f.bob,12,f.tear.height);
         for(int i=0;i<3;++i) {
             bool show=p.accent==Accent::Dots;
             Hide(shapes_[10+i],!show);
