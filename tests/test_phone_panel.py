@@ -17,6 +17,8 @@ for api in ("/api/emotion", "/api/say", "/api/reply", "/api/status"):
     assert api in html and api in phone, api
 assert "X-Ala-Pin" in html and "X-Ala-Pin" in phone
 assert "esp_random()" in phone and 'Settings s("espen_phone", true)' in phone
+assert "bool Started() const" in phone
+assert "std::all_of(pin_.begin(), pin_.end()" in phone, "The stored PIN must be 8 digits"
 assert "std::atomic<uint32_t> emotion_seq_" in phone
 assert "GetDeviceState() != kDeviceStateIdle" in phone
 assert "ch == '\\\\'" in phone, "Prevent JSON injection through backslashes"
@@ -44,7 +46,16 @@ with tempfile.TemporaryDirectory() as tmp:
     assert generated.count(')ALA_PHONE_HTML";') == 1
     assert 'const char kAlaPhoneHtml[]' in generated
     assert 'phone_panel.h' in b.read_text()
-    assert 'Pilot: http://%s/' in b.read_text()
+    generated_board = b.read_text()
+    assert 'Pilot: http://%s/' in generated_board
+    assert 'Pilot telefonu / kod' in generated_board
+    assert 'void OpenPhonePanel()' in generated_board
+    assert 'void RefreshPhonePanel()' in generated_board
+    assert 'lv_label_set_text(phone_code_, panel.Pin().c_str());' in generated_board
+    assert 'NIE jest kod parowania Xiaozhi' in generated_board
+    assert 'RefreshPhonePanel();' in generated_board
+    assert 'phone_panel_,wake_panel_' in generated_board
+    assert 'PhonePanel::Instance().Start();' in generated_board
     assert 'phone_due = now + 5000;' in b.read_text()
     assert 'EspenSayText' in (up / "main/application.cc").read_text()
     assert 'esp_http_server' in (up / "main/CMakeLists.txt").read_text()
