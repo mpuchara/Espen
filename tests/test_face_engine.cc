@@ -13,6 +13,44 @@ int main() {
     for(int m=0;m<static_cast<int>(Mood::Count);++m) {
         auto p=Expression(static_cast<Mood>(m)); assert(p.eye_h>0&&p.eye_w>0&&p.mouth_w>0);
     }
+    // All 16 expressions need a distinct animated entrance, not a jump.
+    for(int index=0;index<static_cast<int>(Mood::Count);++index){
+        auto mood=static_cast<Mood>(index);
+        auto regular=Expression(mood), opening=regular;
+        AnimateEmotionIntro(mood,0,opening);
+        assert(opening.eye_h!=regular.eye_h||opening.mouth_h!=regular.mouth_h||
+               opening.mouth_w!=regular.mouth_w||opening.tilt!=regular.tilt||
+               opening.smile!=regular.smile||opening.asym!=regular.asym||
+               opening.accent!=regular.accent);
+        auto finished=regular;AnimateEmotionIntro(mood,900,finished);
+        assert(finished.eye_h==regular.eye_h&&finished.mouth_h==regular.mouth_h&&
+               finished.mouth_w==regular.mouth_w&&finished.smile==regular.smile&&
+               finished.accent==regular.accent);
+    }
+    auto thinking=Expression(Mood::Thinking);AnimateEmotionIntro(Mood::Thinking,200,thinking);
+    assert(thinking.accent==Accent::None);
+    auto love=Expression(Mood::Love);AnimateEmotionIntro(Mood::Love,200,love);
+    assert(love.accent==Accent::None);
+    auto excited=Expression(Mood::Excited);AnimateEmotionIntro(Mood::Excited,200,excited);
+    assert(excited.accent==Accent::None);
+    auto sleep=Expression(Mood::Sleepy);AnimateEmotionIntro(Mood::Sleepy,300,sleep);
+    assert(sleep.accent==Accent::None);
+    auto sad=Expression(Mood::Sad);AnimateEmotionIntro(Mood::Sad,500,sad);
+    assert(sad.accent==Accent::None&&sad.smile<0);
+    FaceEngine sad_engine;sad_engine.Tick(100,Phase::Idle,0,MouthShape::Closed);
+    sad_engine.Emotion(Mood::Sad,300);
+    auto early=sad_engine.Tick(300,Phase::Speaking,0,MouthShape::Closed);
+    assert(early.pose.accent==Accent::None&&!early.tear.visible);
+    auto drop_start=sad_engine.Tick(1050,Phase::Speaking,0,MouthShape::Closed);
+    assert(drop_start.pose.accent==Accent::Tear&&drop_start.tear.visible);
+    auto drop_lower=sad_engine.Tick(2100,Phase::Speaking,0,MouthShape::Closed);
+    assert(drop_lower.tear.visible&&drop_lower.tear.y>drop_start.tear.y);
+    assert(drop_lower.tear.x<=drop_start.tear.x);
+    assert(!sad_engine.Tick(2700,Phase::Speaking,0,MouthShape::Closed).tear.visible);
+    assert(sad_engine.Tick(3650,Phase::Speaking,0,MouthShape::Closed).tear.visible);
+    assert(!FallingTear(Mood::Happy,1800).visible);
+    assert(!FallingTear(Mood::Sad,500).visible);
+    assert(!FallingTear(Mood::Sad,1000,false).visible);
     FaceEngine e;
     e.Tick(100,Phase::Idle,0,MouthShape::Closed);
     e.Tick(200,Phase::Wake,0,MouthShape::Closed);

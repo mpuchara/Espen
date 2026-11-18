@@ -9,18 +9,35 @@ import tempfile
 root = Path(__file__).resolve().parents[1]
 html = (root / "web/phone.html").read_text(encoding="utf-8")
 phone = (root / "firmware/phone_panel.h").read_text(encoding="utf-8")
+android = (root / "android/app/src/main/java/pl/homemind/ala/phone/MainActivity.java").read_text(encoding="utf-8")
 board = (root / "firmware/espen_board.cc").read_text(encoding="utf-8")
 assert '<textarea id="sentence"' in html
 assert 'Na stałe' in html
 assert 'http://' not in html, "Phone page must connect to its current same-origin robot"
-for api in ("/api/emotion", "/api/say", "/api/reply", "/api/status"):
+for api in ("/api/emotion", "/api/say", "/api/chat", "/api/reply", "/api/status", "/api/name"):
     assert api in html and api in phone, api
 assert "X-Ala-Pin" in html and "X-Ala-Pin" in phone
+assert 'id="robot-name"' in html and 'id="save-name"' in html
+assert '"/api/name"' in (root / "android/app/src/main/java/pl/homemind/ala/phone/MainActivity.java").read_text(encoding="utf-8")
+assert 'Settings s("espen_phone", true)' in phone
+assert 'SetString("robot_name", name)' in phone
 assert "esp_random()" in phone and 'Settings s("espen_phone", true)' in phone
 assert "bool Started() const" in phone
 assert "std::all_of(pin_.begin(), pin_.end()" in phone, "The stored PIN must be 8 digits"
 assert "std::atomic<uint32_t> emotion_seq_" in phone
 assert "GetDeviceState() != kDeviceStateIdle" in phone
+assert "config.max_uri_handlers = 8;" in phone
+assert "EspenAskText(body, hello, self.Name())" in phone
+assert 'body.compare(0,4,"ask|")==0' in phone
+assert '"hello"' in phone
+assert 'id="chat-toggle"' in html and 'id="typed"' in html
+assert "nextHello=!hello" in html and "ask|'+s" in html
+assert "Wysłano do Xiaozhi" in html
+assert "💬 Zapytaj Alę (Xiaozhi)" in android
+assert 'call("/api/chat","POST",hello?"hello":"ask|"+textToSend' in android
+assert "nextHello=!hello" in android
+assert "requestRectangleOnScreen" in android and "root.addView(speech,root.indexOfChild(faces))" in android
+assert html.index('<section><h2>✍️ Co Ala ma powiedzieć?') < html.index('<section><h2>🎭 Emocje Ali')
 assert "ch == '\\\\'" in phone, "Prevent JSON injection through backslashes"
 moods = re.search(r"const moods=\[(.*?)\];", html)
 assert moods and moods.group(1).count("['") == 16
@@ -58,5 +75,9 @@ with tempfile.TemporaryDirectory() as tmp:
     assert 'PhonePanel::Instance().Start();' in generated_board
     assert 'phone_due = now + 5000;' in b.read_text()
     assert 'EspenSayText' in (up / "main/application.cc").read_text()
+    assert 'EspenAskText' in (up / "main/application.cc").read_text()
+    assert 'Masz imie ' in (up / "main/application.cc").read_text()
+    assert 'void EspenAskText(const std::string& text, bool only_hello, const std::string& robot_name);' in (up / "main/application.h").read_text()
+    assert 'Powiedz wylacznie jedno slowo: Czesc' in (up / "main/application.cc").read_text()
     assert 'esp_http_server' in (up / "main/CMakeLists.txt").read_text()
 print("Ala phone panel integration: OK")

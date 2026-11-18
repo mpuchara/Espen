@@ -5,11 +5,15 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.graphics.Color;
+import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
 import android.text.InputFilter;
 import android.text.InputType;
+import android.text.Editable;
+import android.text.TextWatcher;
+import android.view.inputmethod.InputMethodManager;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
@@ -35,12 +39,13 @@ public final class MainActivity extends Activity {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private SharedPreferences prefs;
-    private EditText ip, pin, sentence;
-    private TextView connectStatus, moodStatus, speechStatus, reply;
+    private EditText ip, pin, sentence, robotName;
+    private TextView connectStatus, moodStatus, speechStatus, reply, nameStatus, titleView;
     private CheckBox sticky;
     private Button speakButton;
     private int pollCount = 0;
     private boolean polling = false;
+    private boolean nextHello = false;
     private final String[] moods = {"happy","laugh","sad","surprise","angry","thinking","sleepy","love",
             "confident","shy","confused","fear","wink","bored","excited","neutral"};
     private final String[] titles = {"😄 Radość","😂 Śmiech","😢 Smutek","😲 Zdziwienie",
@@ -62,7 +67,8 @@ public final class MainActivity extends Activity {
         scroll.addView(root);
         setContentView(scroll);
 
-        root.addView(text("💙 Pilot Ali", 30, LIGHT, true));
+        titleView=text("💙 Pilot Ali", 30, LIGHT, true);
+        root.addView(titleView);
         root.addView(text("Sterowanie emocjami i głosem Ali • Wi-Fi", 14, MUTED, false));
 
         LinearLayout settings = card(root);
@@ -77,6 +83,29 @@ public final class MainActivity extends Activity {
         settings.addView(connect);
         connectStatus=text("Najpierw połącz się z Alą.",14,ACCENT,false);
         settings.addView(connectStatus);
+        settings.addView(text("✏️ Zmień imię robota",18,LIGHT,true));
+        settings.addView(text("Nowe imię zostanie zapisane na robocie. Hasło głosowego wybudzania pozostanie bez zmian.",13,MUTED,false));
+        robotName=edit("Nowe imię, np. Zosia","Ala",InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_CAP_WORDS);
+        robotName.setFilters(new InputFilter[]{new InputFilter.LengthFilter(48)});
+        settings.addView(robotName);
+        Button saveRobotName=action("💾 Zapisz imię",false);
+        settings.addView(saveRobotName);
+        nameStatus=text("Po połączeniu odczytam imię robota.",14,ACCENT,false);
+        settings.addView(nameStatus);
+        saveRobotName.setOnClickListener(v -> {
+            String candidate=robotName.getText().toString().trim();
+            if(!validRobotName(candidate)){
+                nameStatus.setText("Imię musi mieć 2–24 litery, może zawierać spację lub łącznik.");
+                return;
+            }
+            saveRobotName.setEnabled(false);
+            nameStatus.setText("Zapisuję...");
+            call("/api/name","POST",candidate,
+                ok->call("/api/name","GET",null,
+                    name->{showRobotName(name);nameStatus.setText("✅ Zapisano imię: "+name);saveRobotName.setEnabled(true);},
+                    error->{nameStatus.setText("Nie udało się odczytać imienia: "+error);saveRobotName.setEnabled(true);}),
+                error->{nameStatus.setText("❌ "+error);saveRobotName.setEnabled(true);});
+        });
         connect.setOnClickListener(v -> {
             String address=ip.getText().toString().trim();
             String code=pin.getText().toString().trim();
@@ -87,7 +116,9 @@ public final class MainActivity extends Activity {
             prefs.edit().putString("ip",address).putString("pin",code).apply();
             connectStatus.setText("Łączenie...");
             call("/api/status","GET",null,
-                 result -> connectStatus.setText("✅ Ala połączona!"),
+                 result -> call("/api/name","GET",null,
+                     name->{showRobotName(name);connectStatus.setText("✅ Połączono z robotem "+name+".");},
+                     error -> connectStatus.setText("❌ Nie odczytano imienia: "+error)),
                  error -> connectStatus.setText("❌ "+error));
         });
 
@@ -136,23 +167,76 @@ public final class MainActivity extends Activity {
 
         LinearLayout speech=card(root);
         speech.addView(text("✍️ Co Ala ma powiedzieć?",20,LIGHT,true));
-        speech.addView(text("Wpisz zdanie. Przycisk poprawi podstawowe błędy zapisu, a Xiaozhi poprosi Alę o pełną korektę i wypowiedzenie tekstu.",14,MUTED,false));
+        speech.addView(text("Wpisz tekst. Możesz poprawić jego zapis, poprosić Alę o wypowiedzenie go albo zapytać Xiaozhi o odpowiedź.",14,MUTED,false));
+        final TextView typedPreview = text("Napisane: (jeszcze nic)",16,LIGHT,false);
+        speech.addView(typedPreview);
         sentence=edit("Np. czesc wszystkim, jak sie macie", "",InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
         sentence.setMinLines(3);
         sentence.setMaxLines(7);
         sentence.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
         sentence.setFilters(new InputFilter[]{new InputFilter.LengthFilter(220)});
+        sentence.setTextSize(17);
         speech.addView(sentence);
+        sentence.addTextChangedListener(new TextWatcher() {
+            public void beforeTextChanged(CharSequence s,int start,int count,int after) {}
+            public void onTextChanged(CharSequence s,int start,int before,int count) {
+                typedPreview.setText(s.length()==0 ? "Napisane: (jeszcze nic)" : "Napisane: "+s);
+            }
+            public void afterTextChanged(Editable e) {}
+        });
+        // When the IME opens, move the editable area into the resized viewport;
+        // the previous long emotions grid left it hidden under the keyboard.
+        sentence.setOnFocusChangeListener((v,focused)->{
+            if(focused)main.postDelayed(()->sentence.requestRectangleOnScreen(
+                new Rect(0,0,sentence.getWidth(),sentence.getHeight()+dp(28)),false),300);
+        });
         Button correct=action("✨ Wstępnie popraw zdanie",false);
         speech.addView(correct);
         correct.setOnClickListener(v -> sentence.setText(normalize(sentence.getText().toString())));
         speakButton=action("🔊 Niech Ala powie",true);
         speech.addView(speakButton);
+        final Button chatButton = action("💬 Zapytaj Alę (Xiaozhi)",true);
+        speech.addView(chatButton);
         speechStatus=text("Ala musi być połączona i gotowa do rozmowy.",14,ACCENT,false);
         speech.addView(speechStatus);
         speech.addView(text("Odpowiedź Ali",16,LIGHT,true));
         reply=text("Jeszcze nic nie powiedziała.",15,MUTED,false);
         speech.addView(reply);
+        chatButton.setOnClickListener(v -> {
+            final boolean hello=nextHello;
+            final String textToSend=hello ? "Cześć." : normalize(sentence.getText().toString());
+            if (!hello && textToSend.isEmpty()) {
+                speechStatus.setText("Wpisz pytanie dla Ali.");return;
+            }
+            if(textToSend.indexOf((char)34)>=0 || textToSend.indexOf((char)92)>=0 ||
+               textToSend.indexOf((char)10)>=0 || textToSend.indexOf((char)13)>=0 ||
+               textToSend.getBytes(StandardCharsets.UTF_8).length>400) {
+                speechStatus.setText("Skróć tekst i usuń cudzysłowy oraz nowe linie.");return;
+            }
+            if(!hello)sentence.setText(textToSend);
+            typedPreview.setText("Wysłano do Xiaozhi: "+textToSend);
+            sentence.clearFocus();
+            InputMethodManager keyboard=(InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
+            if(keyboard!=null)keyboard.hideSoftInputFromWindow(sentence.getWindowToken(),0);
+            polling=false;pollCount=0;
+            speakButton.setEnabled(false);chatButton.setEnabled(false);
+            speechStatus.setText(hello ? "Proszę Alę o samo Cześć..." : "Pytam Xiaozhi o odpowiedź...");
+            reply.setText("Czekam na odpowiedź Ali...");
+            call("/api/chat","POST",hello?"hello":"ask|"+textToSend,
+                result -> {
+                    nextHello=!hello;
+                    chatButton.setText(nextHello ? "👋 Powiedz tylko: Cześć" : "💬 Zapytaj Alę (Xiaozhi)");
+                    speakButton.setEnabled(true);chatButton.setEnabled(true);
+                    speechStatus.setText(hello ? "✅ Wysłano prośbę o powitanie." : "✅ Pytanie wysłane do Xiaozhi.");
+                    polling=true;pollReply();
+                    scroll.post(()->scroll.smoothScrollTo(0,speech.getTop()+reply.getTop()));
+                },
+                error -> {
+                    speakButton.setEnabled(true);chatButton.setEnabled(true);
+                    speechStatus.setText("❌ "+error);
+                    reply.setText("Nie udało się wysłać wiadomości.");
+                });
+        });
         speakButton.setOnClickListener(v -> {
             String content=normalize(sentence.getText().toString());
             if (content.isEmpty()) {speechStatus.setText("Wpisz najpierw zdanie.");return;}
@@ -164,24 +248,44 @@ public final class MainActivity extends Activity {
             polling=false;
             pollCount=0;
             speakButton.setEnabled(false);
+            chatButton.setEnabled(false);
+            typedPreview.setText("Wysłano do Xiaozhi: "+content);
+            sentence.clearFocus();
+            InputMethodManager keyboard=(InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
+            if(keyboard!=null)keyboard.hideSoftInputFromWindow(sentence.getWindowToken(),0);
             speechStatus.setText("Wysyłam zdanie...");
             reply.setText("Oczekuję na odpowiedź Ali...");
             call("/api/say","POST",content,
                 result -> {
-                    speakButton.setEnabled(true);
+                    speakButton.setEnabled(true);chatButton.setEnabled(true);
                     speechStatus.setText("✅ Wysłano. Xiaozhi przygotowuje wypowiedź.");
                     polling=true;
                     pollReply();
                 },
                 error -> {
-                    speakButton.setEnabled(true);
+                    speakButton.setEnabled(true);chatButton.setEnabled(true);
                     speechStatus.setText("❌ "+error);
                     reply.setText("Nie wysłano zdania.");
                 });
         });
+        // Put writing before the 16 large emotion buttons on compact phones.
+        root.removeView(speech);
+        root.addView(speech,root.indexOfChild(faces));
         root.addView(text("Pilot lokalny • wymagane Wi-Fi i firmware Ali z obsługą panelu. Połączenie HTTP nie jest szyfrowane — używaj prywatnej sieci.",12,MUTED,false));
     }
 
+    private void showRobotName(String value) {
+        titleView.setText("💙 Pilot: "+value);
+        robotName.setText(value);
+        nameStatus.setText("Aktualne imię: "+value);
+    }
+    private static boolean validRobotName(String name) {
+        if (!name.matches("[A-Za-zĄąĆćĘęŁłŃńÓóŚśŹźŻż]+([ -][A-Za-zĄąĆćĘęŁłŃńÓóŚśŹźŻż]+)*"))
+            return false;
+        int letters=0;
+        for(int i=0;i<name.length();i++)if(Character.isLetter(name.charAt(i)))letters++;
+        return letters>=2 && letters<=24 && name.getBytes(StandardCharsets.UTF_8).length<=48;
+    }
     private static boolean validPrivateIp(String value) {
         if(!value.matches("(?:[0-9]{1,3}\\.){3}[0-9]{1,3}"))return false;
         String[] parts=value.split("\\.");

@@ -9,16 +9,20 @@ Panel jest częścią firmware ESP32-P4 w repozytorium Espen. **Nie jest to APK 
 3. Na Ali otwórz **Ustawienia → Pilot telefonu / kod**. Na osobnym, czytelnym ekranie znajdziesz **Adres IP** oraz duży **8-cyfrowy kod pilota**. Nie pomyl go z kodem aktywacji Xiaozhi. Kod powstaje automatycznie przy pierwszym użyciu, jest zapisany w NVS i pozostaje taki sam po zwykłej aktualizacji. Jeśli nie ma Wi-Fi, Ala pokaże komunikat zamiast fikcyjnego IP.
 4. W aplikacji **Pilot Ali na Androida** wpisz dokładnie podany IP i 8 cyfr. Możesz też otworzyć w Chrome adres `http://<IP>/` (dokładnie adres wyświetlony przez Alę, nie adres GitHub Pages). Możesz dodać stronę do ekranu głównego.
 5. Wpisz ośmiocyfrowy kod i dotknij **Połącz**. Kod jest unikatowy dla danego urządzenia i zapisywany w jego NVS; aktualizacja aplikacji nie powinna go skasować.
-6. Wybierz emocję: za 5 sekund pojawi się na twarzy Ali. Domyślnie zostaje aż do kliknięcia **X Wyłącz emocję**; możesz odznaczyć opcję „Na stałe”.
-7. Wpisz zdanie, użyj **Wstępnie popraw**, a potem **Niech Ala powie**. Robot poprosi tego samego agenta Xiaozhi o językową korektę zdania i wypowiedzenie samej poprawionej wersji.
+**Zmiana imienia:** po połączeniu w aplikacji Android lub lokalnej stronie pilota otwórz sekcję **Zmień imię robota**, wpisz np. **Zosia** i wybierz **Zapisz imię**. Pojawi się potwierdzenie odczytane z robota. Imię jest zachowywane w pamięci NVS przez restarty, jest widoczne w panelu i w lokalnym ekranie „Pilot telefonu / kod” oraz jest podawane Xiaozhi w poleceniach wysyłanych z panelu. Obsługiwane są krótkie imiona z polskimi znakami, odstępem lub łącznikiem; niedozwolone są znaki sterujące, cudzysłowy i znaki służące do wstrzykiwania poleceń. Nie zmienia to nazwy agenta ustawionej w serwisie Xiaozhi ani lokalnie nauczonego hasła wybudzania. Pełne flashowanie firmware może wyczyścić NVS i wówczas imię trzeba ustawić ponownie.
+
+6. Opcjonalnie zmień imię w polu **Zmień imię robota** i zapisz. Nowe imię zostanie w NVS robota po restarcie i będzie widoczne na jego ekranie, w aplikacji Android i w WWW. W poleceniach tekstowych Xiaozhi otrzyma też nowe imię. **Głosowe hasło wybudzania nie jest zmieniane** — naucz je osobno, jeśli ma się zmienić.\n7. Wybierz emocję: za 5 sekund pojawi się na twarzy Ali. Domyślnie zostaje aż do kliknięcia **X Wyłącz emocję**; możesz odznaczyć opcję „Na stałe”.
+8. Pole pisania znajduje się **nad emocjami**, a aplikacja pokazuje na żywo **Napisane:** — również podczas korzystania z klawiatury. Wpisz zdanie i wybierz **Niech Ala powie**, aby poprosić Xiaozhi o poprawienie i wypowiedzenie tekstu.
+9. Nowy przycisk **💬 Zapytaj Alę (Xiaozhi)** ma dwa kroki: pierwsze naciśnięcie wysyła wpisane pytanie do Xiaozhi, prosi o nową odpowiedź i jej wypowiedzenie; przycisk zmienia napis na **👋 Powiedz tylko: Cześć**. Drugie naciśnięcie wysyła prośbę o wypowiedzenie wyłącznie słowa „Cześć”, po czym przycisk powraca do trybu pytania. Kolejne naciśnięcia powtarzają cykl. Tryb zmienia się **dopiero po zaakceptowaniu polecenia przez Alę**.
+10. Wynik pytania trafia do sekcji **Odpowiedź Ali**; tekst **Wysłano do Xiaozhi** pozwala sprawdzić, co trafiło do robota. Po wysłaniu klawiatura chowa się automatycznie.
 
 ## Granice działania
 
 - Wstępna korekta na telefonie obejmuje tylko odstępy, wielką literę i podstawową interpunkcję. Korektę językową i polski głos realizuje agent Xiaozhi, nie lokalna przeglądarka.
 - Wpisany tekst jest wysyłany przez **lokalne HTTP** do robota, a następnie przez Xiaozhi do zewnętrznego serwera. Nie wpisuj prywatnych informacji. Połączenie LAN nie jest szyfrowane, więc nie używaj niezaufanej sieci.
-- Tekst→AI→TTS wykorzystuje komunikat `listen.detect` i wymaga testu na sprzęcie z serwerem Xiaozhi; nie ma gwarancji, że odpowiedź zachowa dokładnie wpisane słowa. Przy zajętym urządzeniu polecenie jest odrzucane.
+- Tekst→AI→TTS wykorzystuje komunikat `listen.detect` i wymaga testu na sprzęcie z serwerem Xiaozhi. Tryb pytania prosi o wygenerowaną odpowiedź, a tryb „Cześć” o jedno słowo, jednak Xiaozhi może nie zastosować się idealnie do takiej instrukcji. Przy zajętym urządzeniu polecenie jest odrzucane, a między żądaniami obowiązuje 7-sekundowy limit.
 - Nie ma dostępu do urządzenia spoza lokalnej sieci, nie ma automatycznego odkrywania IP i nie ma sterowania z GitHub Pages (przeglądarki blokują HTTPS→HTTP).
-- Serwer HTTP udostępnia tylko stronę panelu i cztery chronione kodem endpointy. Bez kodu nie można wysłać polecenia ani odczytać odpowiedzi.
+- Serwer HTTP udostępnia tylko stronę panelu i siedem chronionych kodem operacji API (`/api/chat` obsługuje dwa nowe tryby). Bez kodu nie można wysłać polecenia ani odczytać odpowiedzi.
 - Nie drukuj kodu w logach ani nie udostępniaj go innym osobom. Panel ogranicza długość tekstu i odrzuca kontrolne znaki wejścia.
 
 ## Test po aktualizacji

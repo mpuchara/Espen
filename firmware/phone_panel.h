@@ -3,6 +3,7 @@
 #include "application.h"
 #include "face_engine.h"
 #include "phone_panel_html.h"
+#include "robot_name.h"
 #include "settings.h"
 #include <esp_http_server.h>
 #include <esp_log.h>
@@ -22,6 +23,9 @@ class PhonePanel {
     std::string pin_;
     std::mutex reply_lock_;
     std::string last_reply_;
+    std::mutex name_lock_;
+    std::string robot_name_;
+    std::atomic<uint32_t> name_revision_{1};
     std::atomic<uint32_t> emotion_seq_{0};
     std::atomic<int> emotion_value_{-1};
     std::atomic<bool> emotion_sticky_{false};
@@ -80,6 +84,24 @@ class PhonePanel {
         if (!Instance().Authorized(req)) return Respond(req, 401, "Niepoprawny kod.");
         return Respond(req, 200, "OK");
     }
+    static esp_err_t GetName(httpd_req_t* req) {
+        auto& self = Instance();
+        if (!self.Authorized(req)) return Respond(req, 401, "Niepoprawny kod.");
+        const auto name = self.Name();
+        httpd_resp_set_type(req, "text/plain; charset=utf-8");
+        httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+        httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
+        return httpd_resp_send(req, name.data(), name.size());
+    }
+    static esp_err_t SetName(httpd_req_t* req) {
+        auto& self = Instance();
+        if (!self.Authorized(req)) return Respond(req, 401, "Niepoprawny kod.");
+        std::string name;
+        if (!ReadBody(req, name, 48) || !ValidRobotName(name))
+            return Respond(req, 400, "Imię: 2–24 litery, opcjonalnie spacja lub łącznik.");
+        self.SaveName(name);
+        return Respond(req, 200, "OK");
+    }
     static esp_err_t Emotion(httpd_req_t* req) {
         auto& self = Instance();
         if (!self.Authorized(req)) return Respond(req, 401, "Niepoprawny kod.");
@@ -100,7 +122,9 @@ class PhonePanel {
         self.emotion_seq_.fetch_add(1, std::memory_order_release);
         return Respond(req, 200, "OK");
     }
-    static esp_err_t Say(httpd_req_t* req) {
+    // A single path applies the same auth, busy-state, cooldown and text
+    // validation to both speech correction and open-ended Xiaozhi chat.
+    static esp_err_t SendText(httpd_req_t* req, bool interactive) {
         auto& self = Instance();
         if (!self.Authorized(req)) return Respond(req, 401, "Niepoprawny kod.");
         if (Application::GetInstance().GetDeviceState() != kDeviceStateIdle)
@@ -108,26 +132,36 @@ class PhonePanel {
         const int64_t now = esp_timer_get_time();
         const int64_t previous = self.last_say_us_.load(std::memory_order_acquire);
         if (previous && now - previous < 7000000)
-            return Respond(req, 429, "Odczekaj kilka sekund przed następnym zdaniem.");
+            return Respond(req, 429, "Odczekaj 7 sekund przed następnym zdaniem.");
         std::string body;
-        if (!ReadBody(req, body, 400)) return Respond(req, 400, "Zdanie jest za długie (maks. 400 bajtów).");
-        std::string cleaned;
-        cleaned.reserve(body.size());
-        for (unsigned char ch : body) {
-            // Protocol::SendWakeWordDetected uses a JSON string without escaping.
-            // Reject rather than pass a quote, backslash or control byte into JSON.
-            if (ch == '"' || ch == '\\' || ch < 32 || ch == 127) return Respond(req, 400, "Usuń cudzysłowy i znaki sterujące.");
-            cleaned.push_back(static_cast<char>(ch));
+        if (!ReadBody(req, body, 404))
+            return Respond(req, 400, "Wiadomość jest za długa (maks. 400 bajtów tekstu).");
+        bool hello = false;
+        if (interactive) {
+            if (body == "hello") hello = true;
+            else if (body.compare(0,4,"ask|")==0) body.erase(0,4);
+            else return Respond(req, 400, "Niepoprawny tryb wiadomości.");
         }
-        if (cleaned.find_first_not_of(' ') == std::string::npos) return Respond(req, 400, "Wpisz zdanie.");
+        if (body.size() > 400) return Respond(req, 400, "Skróć wiadomość.");
+        // SendWakeWordDetected serializes its argument without JSON escaping.
+        // Reject dangerous delimiters instead of passing them to the protocol.
+        for (unsigned char ch : body) {
+            if (ch == '"' || ch == '\\' || ch < 32 || ch == 127)
+                return Respond(req, 400, "Usuń cudzysłowy, ukośniki i nowe linie.");
+        }
+        if (body.find_first_not_of(' ') == std::string::npos)
+            return Respond(req, 400, "Wpisz wiadomość.");
         self.last_say_us_.store(now, std::memory_order_release);
         {
             std::lock_guard<std::mutex> lock(self.reply_lock_);
             self.last_reply_.clear();
         }
-        Application::GetInstance().EspenSayText(cleaned);
+        if (interactive) Application::GetInstance().EspenAskText(body, hello, self.Name());
+        else Application::GetInstance().EspenSayText(body, self.Name());
         return Respond(req, 200, "OK");
     }
+    static esp_err_t Say(httpd_req_t* req) { return SendText(req, false); }
+    static esp_err_t Chat(httpd_req_t* req) { return SendText(req, true); }
     static esp_err_t Reply(httpd_req_t* req) {
         auto& self = Instance();
         if (!self.Authorized(req)) return Respond(req, 401, "Niepoprawny kod.");
@@ -141,6 +175,26 @@ class PhonePanel {
         return httpd_resp_send(req, reply.data(), reply.size());
     }
 public:
+    // Copies are protected: the HTTP thread may rename the robot while LVGL
+    // renders the next frame. NVS writes are independent of display drawing.
+    std::string Name() {
+        std::lock_guard<std::mutex> lock(name_lock_);
+        if (robot_name_.empty()) {
+            Settings s("espen_phone", false);
+            auto saved = s.GetString("robot_name", kDefaultRobotName);
+            robot_name_ = ValidRobotName(saved) ? saved : kDefaultRobotName;
+        }
+        return robot_name_;
+    }
+    uint32_t NameRevision() const { return name_revision_.load(std::memory_order_acquire); }
+    void SaveName(const std::string& name) {
+        if (!ValidRobotName(name)) return;
+        std::lock_guard<std::mutex> lock(name_lock_);
+        Settings s("espen_phone", true);
+        s.SetString("robot_name", name);
+        robot_name_ = name;
+        name_revision_.fetch_add(1, std::memory_order_release);
+    }
     static PhonePanel& Instance() {
         static PhonePanel panel;
         return panel;
@@ -168,9 +222,10 @@ public:
     void Start() {
         if (server_) return;
         Pin();
+        Name();
         httpd_config_t config = HTTPD_DEFAULT_CONFIG();
         config.server_port = 80;
-        config.max_uri_handlers = 5;
+        config.max_uri_handlers = 8;
         config.stack_size = 8192;
         if (httpd_start(&server_, &config) != ESP_OK) {
             server_ = nullptr;
@@ -188,8 +243,11 @@ public:
         };
         add("/", HTTP_GET, Index);
         add("/api/status", HTTP_GET, Status);
+        add("/api/name", HTTP_GET, GetName);
+        add("/api/name", HTTP_POST, SetName);
         add("/api/emotion", HTTP_POST, Emotion);
         add("/api/say", HTTP_POST, Say);
+        add("/api/chat", HTTP_POST, Chat);
         add("/api/reply", HTTP_GET, Reply);
         ESP_LOGI("AlaPhone", "Phone panel listening on port 80");
     }

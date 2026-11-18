@@ -566,6 +566,8 @@ class EspenDisplay : public LcdDisplay {
         lv_display_flush_ready(disp);
     }
 
+    lv_obj_t* robot_name_label_ = nullptr;
+    uint32_t seen_robot_name_revision_ = 0;
     lv_obj_t* wake_panel_ = nullptr;
     lv_obj_t* wake_name_ = nullptr;
     lv_obj_t* wake_state_ = nullptr;
@@ -1700,6 +1702,18 @@ class EspenDisplay : public LcdDisplay {
         lv_label_set_long_mode(wake_indicator_,LV_LABEL_LONG_DOT);
         lv_obj_set_pos(wake_indicator_,15,264);
         Passive(wake_indicator_);RefreshWake();
+        // Persistent local name, refreshed on the LVGL task after a phone edit.
+        // Place it in the top-right corner without obscuring the face or mic bar.
+        robot_name_label_=lv_label_create(face_);
+        lv_obj_set_style_text_font(robot_name_label_,EspenUiFont(),0);
+        lv_obj_set_style_text_color(robot_name_label_,lv_color_hex(0x78E1CB),0);
+        lv_obj_set_style_text_align(robot_name_label_,LV_TEXT_ALIGN_RIGHT,0);
+        lv_obj_set_width(robot_name_label_,156);
+        lv_label_set_long_mode(robot_name_label_,LV_LABEL_LONG_DOT);
+        lv_obj_set_pos(robot_name_label_,203,9);
+        lv_label_set_text(robot_name_label_,espen::PhonePanel::Instance().Name().c_str());
+        seen_robot_name_revision_=espen::PhonePanel::Instance().NameRevision();
+        Passive(robot_name_label_);
         camera_indicator_=lv_label_create(face_);
         lv_obj_set_style_text_font(camera_indicator_,EspenUiFont(),0);
         lv_obj_set_style_text_color(camera_indicator_,lv_color_hex(0xFFD66B),0);
@@ -1781,6 +1795,13 @@ class EspenDisplay : public LcdDisplay {
         uint32_t now=lv_tick_get();
         RefreshCameraPanel(now);
         if(!face_||OverlayVisible())return;
+        auto& phone=espen::PhonePanel::Instance();
+        const uint32_t name_rev=phone.NameRevision();
+        if(name_rev!=seen_robot_name_revision_ && robot_name_label_) {
+            seen_robot_name_revision_=name_rev;
+            const auto name=phone.Name();
+            lv_label_set_text(robot_name_label_,name.c_str());
+        }
         const int vision_activity=EspenVision().Activity();
         Hide(camera_indicator_,vision_activity==0);
         if(vision_activity){
@@ -1886,8 +1907,11 @@ class EspenDisplay : public LcdDisplay {
             Hide(shapes_[7+i],!blush);
             if(blush)Shape(7+i,(i==0?51:294)+shift,155+f.bob,36,13);
         }
-        Hide(shapes_[9],p.accent!=Accent::Tear);
-        if(p.accent==Accent::Tear)Shape(9,304+shift,139+static_cast<int>((now/150)%12),12,20);
+        // Move the drop from below the eye down the cheek, rather than
+        // jittering it according to global uptime. FaceEngine gates its
+        // appearance until the eyes and mouth have finished turning sad.
+        Hide(shapes_[9],!f.tear.visible);
+        if(f.tear.visible)Shape(9,f.tear.x+shift,f.tear.y+f.bob,12,f.tear.height);
         for(int i=0;i<3;++i) {
             bool show=p.accent==Accent::Dots;
             Hide(shapes_[10+i],!show);
@@ -2399,7 +2423,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.2.15 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.2.16 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();
@@ -2433,6 +2457,19 @@ public:
                     audio.SetInt("output_volume",espen::kSpeakerVolumeDefault);
                     migration.SetBool("spk_init_v027",true);
                     ESP_LOGI(TAG,"Speaker defaults migrated: PA ON, volume 75%%");
+                }
+                // v0.2.16: once-only recovery of persisted PA OFF or inaudible output,
+                // retaining Wi-Fi, personal wake words, and other NVS settings.
+                if(!migration.GetBool("spk_init_v216",false)){
+                    Settings audio("audio",true);
+                    const int old_volume=audio.GetInt("output_volume",espen::kSpeakerVolumeDefault);
+                    const bool pa_on=migration.GetBool("speaker_pa",true);
+                    if(!pa_on || old_volume<35){
+                        migration.SetBool("speaker_pa",true);
+                        audio.SetInt("output_volume",espen::kSpeakerVolumeDefault);
+                        ESP_LOGW(TAG,"Recovered silent speaker: old PA=%d old volume=%d new volume=75",pa_on,old_volume);
+                    }
+                    migration.SetBool("spk_init_v216",true);
                 }
             }
             Settings cfg("espen_audio",false);

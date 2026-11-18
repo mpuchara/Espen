@@ -58,6 +58,111 @@ inline Pose Expression(Mood m) {
       default: return {};
     }
 }
+// Every one of the 16 moods has its own 850 ms expression entrance.
+// The face transitions on the existing LVGL tick; no animation task, delay,
+// extra framebuffer or audio ownership is needed.
+inline void AnimateEmotionIntro(Mood mood,uint32_t age,Pose& p) {
+    if(age>=850)return;
+    switch(mood){
+      case Mood::Neutral:
+        // Take a calm breath: the eyes relax and the mouth unfolds.
+        if(age<250){p.eye_h=24;p.mouth_w=62;p.smile=4;}
+        else if(age<570){p.eye_h=33;p.mouth_w=76;p.smile=10;}
+        break;
+      case Mood::Happy:
+        // Eyes brighten, briefly squint, then a full grin grows.
+        if(age<180){p.eye_h=53;p.mouth_w=72;p.smile=8;}
+        else if(age<470){p.eye_h=17;p.tilt=(age/100)%2?7:-7;p.smile=18;}
+        break;
+      case Mood::Laugh:
+        // Suppress a giggle, then pop into a bouncing open-mouthed laugh.
+        if(age<210){p.eye_h=29;p.mouth_h=6;p.mouth_w=62;p.smile=18;}
+        else if(age<580){p.eye_h=6;p.mouth_h=35;p.tilt=(age/100)%2?8:-8;}
+        break;
+      case Mood::Sad:
+        // Blink, sink into a frown, only then reveal the falling tear.
+        if(age<220){p.eye_h=8;p.mouth_w=56;p.mouth_h=5;p.smile=0;p.accent=Accent::None;}
+        else if(age<650){p.eye_h=17+static_cast<int>((age-220)*13/430);
+            p.mouth_w=63;p.smile=-8-static_cast<int>((age-220)*14/430);p.accent=Accent::None;}
+        break;
+      case Mood::Surprise:
+        // A sharp double-take: wide eyes first, round mouth follows.
+        if(age<260){p.eye_h=78;p.mouth_h=8;p.mouth_w=50;}
+        else if(age<520){p.eye_h=75;p.mouth_h=48;}
+        break;
+      case Mood::Angry:
+        // Squint and furrow brows before the annoyed grimace.
+        if(age<260){p.eye_h=10;p.brow=26;p.mouth_w=54;}
+        else if(age<530){p.eye_h=20;p.tilt=21;p.brow=24;}
+        break;
+      case Mood::Thinking:
+        // Look sideways before a trail of thinking dots appears.
+        if(age<230){p.eye_h=55;p.asym=0;p.mouth_w=82;p.accent=Accent::None;}
+        else if(age<580){p.eye_h=33;p.asym=24;p.tilt=8;p.accent=Accent::None;}
+        break;
+      case Mood::Sleepy:
+        // A slow yawn makes the eyes heavy, then the sleep Z appears.
+        if(age<250){p.eye_h=36;p.mouth_w=48;p.mouth_h=26;p.accent=Accent::None;}
+        else if(age<650){p.eye_h=15;p.mouth_w=42;p.mouth_h=35;p.accent=Accent::None;}
+        break;
+      case Mood::Love:
+        // Bashful look first; hearts appear only after a smile forms.
+        if(age<360){p.eye_h=26;p.mouth_w=67;p.smile=12;p.accent=Accent::None;}
+        else if(age<620){p.eye_h=42;p.smile=20;}
+        break;
+      case Mood::Confident:
+        // A cheeky half-squint slowly becomes a self-assured grin.
+        if(age<220){p.eye_h=44;p.tilt=-11;p.mouth_w=74;p.smile=1;}
+        else if(age<560){p.eye_h=18;p.asym=16;p.tilt=9;p.smile=9;}
+        break;
+      case Mood::Shy:
+        // Look away, then bring up the blush on both cheeks.
+        if(age<330){p.eye_h=22;p.tilt=-13;p.accent=Accent::None;}
+        else if(age<620){p.eye_h=27;p.smile=6;}
+        break;
+      case Mood::Confused:
+        // One eye opens wider, head tilts, lips make a question mark.
+        if(age<220){p.eye_h=55;p.asym=0;p.mouth_w=82;p.smile=3;}
+        else if(age<590){p.eye_h=36;p.asym=38;p.tilt=-12;p.mouth_w=48;}
+        break;
+      case Mood::Fear:
+        // A flinch, then startled wide-open eyes and quivering lips.
+        if(age<170){p.eye_h=9;p.mouth_w=72;p.mouth_h=5;}
+        else if(age<550){p.eye_h=75;p.mouth_h=19;p.tilt=(age/100)%2?8:-8;}
+        break;
+      case Mood::Wink:
+        // Start with two open eyes, then close one mischievously.
+        if(age<210){p.eye_h=51;p.asym=0;p.mouth_w=78;p.smile=8;}
+        else if(age<570){p.eye_h=42;p.asym=52;p.tilt=-9;}
+        break;
+      case Mood::Bored:
+        // Eyelids slowly droop and the smile fades flat.
+        if(age<270){p.eye_h=42;p.smile=12;p.mouth_w=91;}
+        else if(age<600){p.eye_h=24;p.smile=2;p.mouth_w=72;}
+        break;
+      case Mood::Excited:
+        // Anticipation, then a bright, sparkling excited expression.
+        if(age<230){p.eye_h=75;p.mouth_w=66;p.mouth_h=7;p.accent=Accent::None;}
+        else if(age<620){p.eye_h=67;p.mouth_w=116;p.tilt=(age/90)%2?12:-12;}
+        break;
+      default:break;
+    }
+}
+// A visible tear starts only after the sad eyes and mouth have settled.
+// One drop glides down the cheek, disappears and restarts after a short pause.
+// Calculated from animation age: deterministic, no separate timer or allocations.
+struct TearMotion {
+    bool visible=false;
+    int x=304, y=140, height=20;
+};
+inline TearMotion FallingTear(Mood mood,uint32_t age,bool accent_visible=true) {
+    if(mood!=Mood::Sad||!accent_visible||age<650)return {};
+    const uint32_t cycle=(age-650)%2700;
+    if(cycle>=1650)return {};
+    const int progress=static_cast<int>(cycle);
+    const int height=progress<1400?20:std::max(4,20-(progress-1400)*16/250);
+    return {true,304-progress*6/1650,140+progress*82/1650,height};
+}
 inline int Approach(int v,int t,int step) { return v<t?std::min(v+step,t):std::max(v-step,t); }
 inline bool Due(uint32_t n,uint32_t t) { return static_cast<int32_t>(n-t)>=0; }
 inline uint32_t BlendColor(uint32_t a,uint32_t b,int amount) {
@@ -86,6 +191,7 @@ struct Frame {
     uint32_t heart_age=0,effect_age=0;
     PetEffect effect=PetEffect::None;
     Mood mood=Mood::Neutral;
+    TearMotion tear{};
 };
 class FaceEngine {
     uint32_t rng_=0x45a9b3e1u, idle_since_=0, phase_since_=0, emotion_at_=0;
@@ -102,6 +208,8 @@ class FaceEngine {
     bool gesture_active_=false, micro_active_=false, touch_=false;
     int target_x_=0,target_y_=0, touch_x_=0,touch_y_=0;
     Mood cloud_=Mood::Neutral, gesture_=Mood::Neutral, micro_=Mood::Neutral;
+    Mood animated_mood_=Mood::Neutral;
+    uint32_t animated_since_=0;
     Phase phase_=Phase::Idle;
     Persona persona_=Persona::Friendly;
     Frame frame_{};
@@ -268,7 +376,9 @@ public:
             }
         }
         if(asleep) mood=Mood::Sleepy;
+        if(mood!=animated_mood_){animated_mood_=mood;animated_since_=now;}
         Pose p=Expression(mood);
+        AnimateEmotionIntro(mood,now-animated_since_,p);
         // A goodnight wish is a friendly sleepy face, not a command to
         // interrupt ongoing speech or listening.
         if(social_==Social::Goodnight && phase==Phase::Speaking) {
@@ -452,6 +562,7 @@ public:
         f.hearts=social_==Social::Affection||(social_==Social::Comfort&&now-social_at_>=650)||reply_hearts;
         f.heart_age=f.hearts?(reply_hearts?now-reply_at_:now-social_at_)%1950:0;
         f.effect=affinity_.Effect(now);f.effect_age=affinity_.Age(now);
+        f.tear=FallingTear(mood,now-animated_since_,p.accent==Accent::Tear&&!asleep);
         return f;
     }
 };
