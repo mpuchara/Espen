@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>💙 Ala Pilot — instalator kodu telefonu</title>
+<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+<style>
+:root{font-family:system-ui,-apple-system,Segoe UI,sans-serif;color-scheme:dark;background:#09131f;color:#f1fbff}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:radial-gradient(ellipse at top,#19465a,#09131f 65%);padding:24px 14px}
+main{width:min(100%,680px);margin:auto}
+h1{font-size:clamp(2.6rem,9vw,4rem);margin:12px 0 0;letter-spacing:-.06em}
+h2{margin:0 0 12px;font-size:1.4rem}
+p,li{color:#bdd3df;line-height:1.65}
+.tag{color:#83e6d9;font-size:.86rem;font-weight:800;letter-spacing:.06em}
+.card{margin:20px 0;background:#112536;border:1px solid #35546a;padding:23px;border-radius:22px}
+button{background:#83e6d9;color:#06222b;border:0;border-radius:15px;padding:18px 23px;font:inherit;font-size:1.1rem;font-weight:800;cursor:pointer;width:100%}
+a{color:#83e6d9}
+.notice{border-left:3px solid #f2c26e;padding:1px 0 1px 13px;color:#fce0a9}
+.ok{color:#83e6d9;font-weight:650}
+small{color:#a8bfcd}
+ol{padding-left:23px}
+@media(max-width:450px){.card{padding:18px}body{padding:20px 10px}}
+</style>
+</head>
+<body><main>
+<div class="tag">ESPEN · ALA PILOT · 0.2.14-TEST1</div>
+<h1>💙 Ala Pilot</h1>
+<p>Specjalna aktualizacja dla Ali. Dodaje przycisk <b>„Pilot telefonu / kod”</b> w ustawieniach, który pokazuje kod i adres IP dla aplikacji na telefon.</p>
+<section class="card">
+<h2>1. Zaktualizuj Alę</h2>
+<p class="notice"><b>Ważne:</b> tylko dla urządzenia GUITION JC4880P443C (ESP32-P4 rev1, pamięć flash 16 MB), które ma już zainstalowany Espen. Nie używaj pełnego kasowania ani pełnej instalacji: ta aktualizacja zachowuje NVS z Wi-Fi i parowaniem Xiaozhi.</p>
+<p id="status" role="status" aria-live="polite">Sprawdzanie plików aktualizacji…</p>
+<esp-web-install-button id="installer" manifest="manifest.json" hidden>
+<button slot="activate" type="button">🔌 Aktualizuj Alę — dodaj kod pilota</button>
+<span slot="unsupported">Ta przeglądarka nie obsługuje instalacji USB. Użyj Chrome lub Edge na komputerze, podłączając port P4 kablem do transmisji danych. Na wielu telefonach z Androidem Web Serial nie działa.</span>
+<span slot="not-allowed">Otwórz stronę przez HTTPS.</span>
+</esp-web-install-button>
+<p><small>Instalator wymaga kabla USB do danych i dostępu do portu P4. Nie aktualizuje Ali przez Wi-Fi. Zabezpiecz odsłonięte przewody robota przed podłączeniem.</small></p>
+</section>
+<section class="card">
+<h2>2. Znajdź kod na Ali</h2>
+<ol>
+<li>Po restarcie dotknij ekranu Ali i otwórz <b>Ustawienia</b>.</li>
+<li>Naciśnij nowy przycisk <b>Pilot telefonu / kod</b> — jest wysoko, na początku ustawień.</li>
+<li>Odczytaj <b>8 cyfr</b> i <b>Adres IP</b>. To inny kod niż kod Xiaozhi.</li>
+<li>W telefonie uruchom aplikację <a href="https://github.com/mpuchara/Espen/releases/download/ala-panel-v0.1.0/Ala-Panel.apk">Pilot Ali APK</a>, wpisz IP i kod, a następnie dotknij <b>Połącz z Alą</b>.</li>
+</ol>
+<p>Telefon i Ala muszą korzystać z tej samej sieci Wi-Fi.</p>
+</section>
+<section class="card">
+<h2>Nie widzisz portu USB?</h2>
+<p>Jeśli widzisz <b>„No port selected”</b>, to nie oznacza złego kodu ani złego firmware. Telefon lub przeglądarka mogą nie udostępniać portu USB stronie internetowej. Sprawdź kabel z transmisją danych i port P4; jeżeli przeglądarka nie obsługuje USB, potrzebny będzie Chrome/Edge na komputerze.</p>
+<p id="support"></p>
+<p>Pliki dla instalatora:
+<a href="espen-app.bin">aplikacja .bin</a> ·
+<a href="espen-assets.bin">zasoby .bin</a> ·
+<a href="espen-update.sha256">SHA-256</a>.
+Przy ręcznym wgrywaniu użyj adresów 0x20000 (aplikacja) i 0x800000 (zasoby); nie wgrywaj tych plików od adresu 0x0.</p>
+</section>
+<p><small>Wersja eksperymentalna z PR #24, firmware z kompilacji <a href="https://github.com/mpuchara/Espen/actions/runs/44334001820">44334001820</a>, commit a1ce7a1. Testy kompilacji przeszły; działania na fizycznej Ali nie potwierdzono. <a href="../">Wróć do głównego instalatora Espen</a>.</small></p>
+</main>
+<script>
+const status=document.getElementById("status");
+const installer=document.getElementById("installer");
+const support=document.getElementById("support");
+if(!("serial" in navigator))support.textContent="Uwaga: Web Serial jest niedostępny w tej przeglądarce. Przy próbie instalacji możesz nie zobaczyć Ali na liście portów.";
+Promise.all(["espen-app.bin","espen-assets.bin"].map(path=>fetch(path,{method:"HEAD",cache:"no-store"}).then(r=>{
+  if(!r.ok)throw Error(path+": HTTP "+r.status);
+  const bytes=r.headers.get("content-length"); if(bytes!==null && Number(bytes)<100000)throw Error(path+": niekompletny plik");
+}))).then(()=>{status.textContent="✅ Właściwe pliki Ala Pilot są dostępne — możesz rozpocząć aktualizację.";status.className="ok";installer.hidden=false;}).catch(()=>{status.textContent="Pliki aktualizacji nie są jeszcze dostępne. Nie instaluj. Sprawdź wynik publikacji na GitHubie.";});
+</script>
+</body></html>

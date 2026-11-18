@@ -22,6 +22,20 @@ jobs:
         run: |
           source "$IDF_PATH/export.sh"
           bash scripts/build.sh
+      # Serve the already-verified Ala Pilot build in an isolated /pilot/
+      # subdirectory. The root installer continues to serve main firmware.
+      - name: Stage optional Ala Pilot installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="https://github.com/mpuchara/Espen/releases/download/ala-pilot-v0.2.14-test1"
+          mkdir -p dist/pilot
+          for file in espen-app.bin espen-assets.bin espen-update.sha256; do
+            curl --fail --location --retry 4 --retry-all-errors \
+              --output "dist/pilot/$file" "$base/$file"
+            test -s "dist/pilot/$file"
+          done
+          (cd dist/pilot && sha256sum --check espen-update.sha256)
       - name: Upload firmware
         uses: actions/upload-artifact@v4
         with:
