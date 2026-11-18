@@ -69,7 +69,7 @@ const support=document.getElementById("support");
 if(!("serial" in navigator))support.textContent="Uwaga: Web Serial jest niedostępny w tej przeglądarce. Przy próbie instalacji możesz nie zobaczyć Ali na liście portów.";
 Promise.all(["espen-app.bin","espen-assets.bin"].map(path=>fetch(path,{method:"HEAD",cache:"no-store"}).then(r=>{
   if(!r.ok)throw Error(path+": HTTP "+r.status);
-  if(Number(r.headers.get("content-length")||0)<100000)throw Error(path+": niekompletny plik");
+  const bytes=r.headers.get("content-length"); if(bytes!==null && Number(bytes)<100000)throw Error(path+": niekompletny plik");
 }))).then(()=>{status.textContent="✅ Właściwe pliki Ala Pilot są dostępne — możesz rozpocząć aktualizację.";status.className="ok";installer.hidden=false;}).catch(()=>{status.textContent="Pliki aktualizacji nie są jeszcze dostępne. Nie instaluj. Sprawdź wynik publikacji na GitHubie.";});
 </script>
 </body></html>
