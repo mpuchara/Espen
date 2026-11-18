@@ -4,6 +4,16 @@
 #include <iostream>
 using namespace espen;
 int main() {
+    FaceEngine affection;
+    affection.SocialReact(Social::Affection, 10000);
+    assert(affection.AffectionLevel(10000) == 1);
+    affection.SocialReact(Social::Affection, 13000);
+    assert(affection.AffectionLevel(13000) == 2);
+    affection.SocialReact(Social::Affection, 16000);
+    assert(affection.AffectionLevel(16000) == 3);
+    assert(affection.AffectionLevel(106001) == 0);
+    affection.SocialReact(Social::Affection, 110000);
+    assert(affection.AffectionLevel(110000) == 1);
     assert(ClassifyReplyBeat("Brawo, udało się!") == ReplyBeat::Celebrate);
     assert(ClassifyReplyBeat("Ha ha, żartuję!") == ReplyBeat::Giggle);
     assert(ClassifyReplyBeat("Wow! Nie do wiary!") == ReplyBeat::Astonished);
