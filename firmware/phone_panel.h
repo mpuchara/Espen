@@ -149,7 +149,13 @@ public:
         if (pin_.empty()) {
             Settings s("espen_phone", true);
             pin_ = s.GetString("pin", "");
-            if (pin_.size() != 8) {
+            // Accept only eight decimal digits, including possible leading 0.
+            // Never reset an existing valid code after ordinary firmware updates.
+            const bool valid = pin_.size() == 8 &&
+                std::all_of(pin_.begin(), pin_.end(), [](unsigned char c) {
+                    return c >= '0' && c <= '9';
+                });
+            if (!valid) {
                 char value[9];
                 snprintf(value, sizeof(value), "%08lu", static_cast<unsigned long>(esp_random() % 100000000U));
                 pin_ = value;
@@ -158,6 +164,7 @@ public:
         }
         return pin_;
     }
+    bool Started() const { return server_ != nullptr; }
     void Start() {
         if (server_) return;
         Pin();
