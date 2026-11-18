@@ -11,6 +11,12 @@ for file in ("web/manifest.json", "web/manifest-full.json"):
     assert json.loads(Path(file).read_text())["version"] == "0.2.15", file
 assert "0.2.15 EXPERIMENTAL" in Path("web/index.html").read_text()
 assert "Espen 0.2.15 boot:" in Path("firmware/espen_board.cc").read_text()
+root_installer=Path("web/index.html").read_text()
+assert 'manifest="manifest-full.json"' in root_installer, "Main installer must provide full image"
+assert 'manifest="manifest.json"' not in root_installer, "Main installer must not offer partial update"
+assert 'id="full-installer"' in root_installer, "Main installer must expose full flash control"
+full_manifest=json.loads(Path("web/manifest-full.json").read_text())
+assert full_manifest["builds"][0]["parts"]==[{"path":"espen.bin","offset":0}], "Full flash layout must start at 0x0"
 assert json.loads(Path("web/pilot/manifest.json").read_text())["version"] == "0.2.15"
 assert json.loads(Path("web/pilot/manifest-recovery.json").read_text())["version"] == "0.2.15"
 assert "0.2.15" in Path("web/pilot/index.html").read_text()
