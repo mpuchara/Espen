@@ -1822,6 +1822,8 @@ class EspenDisplay : public LcdDisplay {
         else if(state==kDeviceStateStarting||state==kDeviceStateUnknown||
                 state==kDeviceStateActivating||state==kDeviceStateWifiConfiguring) phase=Phase::Startup;
         else if(wifi_offline_||espen_network_error.load(std::memory_order_relaxed)) phase=Phase::Offline;
+        if(espen_remote::audio_busy.load(std::memory_order_acquire) && state==kDeviceStateIdle)
+            phase=Phase::Speaking; // Phone PCM uses the same mouth meter as Xiaozhi TTS.
         if(waiting_answer_&&now-last_stt_>=20000)waiting_answer_=false;
         auto speech=EspenSpeech();
         uint32_t ambient=espen_ambient_ms.load(std::memory_order_relaxed);
