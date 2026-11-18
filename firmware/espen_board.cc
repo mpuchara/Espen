@@ -1460,6 +1460,14 @@ class EspenDisplay : public LcdDisplay {
     int touch_distance_=0;
     lv_point_t touch_prev_{};
     lv_obj_t* face_=nullptr;
+    lv_obj_t* face_blush_button_=nullptr;
+    lv_obj_t* face_love_button_=nullptr;
+    lv_obj_t* face_clear_button_=nullptr;
+    lv_obj_t* face_menu_button_=nullptr;
+    lv_obj_t* emotion_panel_=nullptr;
+    lv_obj_t* emotion_status_=nullptr;
+    lv_obj_t* emotion_options_[8]={};
+    espen::EmotionDelay emotion_delay_;
     espen::HoldGate hold_gate_;
     lv_obj_t* hold_target_=nullptr;
     lv_obj_t* hold_progress_=nullptr;
@@ -1537,6 +1545,51 @@ class EspenDisplay : public LcdDisplay {
         }
         g={x,y,w,h,angle};
     }
+    void UpdatePinnedButtons() {
+        if(!face_blush_button_||!face_love_button_||!face_clear_button_)return;
+        auto mode=engine_.Pinned();
+        lv_obj_set_style_border_color(face_blush_button_,lv_color_hex(0xFFFFFF),0);
+        lv_obj_set_style_border_color(face_love_button_,lv_color_hex(0xFFFFFF),0);
+        lv_obj_set_style_border_width(face_blush_button_,mode==espen::PinnedFace::Blush?2:0,0);
+        lv_obj_set_style_border_width(face_love_button_,mode==espen::PinnedFace::Love?2:0,0);
+        Hide(face_clear_button_,mode==espen::PinnedFace::None && !emotion_delay_.Pending());
+    }
+    void SavePinnedFace() {
+        Settings cfg("espen_ui",true);
+        cfg.SetInt("face_pin",static_cast<int32_t>(engine_.Pinned()));
+        UpdatePinnedButtons();
+    }
+    void SelectPinnedFace(espen::PinnedFace mode) {
+        // All user choices wait exactly five seconds. The existing face
+        // continues to animate and react to audio while the countdown runs.
+        if(mode==espen::PinnedFace::None){
+            emotion_delay_.Cancel();
+            engine_.PinFace(mode);
+            SavePinnedFace();
+            if(emotion_status_)Hide(emotion_status_,true);
+        } else {
+            emotion_delay_.Schedule(mode,lv_tick_get());
+            UpdatePinnedButtons();
+        }
+        if(emotion_panel_)Hide(emotion_panel_,true);
+    }
+    lv_obj_t* FaceAction(const char* label,int x,uint32_t color,int width=35) {
+        auto* button=lv_button_create(face_);
+        lv_obj_set_pos(button,x,8);
+        lv_obj_set_size(button,width,30);
+        lv_obj_set_style_bg_color(button,lv_color_hex(color),0);
+        lv_obj_set_style_bg_opa(button,LV_OPA_COVER,0);
+        lv_obj_set_style_radius(button,9,0);
+        lv_obj_set_style_pad_all(button,0,0);
+        lv_obj_set_style_shadow_width(button,0,0);
+        lv_obj_set_style_border_width(button,0,0);
+        auto* text=lv_label_create(button);
+        lv_obj_set_style_text_font(text,EspenUiFont(),0);
+        lv_obj_set_style_text_color(text,lv_color_hex(0xFFFFFF),0);
+        lv_label_set_text(text,label);
+        lv_obj_center(text);
+        return button;
+    }
     bool OverlayVisible() const {
         for(auto* panel:{settings_,wake_panel_,cloud_,speech_diag_,speaker_panel_,camera_panel_})
             if(panel&&!lv_obj_has_flag(panel,LV_OBJ_FLAG_HIDDEN))return true;
@@ -1579,6 +1632,7 @@ class EspenDisplay : public LcdDisplay {
         },LV_EVENT_ALL,this);
     }
     void FaceTouch(lv_event_t* e) {
+        if(lv_event_get_target(e)!=face_)return; // child buttons never become petting
         auto code=lv_event_get_code(e);
         uint32_t now=lv_tick_get();
         // Ignore LVGL's default short long-press event. Only our 5-second
@@ -1643,6 +1697,9 @@ class EspenDisplay : public LcdDisplay {
             ESP_LOGW(TAG,"TV guard v0.2.14: auto-speech disabled; wake phrase and touch remain");
         }
         engine_.SetPersona(static_cast<espen::Persona>(std::clamp<int32_t>(cfg.GetInt("persona",0),0,static_cast<int32_t>(espen::Persona::Count)-1)));
+        // Restore the last manual choice; first install defaults to pink cheeks.
+        // Selecting a new face requires five seconds; X clears it immediately.
+        engine_.PinFace(static_cast<espen::PinnedFace>(std::clamp<int32_t>(cfg.GetInt("face_pin",1),0,8)));
         auto_speech_=cfg.GetBool("auto_speech",false);
         visual_enabled_=cfg.GetBool("visual_world",true);
         EspenWake().SetAutoSpeech(auto_speech_);
@@ -1710,6 +1767,73 @@ class EspenDisplay : public LcdDisplay {
         lv_obj_add_event_cb(face_,[](lv_event_t* e){
             static_cast<EspenDisplay*>(lv_event_get_user_data(e))->FaceTouch(e);
         },LV_EVENT_ALL,this);
+        // Persistent expression controls and an eight-emotion selection panel.
+        // R = rumieniec, Z = zakochanie, X = anuluj/wyłącz.
+        face_menu_button_=FaceAction("Emocje",173,0x215B78,84);
+        face_blush_button_=FaceAction("R",263,0x9A426E);
+        face_love_button_=FaceAction("Z",304,0x994080);
+        face_clear_button_=FaceAction("X",345,0x445461);
+        lv_obj_add_event_cb(face_blush_button_,[](lv_event_t* e){
+            static_cast<EspenDisplay*>(lv_event_get_user_data(e))->SelectPinnedFace(espen::PinnedFace::Blush);
+        },LV_EVENT_CLICKED,this);
+        lv_obj_add_event_cb(face_love_button_,[](lv_event_t* e){
+            static_cast<EspenDisplay*>(lv_event_get_user_data(e))->SelectPinnedFace(espen::PinnedFace::Love);
+        },LV_EVENT_CLICKED,this);
+        lv_obj_add_event_cb(face_clear_button_,[](lv_event_t* e){
+            static_cast<EspenDisplay*>(lv_event_get_user_data(e))->SelectPinnedFace(espen::PinnedFace::None);
+        },LV_EVENT_CLICKED,this);
+        lv_obj_add_event_cb(face_menu_button_,[](lv_event_t* e){
+            auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+            if(self->OverlayVisible())return;
+            self->Hide(self->emotion_panel_,!lv_obj_has_flag(self->emotion_panel_,LV_OBJ_FLAG_HIDDEN));
+        },LV_EVENT_CLICKED,this);
+        emotion_status_=lv_label_create(face_);
+        lv_obj_set_style_text_font(emotion_status_,EspenUiFont(),0);
+        lv_obj_set_style_text_color(emotion_status_,lv_color_hex(0xFFADC9),0);
+        lv_obj_set_width(emotion_status_,340);
+        lv_obj_set_style_text_align(emotion_status_,LV_TEXT_ALIGN_CENTER,0);
+        lv_obj_set_pos(emotion_status_,22,241);
+        lv_label_set_text(emotion_status_,"");
+        Passive(emotion_status_);Hide(emotion_status_,true);
+        emotion_panel_=lv_obj_create(face_);
+        lv_obj_remove_style_all(emotion_panel_);
+        lv_obj_set_pos(emotion_panel_,12,40);
+        lv_obj_set_size(emotion_panel_,360,214);
+        lv_obj_set_style_bg_color(emotion_panel_,lv_color_hex(0x102638),0);
+        lv_obj_set_style_bg_opa(emotion_panel_,LV_OPA_COVER,0);
+        lv_obj_set_style_radius(emotion_panel_,12,0);
+        lv_obj_set_style_border_width(emotion_panel_,2,0);
+        lv_obj_set_style_border_color(emotion_panel_,lv_color_hex(0x47778B),0);
+        lv_obj_set_style_pad_all(emotion_panel_,0,0);
+        lv_obj_add_flag(emotion_panel_,LV_OBJ_FLAG_CLICKABLE);
+        static constexpr const char* kEmotionNames[]={
+            "Rumieniec","Zakochana","Radość","Śmiech",
+            "Smutek","Złość","Zdziwienie","Senność"
+        };
+        for(int i=0;i<8;++i){
+            auto* btn=lv_button_create(emotion_panel_);
+            emotion_options_[i]=btn;
+            lv_obj_set_size(btn,164,42);
+            lv_obj_set_pos(btn,12+(i%2)*172,13+(i/2)*48);
+            lv_obj_set_style_radius(btn,9,0);
+            lv_obj_set_style_shadow_width(btn,0,0);
+            lv_obj_set_style_pad_all(btn,0,0);
+            lv_obj_set_style_bg_color(btn,lv_color_hex(i<2?0x84456F:0x285267),0);
+            auto* lbl=lv_label_create(btn);
+            lv_obj_set_style_text_font(lbl,EspenUiFont(),0);
+            lv_obj_set_style_text_color(lbl,lv_color_hex(0xFFFFFF),0);
+            lv_label_set_text(lbl,kEmotionNames[i]);
+            lv_obj_center(lbl);
+            lv_obj_add_event_cb(btn,[](lv_event_t* e){
+                auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                auto* target=static_cast<lv_obj_t*>(lv_event_get_current_target(e));
+                for(int i=0;i<8;++i)if(self->emotion_options_[i]==target){
+                    self->SelectPinnedFace(static_cast<espen::PinnedFace>(i+1));break;
+                }
+            },LV_EVENT_CLICKED,this);
+        }
+        Hide(emotion_panel_,true);
+        UpdatePinnedButtons();
         TickFace();
         face_timer_=lv_timer_create([](lv_timer_t* t){
             static_cast<EspenDisplay*>(lv_timer_get_user_data(t))->TickFace();
@@ -1779,6 +1903,22 @@ class EspenDisplay : public LcdDisplay {
     }
     void TickFace() {
         uint32_t now=lv_tick_get();
+        espen::PinnedFace ready;
+        if(emotion_delay_.TakeReady(now,ready)){
+            engine_.PinFace(ready);
+            SavePinnedFace();
+        }
+        if(emotion_status_){
+            const bool pending=emotion_delay_.Pending();
+            Hide(emotion_status_,!pending);
+            if(pending){
+                char msg[72];
+                snprintf(msg,sizeof(msg),"Nowa emocja za %lu s",
+                    static_cast<unsigned long>(emotion_delay_.SecondsLeft(now)));
+                if(strcmp(lv_label_get_text(emotion_status_),msg)!=0)
+                    lv_label_set_text(emotion_status_,msg);
+            }
+        }
         RefreshCameraPanel(now);
         if(!face_||OverlayVisible())return;
         const int vision_activity=EspenVision().Activity();
