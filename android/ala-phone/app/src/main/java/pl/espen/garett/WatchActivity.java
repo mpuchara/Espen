@@ -10,6 +10,8 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
+import android.view.Gravity;
+import android.widget.FrameLayout;
 import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.CheckBox;
@@ -19,13 +21,14 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
-/** Foreground-only watch UX. No accessibility, SMS, SOS or background service access. */
+/** Foreground-only Ala Phone UI, independent from ESP32 and Garett watch apps. */
 public final class WatchActivity extends Activity implements FaceView.Actions, XiaozhiClient.Events {
     private static final int PERM_MIC=10, PERM_CAMERA=11, PERM_WAKE=12;
     private final Handler main=new Handler(Looper.getMainLooper());
     private FaceView face;
     private XiaozhiClient xiaozhi;
     private WatchWake wake;
+    private PhoneEmotionPanel emotions;
     private boolean sleeping;
     private long lastLevelAt;
     @Override public void onCreate(Bundle state){
@@ -33,10 +36,28 @@ public final class WatchActivity extends Activity implements FaceView.Actions, X
         CrashNotes.install(this);
         getWindow().setStatusBarColor(0xff000000);
         getWindow().setNavigationBarColor(0xff000000);
-        immersive();
         face=new FaceView(this);face.setActions(this);
-        setContentView(face);
+        FrameLayout screen=new FrameLayout(this);
+        screen.addView(face,new FrameLayout.LayoutParams(-1,-1));
+        LinearLayout toolbar=new LinearLayout(this);
+        toolbar.setOrientation(LinearLayout.HORIZONTAL);
+        toolbar.setBackgroundColor(0xee091822);
+        Button panelBtn=new Button(this);panelBtn.setText("🎭 PANEL EMOCJI");panelBtn.setTextSize(12);
+        Button talkBtn=new Button(this);talkBtn.setText("🎙 MÓW");talkBtn.setTextSize(12);
+        Button cameraBtn=new Button(this);cameraBtn.setText("📷");cameraBtn.setTextSize(14);
+        Button settingsBtn=new Button(this);settingsBtn.setText("⚙");settingsBtn.setTextSize(14);
+        for(Button b:new Button[]{panelBtn,talkBtn,cameraBtn,settingsBtn}){
+            toolbar.addView(b,new LinearLayout.LayoutParams(0,dp(55),b==panelBtn?2f:1f));
+        }
+        panelBtn.setOnClickListener(v->onControls());
+        talkBtn.setOnClickListener(v->onMicrophone());
+        cameraBtn.setOnClickListener(v->onCamera());
+        settingsBtn.setOnClickListener(v->onSettings());
+        FrameLayout.LayoutParams bar=new FrameLayout.LayoutParams(-1,dp(58),Gravity.BOTTOM);
+        screen.addView(toolbar,bar);
+        setContentView(screen);
         xiaozhi=new XiaozhiClient(this,this);
+        emotions=new PhoneEmotionPanel(this,face,xiaozhi.controls());
         wake=new WatchWake(this,new WatchWake.Events(){
             @Override public void onWake(){ui(()->{
                 if(!sleeping)return;
@@ -48,6 +69,7 @@ public final class WatchActivity extends Activity implements FaceView.Actions, X
         face.setBattery(xiaozhi.controls().battery());
         xiaozhi.refreshConfig();
     }
+    private int dp(int v){return (int)(v*getResources().getDisplayMetrics().density+0.5f);}
     private void immersive(){
         getWindow().getDecorView().setSystemUiVisibility(
             View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
@@ -81,8 +103,7 @@ public final class WatchActivity extends Activity implements FaceView.Actions, X
         }
     }
     @Override public void onControls(){
-        wake.stop();
-        xiaozhi.controls().showPanel();
+        if(emotions!=null)emotions.show();
     }
     @Override public void onCamera(){
         if(checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED){
@@ -97,10 +118,10 @@ public final class WatchActivity extends Activity implements FaceView.Actions, X
         form.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(form);
         TextView info=new TextView(this);
-        info.setText("Ala Watch 0.2.12 (Espen 0.2.11+)\n" +
-            "Przesuń w dół: bez odbioru; w górę: sterowanie.\n" +
-            "Podczas mowy Ali dotknij mikrofonu, aby ją przerwać.\n" +
-            "Lokalne hasło wymaga 3 próbek i działa tylko w otwartej aplikacji.\n");
+        info.setText("Ala Phone 0.1.0 (Android)\\n" +
+            "PANEL EMOCJI: przyciski z opóźnieniem 5 sekund.\\n" +
+            "Zakochanie/rumieńce pozostają do naciśnięcia X.\\n" +
+            "Ala na telefonie działa niezależnie od robota i zegarka.\\n");
         info.setTextSize(14);form.addView(info);
         EditText ota=new EditText(this);ota.setSingleLine(false);ota.setMaxLines(3);
         ota.setText(XiaozhiClient.getOta(this));ota.setTextSize(13);ota.setHint("Adres OTA HTTPS");
@@ -113,10 +134,12 @@ public final class WatchActivity extends Activity implements FaceView.Actions, X
         interruption.setText("Przerywanie głosem podczas TTS (eksperymentalne)");
         interruption.setTextSize(12);form.addView(interruption);
         TextView disclaimer=new TextView(this);
-        disclaimer.setText("Na niektórych Garettach jednoczesny mikrofon i głośnik jest zablokowany. Dotyk zawsze przerywa rozmowę.");
+        disclaimer.setText("Przerywanie głosem jest eksperymentalne; dotyk zawsze umożliwia zakończenie i ponowne rozpoczęcie rozmowy.");
         disclaimer.setTextSize(11);form.addView(disclaimer);
-        Button panel=new Button(this);panel.setText("⌚ Sterowanie zegarkiem");
+        Button panel=new Button(this);panel.setText("🎭 Panel emocji");
         panel.setOnClickListener(v->onControls());form.addView(panel);
+        Button phoneSettings=new Button(this);phoneSettings.setText("⚙ Sterowanie telefonem");
+        phoneSettings.setOnClickListener(v->xiaozhi.controls().showPanel());form.addView(phoneSettings);
         Button teach=new Button(this);
         teach.setText("🎤 Naucz hasła lokalnie ("+wake.trained()+"/3)");
         teach.setOnClickListener(v->{
@@ -221,6 +244,7 @@ public final class WatchActivity extends Activity implements FaceView.Actions, X
     }
     @Override protected void onDestroy(){
         if(wake!=null)wake.stop();
+        if(emotions!=null)emotions.close();
         if(xiaozhi!=null)xiaozhi.shutdown();
         super.onDestroy();
     }
