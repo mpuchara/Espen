@@ -1292,11 +1292,11 @@ class EspenDisplay : public LcdDisplay {
                 esp_netif_t* iface=esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
                 if(iface && esp_netif_get_ip_info(iface,&ip)==ESP_OK) {
                     lv_label_set_text_fmt(self->settings_status_,
-                        "Telefon i Ala: ta sama sieć Wi-Fi.\\nAdres Ali: " IPSTR ":8787\\nKod: %06lu",
+                        "Telefon i Ala: ta sama sieć Wi-Fi.\nAdres Ali: " IPSTR ":8787\nKod: %06lu",
                         IP2STR(&ip.ip),static_cast<unsigned long>(espen_remote::Pin()));
                 } else {
                     lv_label_set_text_fmt(self->settings_status_,
-                        "Sprawdź adres IP Ali w routerze (port 8787).\\nKod: %06lu",
+                        "Sprawdź adres IP Ali w routerze (port 8787).\nKod: %06lu",
                         static_cast<unsigned long>(espen_remote::Pin()));
                 }
             },this,420);
