@@ -1,0 +1,45 @@
+name: Ala phone APK
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'phone/**'
+      - '.github/workflows/phone-apk.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'phone/**'
+      - '.github/workflows/phone-apk.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-phone:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Ensure Android SDK 35
+        shell: bash
+        run: |
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          if [ ! -d "$SDK/platforms/android-35" ]; then
+            SDKMANAGER="$(find "$SDK/cmdline-tools" -type f -name sdkmanager -print -quit)"
+            test -x "$SDKMANAGER"
+            "$SDKMANAGER" 'platforms;android-35' 'build-tools;35.0.0'
+          fi
+      - name: Build debug APK
+        working-directory: phone
+        run: gradle --no-daemon :app:assembleDebug
+      - name: Upload installable APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: AlaPanel-Android-debug-APK
+          path: phone/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

@@ -367,3 +367,11 @@ jeżeli na Twoim ustawieniu głośności TV nadal przebija się przez
 barge-in, należy przeanalizować nagranie RAW/Opus i zmniejszyć
 głośność tła albo dostroić próg na konkretnym sprzęcie.
 Testów fizycznych nie da się zastąpić samym zielonym CI.
+
+## Espen 0.2.15 — Ala Panel na Androida
+
+Dodano osobną aplikację Android 8+ (**phone/**), która z telefonu steruje mimiką fizycznej Ali, a także poprawia polskie zdanie i odtwarza je przez jej głośnik. Opcje emocji: 16 ekspresji, czas 5 s / 47 s / na stałe oraz opcjonalne opóźnienie 5 s. Po zakończeniu ręcznego sterowania powraca dotychczasowa mimika z Xiaozhi. Po wybraniu „Spokój” powrót jest natychmiastowy.
+
+Do wymówienia zdania używany jest **polski TTS Androida** na telefonie; wynik PCM16 mono 24 kHz trafia w domowej sieci Wi-Fi przez PIN-protected LAN API (TCP 8787) do dotychczasowej pojedynczej kolejki wyjściowej ESP32-P4. Robot musi być bezczynny, mieć włączony głośnik i firmware 0.2.15. Tekst opcjonalnie można przekazać do serwisu **LanguageTool** w celu pełnej korekty: wymaga świadomego zaznaczenia opcji w telefonie; domyślnie działa tylko formatowanie lokalne. Dźwięk trafia lokalnie na Alę, nie do Xiaozhi. Nie przekierowuj portu LAN do Internetu, ponieważ transport HTTP nie ma szyfrowania TLS.
+
+**Uruchomienie:** na Alę wgraj 0.2.15 przez „Aktualizuj Espen (zachowaj dane)”; w Ustawieniach wybierz „Panel telefonu / kod parowania” i spisz IP oraz sześciocyfrowy kod, który zmienia się przy restarcie; zainstaluj plik APK z workflow GitHub Actions „Ala phone APK”, podaj IP i kod w aplikacji. Telefon i robot muszą działać w zaufanej wspólnej sieci Wi‑Fi. Szczegółowa instrukcja: [phone/README.md](phone/README.md). Nie potwierdzono jeszcze działania na fizycznej płytce; wymaga testów.

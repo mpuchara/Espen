@@ -4,6 +4,7 @@
 #include "button.h"
 #include "config.h"
 #include "face_engine.h"
+#include "espen_remote.h"
 #include "speech_quality.h"
 #include "standby_policy.h"
 #include "speaker_audio.h"
@@ -43,6 +44,7 @@
 #include <algorithm>
 #include <atomic>
 #include <esp_timer.h>
+#include <esp_netif.h>
 #include <mutex>
 #include <new>
 #include <string>
@@ -163,7 +165,7 @@ struct DiagCapture {
 };
 DiagCapture diag;
 }
-bool EspenDiagnosticBusy(){return diag.busy.load(std::memory_order_acquire);}
+bool EspenDiagnosticBusy(){return diag.busy.load(std::memory_order_acquire) || espen_remote::audio_busy.load(std::memory_order_acquire);}
 void EspenDiagBegin(){
     std::lock_guard<std::mutex> l(diag.mutex);
     if(!diag.armed||diag.busy.load())return;
@@ -216,6 +218,7 @@ static std::string EspenDiagSummary(){
     return diag.note.empty()?std::string(b):std::string(b)+"\n"+diag.note;
 }
 static std::atomic<bool> espen_speaker_pa{false};
+bool EspenRemoteSpeakerReady(){return espen_speaker_pa.load(std::memory_order_acquire);}
 static std::atomic<bool> speaker_test_running{false},speaker_test_stop{false};
 static std::atomic<int> speaker_preview_volume{espen::kSpeakerVolumeDefault};
 static std::atomic<bool> speaker_preview_pending{false};
@@ -1091,7 +1094,7 @@ class EspenDisplay : public LcdDisplay {
             lv_bar_set_range(speech_meter_bar_,0,100);
             auto* hint=lv_label_create(speech_diag_);lv_obj_set_width(hint,lv_pct(100));
             lv_label_set_long_mode(hint,LV_LABEL_LONG_WRAP);
-            lv_label_set_text(hint,"TV-safe 0.2.14: Auto 30 dB, hasło zamiast szumu/TV. Mowa bez hasła opcjonalna. TTS chroniony 900 ms. RAW/Opus do 12 s tylko w RAM.");
+            lv_label_set_text(hint,"TV-safe 0.2.15: Auto 30 dB, hasło zamiast szumu/TV. Mowa bez hasła opcjonalna. TTS chroniony 900 ms. RAW/Opus do 12 s tylko w RAM.");
             Settings cfg("espen_audio",false);
             int legacy=cfg.GetInt("mic_gain",-1);
             speech_mode_=espen::ResolveMicMode(cfg.GetInt("mic_profile",-1),legacy);
@@ -1282,6 +1285,20 @@ class EspenDisplay : public LcdDisplay {
             MakeButton(settings_,"Kamera / Espen Vision",[](lv_event_t* e){
                 auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
                 self->CloseSettings();self->OpenCameraPanel();
+            },this,420);
+            MakeButton(settings_,"Panel telefonu / kod parowania",[](lv_event_t* e){
+                auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                esp_netif_ip_info_t ip{};
+                esp_netif_t* iface=esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+                if(iface && esp_netif_get_ip_info(iface,&ip)==ESP_OK) {
+                    lv_label_set_text_fmt(self->settings_status_,
+                        "Telefon i Ala: ta sama sieć Wi-Fi.\nAdres Ali: " IPSTR ":8787\nKod: %06lu",
+                        IP2STR(&ip.ip),static_cast<unsigned long>(espen_remote::Pin()));
+                } else {
+                    lv_label_set_text_fmt(self->settings_status_,
+                        "Sprawdź adres IP Ali w routerze (port 8787).\nKod: %06lu",
+                        static_cast<unsigned long>(espen_remote::Pin()));
+                }
             },this,420);
             MakeButton(settings_,"Głośność / test głośnika",[](lv_event_t* e){
                 auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
@@ -1635,12 +1652,12 @@ class EspenDisplay : public LcdDisplay {
     }
     void BuildFace() {
         Settings cfg("espen_ui",true);
-        // v0.2.14 one-time safety migration: TV speech used to open sessions.
+        // v0.2.15 one-time safety migration: TV speech used to open sessions.
         // Later deliberate re-enabling of hands-free speech survives reboot.
         if(!cfg.GetBool("tv_guard_v14",false)){
             cfg.SetBool("auto_speech",false);
             cfg.SetBool("tv_guard_v14",true);
-            ESP_LOGW(TAG,"TV guard v0.2.14: auto-speech disabled; wake phrase and touch remain");
+            ESP_LOGW(TAG,"TV guard v0.2.15: auto-speech disabled; wake phrase and touch remain");
         }
         engine_.SetPersona(static_cast<espen::Persona>(std::clamp<int32_t>(cfg.GetInt("persona",0),0,static_cast<int32_t>(espen::Persona::Count)-1)));
         auto_speech_=cfg.GetBool("auto_speech",false);
@@ -1805,6 +1822,8 @@ class EspenDisplay : public LcdDisplay {
         else if(state==kDeviceStateStarting||state==kDeviceStateUnknown||
                 state==kDeviceStateActivating||state==kDeviceStateWifiConfiguring) phase=Phase::Startup;
         else if(wifi_offline_||espen_network_error.load(std::memory_order_relaxed)) phase=Phase::Offline;
+        if(espen_remote::audio_busy.load(std::memory_order_acquire) && state==kDeviceStateIdle)
+            phase=Phase::Speaking; // Phone PCM uses the same mouth meter as Xiaozhi TTS.
         if(waiting_answer_&&now-last_stt_>=20000)waiting_answer_=false;
         auto speech=EspenSpeech();
         uint32_t ambient=espen_ambient_ms.load(std::memory_order_relaxed);
@@ -1820,6 +1839,20 @@ class EspenDisplay : public LcdDisplay {
             engine_.ReplyReact(played.beat,now);
         }
         auto f=engine_.Tick(now,phase,speech.level,speech.shape,loud);
+        espen::Mood remote_mood=espen::Mood::Neutral;
+        if(espen_remote::CurrentMood(static_cast<uint32_t>(esp_timer_get_time()/1000),remote_mood)) {
+            // The chosen remote expression wins over automatic/cloud emotion,
+            // while mouth motion stays synchronized with the real PCM stream.
+            auto expression=espen::Expression(remote_mood);
+            if(phase==Phase::Speaking) {
+                expression.mouth_w=f.pose.mouth_w;
+                expression.mouth_h=f.pose.mouth_h;
+            }
+            f.pose=expression;
+            f.eye_left=f.eye_right=expression.eye_h;
+            f.mood=remote_mood;
+            f.asleep=false;
+        }
         auto& p=f.pose;
         const bool scene_on=visual_enabled_&&recent_audio&&
             (phase==Phase::Speaking||(phase==Phase::Listening&&!Application::GetInstance().GetAudioService().IsAudioProcessorRunning()));
@@ -2399,7 +2432,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.2.14 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.2.15 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();
@@ -2464,6 +2497,7 @@ public:
         ImportStagedWifi();
         EspenCloudInfo("Łączenie z siecią Wi-Fi", "");
         WifiBoard::StartNetwork();
+        espen_remote::Start();
     }
     // Mains-powered assistant: don't put the C6 in modem sleep between turns.
     void SetPowerSaveLevel(PowerSaveLevel) override {
