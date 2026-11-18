@@ -156,8 +156,8 @@ class PhonePanel {
             std::lock_guard<std::mutex> lock(self.reply_lock_);
             self.last_reply_.clear();
         }
-        if (interactive) Application::GetInstance().EspenAskText(body, hello);
-        else Application::GetInstance().EspenSayText(body);
+        if (interactive) Application::GetInstance().EspenAskText(body, hello, self.Name());
+        else Application::GetInstance().EspenSayText(body, self.Name());
         return Respond(req, 200, "OK");
     }
     static esp_err_t Say(httpd_req_t* req) { return SendText(req, false); }
