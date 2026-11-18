@@ -152,7 +152,9 @@ phone_ui = r'''
             lv_label_set_text(phone_status_, "Łączenie pilota. Sprawdź Wi-Fi i spróbuj ponownie.");
             return;
         }
-        lv_label_set_text_fmt(phone_status_, "Adres IP: %s\nPanel: http://%s/", ip.c_str(), ip.c_str());
+        const auto robot_name=panel.Name();
+        lv_label_set_text_fmt(phone_status_, "Imie: %s\nAdres IP: %s\nPanel: http://%s/",
+            robot_name.c_str(), ip.c_str(), ip.c_str());
     }
     void OpenPhonePanel() {
         if (!phone_panel_) {
