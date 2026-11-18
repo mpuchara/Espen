@@ -9,6 +9,10 @@ int main() {
     assert(ClassifyReplyBeat("Aż mi procesor się rumieni!") == ReplyBeat::Blush);
     assert(ReplyCue(ReplyBeat::Blush) == EmotionalCue::Shy);
     assert(ClassifyReplyBeat("Jesteś urocza") != ReplyBeat::Blush);
+    assert(ClassifyReplyBeat("Chyba się zakochałam!") == ReplyBeat::Lovestruck);
+    assert(ClassifyReplyBeat("Ojej, motylki w procesorze!") == ReplyBeat::Lovestruck);
+    assert(ClassifyReplyBeat("Ktoś się w tobie zakochał") != ReplyBeat::Lovestruck);
+    assert(ReplyCue(ReplyBeat::Lovestruck) == EmotionalCue::Heart);
     assert(ClassifyReplyBeat("Brawo, udało się!") == ReplyBeat::Celebrate);
     assert(ClassifyReplyBeat("Ha ha, żartuję!") == ReplyBeat::Giggle);
     assert(ClassifyReplyBeat("Wow! Nie do wiary!") == ReplyBeat::Astonished);
@@ -44,25 +48,49 @@ int main() {
         assert(CueDurationMs(cue) <= 400);
     }
     assert(ReplyCue(ReplyBeat::None) == EmotionalCue::Count);
-    // A reply-triggered blush lasts for precisely 47 seconds, including idle
-    // and listening time, and doesn't seize audio or prevent a forced sleep.
+    // Selection is always exactly five seconds after the latest click.
+    EmotionDelay delay;
+    PinnedFace ready=PinnedFace::None;
+    delay.Schedule(PinnedFace::Blush,1000);
+    assert(delay.Pending() && delay.SecondsLeft(1000)==5);
+    assert(delay.SecondsLeft(2001)==4);
+    assert(!delay.TakeReady(5999,ready));
+    assert(delay.TakeReady(6000,ready) && ready==PinnedFace::Blush);
+    assert(!delay.Pending() && !delay.TakeReady(6001,ready));
+    // A second selection replaces and restarts the countdown.
+    delay.Schedule(PinnedFace::Sad,10000);
+    delay.Schedule(PinnedFace::Love,14000);
+    assert(!delay.TakeReady(15000,ready));
+    assert(delay.TakeReady(19000,ready) && ready==PinnedFace::Love);
+    delay.Schedule(PinnedFace::Angry,20000);
+    delay.Cancel();
+    assert(!delay.TakeReady(30000,ready));
+    // The unsigned elapsed time check is safe across tick wraparound.
+    delay.Schedule(PinnedFace::Happy,0xFFFFFF00u);
+    assert(!delay.TakeReady(0x00001287u,ready));
+    assert(delay.TakeReady(0x00001288u,ready) && ready==PinnedFace::Happy);
+
+    // Pinned faces remain indefinitely; short speech responses don't pin them.
     FaceEngine rosy;
     rosy.Tick(100,Phase::Idle,0,MouthShape::Closed);
     rosy.ReplyReact(ReplyBeat::Blush,1000);
-    assert(rosy.Tick(1200,Phase::Speaking,70,MouthShape::Open).pose.accent==Accent::Blush);
-    assert(rosy.Tick(3000,Phase::Listening,0,MouthShape::Closed).pose.accent==Accent::Blush);
-    auto during_blush=rosy.Tick(47999,Phase::Idle,0,MouthShape::Closed);
+    assert(rosy.Pinned()==PinnedFace::None);
+    rosy.PinFace(PinnedFace::Blush);
+    assert(rosy.Tick(50000,Phase::Listening,0,MouthShape::Closed).pose.accent==Accent::Blush);
+    auto during_blush=rosy.Tick(200000,Phase::Idle,0,MouthShape::Closed);
     assert(during_blush.pose.accent==Accent::Blush && !during_blush.asleep);
-    assert(rosy.Tick(48000,Phase::Idle,0,MouthShape::Closed).pose.accent!=Accent::Blush);
-    // Another shy response restarts the timer.
-    rosy.ReplyReact(ReplyBeat::Blush,50000);
-    rosy.Tick(51000,Phase::Idle,0,MouthShape::Closed);
-    rosy.ReplyReact(ReplyBeat::Blush,60000);
-    assert(rosy.Tick(106999,Phase::Idle,0,MouthShape::Closed).pose.accent==Accent::Blush);
-    assert(rosy.Tick(107000,Phase::Idle,0,MouthShape::Closed).pose.accent!=Accent::Blush);
-    rosy.ReplyReact(ReplyBeat::Blush,110000);
-    rosy.SleepNow(110100);
-    assert(rosy.Tick(110200,Phase::Idle,0,MouthShape::Closed).asleep);
+    rosy.PinFace(PinnedFace::Love);
+    auto love=rosy.Tick(201000,Phase::Speaking,90,MouthShape::Open);
+    assert(love.pose.accent==Accent::Heart && love.hearts);
+    assert(love.pose.mouth_h>10);
+    rosy.PinFace(PinnedFace::Angry);
+    assert(rosy.Tick(202000,Phase::Listening,0,MouthShape::Closed).mood==Mood::Angry);
+    rosy.PinFace(PinnedFace::None);
+    assert(rosy.Pinned()==PinnedFace::None);
+    assert(rosy.Tick(208000,Phase::Idle,0,MouthShape::Closed).pose.accent!=Accent::Blush);
+    rosy.PinFace(PinnedFace::Blush);
+    rosy.SleepNow(220000);
+    assert(rosy.Tick(220200,Phase::Idle,0,MouthShape::Closed).asleep);
     FaceEngine face;
     face.Tick(100, Phase::Idle, 0, MouthShape::Closed);
     face.ReplyReact(ReplyBeat::Giggle, 200);
@@ -88,5 +116,5 @@ int main() {
     face.ReplyReact(ReplyBeat::Magic, 6300);
     auto idle = face.Tick(6350, Phase::Idle, 0, MouthShape::Closed);
     assert(idle.mood != Mood::Excited); // response beats cannot animate standby
-    std::cout << "Espen response reactions: 20 beats, animation and audio mapping OK\n";
+    std::cout << "Espen response reactions, 8 pinned moods and 5-second delay OK\n";
 }
