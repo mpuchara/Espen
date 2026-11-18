@@ -4,6 +4,11 @@
 #include <iostream>
 using namespace espen;
 int main() {
+    assert(ClassifyReplyBeat("Ojej, jaki komplement!") == ReplyBeat::Blush);
+    assert(ClassifyReplyBeat("Ale mnie zawstydziłaś!") == ReplyBeat::Blush);
+    assert(ClassifyReplyBeat("Aż mi procesor się rumieni!") == ReplyBeat::Blush);
+    assert(ReplyCue(ReplyBeat::Blush) == EmotionalCue::Shy);
+    assert(ClassifyReplyBeat("Jesteś urocza") != ReplyBeat::Blush);
     assert(ClassifyReplyBeat("Brawo, udało się!") == ReplyBeat::Celebrate);
     assert(ClassifyReplyBeat("Ha ha, żartuję!") == ReplyBeat::Giggle);
     assert(ClassifyReplyBeat("Wow! Nie do wiary!") == ReplyBeat::Astonished);
