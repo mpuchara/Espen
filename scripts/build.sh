@@ -8,18 +8,18 @@ python3 - <<'PYVERSION'
 import json
 from pathlib import Path
 for file in ("web/manifest.json", "web/manifest-full.json"):
-    assert json.loads(Path(file).read_text())["version"] == "0.2.15", file
-assert "0.2.15 EXPERIMENTAL" in Path("web/index.html").read_text()
-assert "Espen 0.2.15 boot:" in Path("firmware/espen_board.cc").read_text()
+    assert json.loads(Path(file).read_text())["version"] == "0.2.16", file
+assert "0.2.16 EXPERIMENTAL" in Path("web/index.html").read_text()
+assert "Espen 0.2.16 boot:" in Path("firmware/espen_board.cc").read_text()
 root_installer=Path("web/index.html").read_text()
 assert 'manifest="manifest-full.json"' in root_installer, "Main installer must provide full image"
 assert 'manifest="manifest.json"' not in root_installer, "Main installer must not offer partial update"
 assert 'id="full-installer"' in root_installer, "Main installer must expose full flash control"
 full_manifest=json.loads(Path("web/manifest-full.json").read_text())
 assert full_manifest["builds"][0]["parts"]==[{"path":"espen.bin","offset":0}], "Full flash layout must start at 0x0"
-assert json.loads(Path("web/pilot/manifest.json").read_text())["version"] == "0.2.15"
-assert json.loads(Path("web/pilot/manifest-recovery.json").read_text())["version"] == "0.2.15"
-assert "0.2.15" in Path("web/pilot/index.html").read_text()
+assert json.loads(Path("web/pilot/manifest.json").read_text())["version"] == "0.2.16"
+assert json.loads(Path("web/pilot/manifest-recovery.json").read_text())["version"] == "0.2.16"
+assert "0.2.16" in Path("web/pilot/index.html").read_text()
 PYVERSION
 # Source-level integration guards for the LVGL/MCP bridge (plus host vision gate tests).
 python3 tests/test_photo_chat_integration.py
@@ -92,6 +92,8 @@ python3 scripts/prepare_phone.py upstream
 grep -Fq 'int output_volume_ = 75;' upstream/main/audio/audio_codec.h
 grep -Fq 'Espen speaker: PA GPIO%d level=%d DAC volume=%d%% output=%d gpio_err=%s' upstream/main/audio/codecs/es8311_audio_codec.cc
 grep -Fq 'Espen speaker PCM sent:' upstream/main/audio/codecs/es8311_audio_codec.cc
+# Upgrade must restore PA and inaudible NVS volume configurations.
+grep -Fq 'spk_init_v216' firmware/espen_board.cc
 # Crash regression guard: no NSNet2 FFT path may be enabled by persisted NVS.
 grep -Fq 'afe_config->ns_init = false;' upstream/main/audio/engines/afe_audio_engine.cc
 grep -Fq 'Espen AFE safe mode: NSNet2 disabled' upstream/main/audio/engines/afe_audio_engine.cc
