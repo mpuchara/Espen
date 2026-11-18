@@ -5,6 +5,8 @@
 #include "phone_panel_html.h"
 #include "settings.h"
 #include <esp_http_server.h>
+#include <esp_log.h>
+#include <algorithm>
 #include <esp_random.h>
 #include <esp_timer.h>
 #include <atomic>
