@@ -83,7 +83,7 @@ final class WatchControls {
         }catch(Exception ignored){}
         return "Bateria: "+battery()+"%, multimedia: "+volume()+"%, jasność Ali: "+
             brightness+"%, Wi-Fi: "+wifi+", Bluetooth: "+bt+", latarka: "+(torch?"ON":"OFF")+
-            ". SOS i ustawienia rodzicielskie są poza aplikacją.";
+            ". Systemowe ustawienia telefonu pozostają pod kontrolą użytkownika.";
     }
     synchronized String torch(boolean on){
         if(activity.checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED)
@@ -146,7 +146,7 @@ final class WatchControls {
             try{activity.startActivity(new Intent(Intent.ACTION_DIAL));}
             catch(Exception e){Toast.makeText(activity,"Brak dialera",Toast.LENGTH_SHORT).show();}
         });
-        new AlertDialog.Builder(activity).setTitle("Sterowanie zegarkiem")
+        new AlertDialog.Builder(activity).setTitle("Sterowanie telefonem")
             .setView(sc).setPositiveButton("Gotowe",null).show();
     }
     private interface Change {void apply(int v);}
