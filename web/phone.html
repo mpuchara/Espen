@@ -41,6 +41,7 @@ small{display:block;color:#96aabe;margin-top:9px;line-height:1.5}.status{color:#
 <section><h2>🎭 Emocje Ali</h2><p>Dotknij emocji. Ala pokaże ją na ekranie za 5 sekund.</p>
 <div id="emotions" class="emotions"></div>
 <div class="options"><label class="inline"><input type="checkbox" id="sticky" checked> Na stałe — aż nacisnę X</label><span>Opóźnienie: 5 s</span></div>
+<label class="inline" style="margin:12px 0;display:flex"><input type="checkbox" id="voiceMood" checked> 🔊 Ala mówi pasujące słowa, np. gdy się zakocha</label>
 <div class="buttons"><button id="stop" class="danger">✕ Wyłącz emocję</button></div><div class="status" id="emotionStatus" role="status"></div>
 </section>
 <small>Panel działa lokalnie przez Wi-Fi. Nie udostępniaj kodu sterowania innym osobom. Połączenie ze sztuczną inteligencją Xiaozhi wymaga Internetu i działającego głośnika.</small>
@@ -48,7 +49,17 @@ small{display:block;color:#96aabe;margin-top:9px;line-height:1.5}.status{color:#
 <script>
 const $=id=>document.getElementById(id);
 const moods=[['happy','😄','Radość'],['laugh','😂','Śmiech'],['sad','😢','Smutek'],['surprise','😲','Zdziwienie'],['angry','😠','Złość'],['thinking','🤔','Myślenie'],['sleepy','😴','Senność'],['love','😍','Zakochanie'],['confident','😎','Pewność'],['shy','😊','Rumieńce'],['confused','😕','Zmieszanie'],['fear','😨','Strach'],['wink','😉','Oczko'],['bored','😐','Nuda'],['excited','🤩','Ekscytacja'],['neutral','🙂','Spokój']];
-let pin=localStorage.getItem('alaPhonePin')||'',selected='';
+let pin=localStorage.getItem('alaPhonePin')||'',selected='',emotionRequest=0,supportsMoodVoice=true;
+const moodPhrases={
+ happy:'Cześć! Mam dziś świetny humor!', laugh:'Ha, ha! Ale zabawnie!',
+ sad:'Oj, trochę mi smutno.',surprise:'Łał! Co za niespodzianka!',
+ angry:'Grrr! Zaraz się uspokoję.',thinking:'Hmm, muszę pomyśleć.',
+ sleepy:'Ziew! Ale jestem śpiąca.',love:'Ale miło cię widzieć! Posyłam ci serduszka.',
+ confident:'Dam radę! Jestem gotowa.',shy:'Ojej, aż się zarumieniłam.',
+ confused:'Hmm, trochę się pogubiłam.',fear:'Ojej! Ale mnie przestraszyłeś!',
+ wink:'Mrugam do ciebie!',bored:'Może wymyślimy jakąś zabawę?',
+ excited:'Hurra! Nie mogę się doczekać!',neutral:'Cześć! Jestem gotowa do rozmowy.'
+};
 $('pin').value=pin;
 for(const [id,emoji,name] of moods){const b=document.createElement('button');b.className='emotion';b.type='button';b.innerHTML='<span class="emoji">'+emoji+'</span><span>'+name+'</span>';b.onclick=()=>changeMood(id,name,b);$('emotions').append(b)}
 async function request(path,method='GET',body){const ctrl=new AbortController();const timer=setTimeout(()=>ctrl.abort(),8500);try{
@@ -64,11 +75,18 @@ function showRobotName(name){
 async function verify(){
   try{
     await request('/api/status');
-    const name=await request('/api/name');
-    showRobotName(name);
-    $('connection').textContent='● '+name+' połączona';
-    $('authStatus').textContent='Połączono z robotem '+name+'.';
-    $('name-status').textContent='Aktualne imię: '+name;
+    $('connection').textContent='● Ala połączona';
+    $('authStatus').textContent='Połączono z Alą.';
+    try{
+      const name=await request('/api/name');
+      showRobotName(name);
+      $('connection').textContent='● '+name+' połączona';
+      $('authStatus').textContent='Połączono z robotem '+name+'.';
+      $('name-status').textContent='Aktualne imię: '+name;
+    }catch(e){
+      supportsMoodVoice=false;
+      $('name-status').textContent='Starsza wersja Ali nie obsługuje zmiany imienia. Emocje i głos nadal mogą działać.';
+    }
   }catch(e){
     $('connection').textContent='● Brak dostępu';
     $('authStatus').textContent=e.message;
@@ -92,13 +110,49 @@ $('save-name').onclick=async()=>{
   finally{$('save-name').disabled=false}
 };
 $('savePin').onclick=()=>{pin=$('pin').value.trim();localStorage.setItem('alaPhonePin',pin);verify()};
-async function changeMood(mood,name,button){try{await request('/api/emotion','POST',mood+'|'+($('sticky').checked?'1':'0'));selected=mood;document.querySelectorAll('.emotion').forEach(b=>b.classList.toggle('selected',b===button));$('emotionStatus').textContent='Za 5 sekund: '+name+($('sticky').checked?' (do naciśnięcia X).':' (na chwilę).')}catch(e){$('emotionStatus').textContent='Nie udało się: '+e.message}}
-$('stop').onclick=async()=>{try{await request('/api/emotion','POST','reset');selected='';document.querySelectorAll('.emotion').forEach(b=>b.classList.remove('selected'));$('emotionStatus').textContent='Emocja wyłączona.'}catch(e){$('emotionStatus').textContent=e.message}};
-function normalize(s){s=s.trim().replace(/\s+/g,' ').replace(/\s+([.,!?;:])/g,'$1').replace(/([.,!?;:])(?=\S)/g,'$1 ');if(!s)return '';s=s[0].toLocaleUpperCase('pl-PL')+s.slice(1);if(!/[.!?…]$/.test(s))s+='.';return s}
+async function changeMood(mood,name,button){
+  const requestId=++emotionRequest, voice=$('voiceMood').checked;
+  const cmd=mood+'|'+($('sticky').checked?'1':'0');
+  const delayedSpeech=()=>setTimeout(async()=>{
+    if(requestId!==emotionRequest)return;
+    try{await request('/api/say','POST',moodPhrases[mood]);$('emotionStatus').textContent='🔊 Ala dostała pasujące słowa.';}
+    catch(e){$('emotionStatus').textContent='Animacja działa, ale mówienie nie wyszło: '+e.message;}
+  },5200);
+  try{
+    if(voice&&supportsMoodVoice){
+      try{await request('/api/emotion','POST',cmd+'|1');}
+      catch(e){
+        if(!String(e.message).includes('Niepoprawna emocja'))throw e;
+        supportsMoodVoice=false;
+        await request('/api/emotion','POST',cmd);
+        delayedSpeech();
+      }
+    }else{
+      await request('/api/emotion','POST',cmd);
+      if(voice)delayedSpeech();
+    }
+    selected=mood;
+    document.querySelectorAll('.emotion').forEach(b=>b.classList.toggle('selected',b===button));
+    $('emotionStatus').textContent='Za 5 sekund: '+name+(voice?' + głos Ali.':' (bez mówienia).');
+  }catch(e){$('emotionStatus').textContent='Nie udało się: '+e.message}
+}
+$('stop').onclick=async()=>{emotionRequest++;try{await request('/api/emotion','POST','reset');selected='';document.querySelectorAll('.emotion').forEach(b=>b.classList.remove('selected'));$('emotionStatus').textContent='Emocja wyłączona.'}catch(e){$('emotionStatus').textContent=e.message}};
+function normalize(s){
+  s=s.trim().replace(/\s+/g,' ').replace(/\s+([.,!?;:])/g,'$1').replace(/([.,!?;:])(?=\S)/g,'$1 ');
+  if(!s)return '';
+  s=s.replace(/\bczesc\b/giu,'cześć').replace(/\bmaviej\b/giu,'Maciej').replace(/\bmaciej\b/giu,'Maciej');
+  s=s[0].toLocaleUpperCase('pl-PL')+s.slice(1);
+  if(/^cześć\s+Maciej[.!?]?$/iu.test(s))return 'Cześć, Maciej!';
+  if(!/[.!?…]$/.test(s))s+='.';
+  return s;
+}
 function preview(){const s=normalize($('sentence').value);$('preview').textContent=s||'Wpisz najpierw zdanie.';return s}
 $('correct').onclick=()=>{const s=preview();if(s)$('sentence').value=s};
 let poll=null, nextHello=false;
-$('sentence').addEventListener('input',()=>{$('typed').textContent='Napisane: '+($('sentence').value||'(jeszcze nic)')});
+$('sentence').addEventListener('input',()=>{
+  $('typed').textContent='Napisane: '+($('sentence').value||'(jeszcze nic)');
+  preview();
+});
 $('sentence').addEventListener('focus',()=>setTimeout(()=>$('sentence').scrollIntoView({block:'center',behavior:'smooth'}),280));
 function startReplyPolling(){
   if(poll)clearInterval(poll);

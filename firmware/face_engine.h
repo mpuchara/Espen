@@ -148,6 +148,47 @@ inline void AnimateEmotionIntro(Mood mood,uint32_t age,Pose& p) {
       default:break;
     }
 }
+// Secondary, repeating micro-animations keep a selected emotion alive after
+// its entrance. Pure pose arithmetic: no task, allocation or extra audio.
+inline void AnimateEmotionLoop(Mood mood,uint32_t age,Pose& p) {
+    if(age<850)return;
+    const uint32_t t=age-850;
+    switch(mood) {
+      case Mood::Love: {
+        // Four phases: bashful blush, floating hearts, heart-eyes, shy wink.
+        const uint32_t cycle=t%7200;
+        if(cycle<1600) {
+            p.tilt=-6;p.eye_h=30;p.smile=17;p.accent=Accent::Blush;
+        } else if(cycle<3500) {
+            p.tilt=(cycle/380)%2?6:-6;p.eye_h=50;
+            p.smile=25;p.accent=Accent::Heart;
+        } else if(cycle<5300) {
+            p.eye_h=41;p.smile=26;p.accent=Accent::Heart;
+            p.asym=cycle<4200?0:22;
+        } else {
+            p.tilt=-9;p.eye_h=29;p.asym=cycle<6100?44:0;
+            p.smile=19;p.accent=Accent::Blush;
+        }
+        break;
+      }
+      case Mood::Happy: p.tilt=(t/620)%2?5:-4;break;
+      case Mood::Laugh: p.tilt=(t/170)%2?6:-6;break;
+      case Mood::Sad: p.tilt=-10-static_cast<int>((t/800)%3);break;
+      case Mood::Surprise: p.eye_h=(t/900)%2?63:72;break;
+      case Mood::Angry: p.brow=(t/450)%2?24:18;break;
+      case Mood::Thinking: p.asym=(t/950)%2?20:8;break;
+      case Mood::Sleepy: p.eye_h=(t/1300)%2?6:11;break;
+      case Mood::Confident: p.tilt=(t/1250)%2?6:-3;break;
+      case Mood::Shy: p.tilt=(t/1050)%2?-9:2;break;
+      case Mood::Confused: p.asym=(t/950)%2?36:15;break;
+      case Mood::Fear: p.eye_h=(t/560)%2?61:69;break;
+      case Mood::Wink: p.asym=(t/1400)%2?52:8;break;
+      case Mood::Bored: p.eye_h=(t/1650)%2?14:20;break;
+      case Mood::Excited: p.tilt=(t/240)%2?11:-11;break;
+      case Mood::Neutral: break;
+      default:break;
+    }
+}
 // A visible tear starts only after the sad eyes and mouth have settled.
 // One drop glides down the cheek, disappears and restarts after a short pause.
 // Calculated from animation age: deterministic, no separate timer or allocations.
@@ -379,6 +420,7 @@ public:
         if(mood!=animated_mood_){animated_mood_=mood;animated_since_=now;}
         Pose p=Expression(mood);
         AnimateEmotionIntro(mood,now-animated_since_,p);
+        AnimateEmotionLoop(mood,now-animated_since_,p);
         // A goodnight wish is a friendly sleepy face, not a command to
         // interrupt ongoing speech or listening.
         if(social_==Social::Goodnight && phase==Phase::Speaking) {
@@ -559,8 +601,10 @@ public:
         }
         f.bob=Approach(f.bob,bob,std::max(1,speed));f.mood=mood;f.asleep=asleep;
         const bool reply_hearts=reply_active&&reply_==ReplyBeat::Warmth;
-        f.hearts=social_==Social::Affection||(social_==Social::Comfort&&now-social_at_>=650)||reply_hearts;
-        f.heart_age=f.hearts?(reply_hearts?now-reply_at_:now-social_at_)%1950:0;
+        f.hearts=mood==Mood::Love||social_==Social::Affection||
+            (social_==Social::Comfort&&now-social_at_>=650)||reply_hearts;
+        f.heart_age=f.hearts?(reply_hearts?now-reply_at_:
+            mood==Mood::Love?now-animated_since_:now-social_at_)%1950:0;
         f.effect=affinity_.Effect(now);f.effect_age=affinity_.Age(now);
         f.tear=FallingTear(mood,now-animated_since_,p.accent==Accent::Tear&&!asleep);
         return f;

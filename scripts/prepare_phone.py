@@ -53,8 +53,11 @@ void Application::EspenSayText(const std::string& text, const std::string& robot
                 return;
             }
             std::string prompt =
-                "Masz imie " + robot_name + ". Popraw pisownie i gramatyke zdania. "
-                "Wypowiedz wylacznie poprawiona wersje po polsku, bez komentarzy. Zdanie: " + text;
+                "Masz imie " + robot_name + ". To tekst z pilota telefonu. "
+                "Popraw wszystkie literowki, polskie znaki, gramatyke i interpunkcje calego tekstu. "
+                "Popraw rowniez oczywiste literowki w imionach, np. maviej na Maciej. "
+                "Zachowaj sens i kazda czesc tekstu. Nie streszczaj, nie dodawaj wyjasnien. "
+                "Wypowiedz wylacznie pelna, poprawiona wersje po polsku: " + text;
             protocol_->SendWakeWordDetected(prompt);
             play_popup_on_listening_ = false;
             SetListeningMode(kListeningModeAutoStop);
@@ -108,17 +111,24 @@ remote = '''if(seq!=seen_mood_) {seen_mood_=seq;engine_.Emotion(pending_mood_.lo
         // the FaceEngine; no server task may directly draw or animate.
         static uint32_t phone_seq = 0, phone_due = 0;
         static int phone_mood = -1;
-        static bool phone_sticky = false;
+        static bool phone_sticky = false, phone_voice = false;
         int incoming_mood = -1;
-        bool incoming_sticky = false;
-        if (espen::PhonePanel::Instance().PollEmotion(phone_seq, incoming_mood, incoming_sticky)) {
+        bool incoming_sticky = false, incoming_voice = false;
+        if (espen::PhonePanel::Instance().PollEmotion(phone_seq, incoming_mood, incoming_sticky, incoming_voice)) {
             phone_mood = incoming_mood;
             phone_sticky = incoming_sticky;
+            phone_voice = incoming_voice;
             phone_due = now + 5000;
             if (phone_mood < 0) engine_.Preview(espen::Mood::Neutral, now);
         }
         if (phone_mood >= 0 && static_cast<int32_t>(now-phone_due) >= 0) {
             engine_.Preview(static_cast<espen::Mood>(phone_mood), now);
+            // Speak ONCE for a selected mood. Sticky preview may repeat,
+            // but it must not endlessly restart cloud TTS or interrupt speech.
+            if (phone_voice) {
+                espen::PhonePanel::Instance().TrySpeakMood(phone_mood);
+                phone_voice = false;
+            }
             if (phone_sticky) phone_due = now + 2500; // keep preview alive until X
             else phone_mood = -1; // one transient 4.2-second preview
         }'''

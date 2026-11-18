@@ -29,6 +29,8 @@ class PhonePanel {
     std::atomic<uint32_t> emotion_seq_{0};
     std::atomic<int> emotion_value_{-1};
     std::atomic<bool> emotion_sticky_{false};
+    std::atomic<bool> emotion_speak_{false};
+    std::atomic<uint32_t> phrase_count_{0};
     std::atomic<int64_t> last_say_us_{0};
 
     PhonePanel() = default;
@@ -72,6 +74,37 @@ class PhonePanel {
         for (auto* id : allowed) if (mood == id) return true;
         return false;
     }
+    // Friendly, child-appropriate phrases. These complement the animated
+    // expression; romantic dependency or exclusive affection is never implied.
+    static const char* MoodPhrase(Mood mood, uint32_t variant) {
+        switch (mood) {
+          case Mood::Love: {
+            static constexpr const char* phrases[] = {
+                "Ale miło cię widzieć! Posyłam ci całe mnóstwo serduszek.",
+                "Jesteś super! Bardzo lubię nasze wspólne zabawy.",
+                "Zrobiło mi się ciepło na serduszku. Dziękuję za uśmiech!",
+                "Ojej, rumienię się! Miło, że do mnie zaglądasz."
+            };
+            return phrases[variant%4];
+          }
+          case Mood::Happy: return variant%2?"Hurra! Dziś mam świetny humor.":"Cześć! Uśmiech od ucha do ucha!";
+          case Mood::Laugh: return variant%2?"Hihi! To był naprawdę zabawny moment.":"Ha, ha! Rozśmieszyłeś mnie!";
+          case Mood::Sad: return variant%2?"Trochę mi smutno. Opowiesz mi coś miłego?":"Oj, przydałby mi się teraz uśmiech.";
+          case Mood::Surprise: return variant%2?"Ojej! Tego się nie spodziewałam!":"Łał! Ale niespodzianka!";
+          case Mood::Angry: return variant%2?"Oj, zdenerwowałam się! Już liczę do trzech.":"Grrr! Ale spokojnie, zaraz mi przejdzie.";
+          case Mood::Thinking: return variant%2?"Hmm, muszę pomyśleć.":"Mam pomysł! A może spróbujemy inaczej?";
+          case Mood::Sleepy: return variant%2?"Ziew! Robię się śpiąca.":"Ale mi się oczy zamykają. Dobranoc!";
+          case Mood::Confident: return variant%2?"Dam radę! Jestem gotowa na wyzwanie.":"No jasne! Spróbujmy razem.";
+          case Mood::Shy: return variant%2?"Oj, aż się zarumieniłam.":"Ale mi miło! Trochę się zawstydziłam.";
+          case Mood::Confused: return variant%2?"Chyba się troszkę pogubiłam.":"Hmm, czegoś tu nie rozumiem.";
+          case Mood::Fear: return variant%2?"Ojej! Trochę mnie przestraszyłeś.":"Uff! Ale mnie zaskoczyło!";
+          case Mood::Wink: return variant%2?"Psst! Mam dla ciebie oczko.":"Mrugam do ciebie! To nasz mały żart.";
+          case Mood::Bored: return variant%2?"Trochę mi się nudzi. Wymyślimy zabawę?":"Hej, może czas na ciekawą zagadkę?";
+          case Mood::Excited: return variant%2?"Jupi! Nie mogę się doczekać!":"Hurra! Ależ to ekscytujące!";
+          case Mood::Neutral: return variant%2?"Cześć! Jestem gotowa do rozmowy.":"Miło cię widzieć. Co dziś robimy?";
+          default: return nullptr;
+        }
+    }
     static esp_err_t Index(httpd_req_t* req) {
         httpd_resp_set_type(req, "text/html; charset=utf-8");
         httpd_resp_set_hdr(req, "Cache-Control", "no-store");
@@ -109,16 +142,22 @@ class PhonePanel {
         if (!ReadBody(req, body, 32)) return Respond(req, 400, "Niepoprawne polecenie.");
         if (body == "reset") {
             self.emotion_value_.store(-1, std::memory_order_relaxed);
+            self.emotion_speak_.store(false, std::memory_order_relaxed);
             self.emotion_seq_.fetch_add(1, std::memory_order_release);
             return Respond(req, 200, "OK");
         }
         const auto sep = body.find('|');
-        if (sep == std::string::npos || sep + 2 != body.size() ||
-            (body.back() != '0' && body.back() != '1')) return Respond(req, 400, "Niepoprawna emocja.");
+        if (sep == std::string::npos) return Respond(req, 400, "Niepoprawna emocja.");
+        // Backward-compatible mood|sticky, plus mood|sticky|voice.
+        const auto options = body.substr(sep + 1);
+        if (options != "0" && options != "1" &&
+            options != "0|1" && options != "1|1")
+            return Respond(req, 400, "Niepoprawna emocja.");
         const auto id = body.substr(0, sep);
         if (!ApprovedMood(id)) return Respond(req, 400, "Nieznana emocja.");
         self.emotion_value_.store(static_cast<int>(ParseMood(id.c_str())), std::memory_order_relaxed);
-        self.emotion_sticky_.store(body.back() == '1', std::memory_order_relaxed);
+        self.emotion_sticky_.store(options[0] == '1', std::memory_order_relaxed);
+        self.emotion_speak_.store(options.size() == 3, std::memory_order_relaxed);
         self.emotion_seq_.fetch_add(1, std::memory_order_release);
         return Respond(req, 200, "OK");
     }
@@ -251,12 +290,32 @@ public:
         add("/api/reply", HTTP_GET, Reply);
         ESP_LOGI("AlaPhone", "Phone panel listening on port 80");
     }
-    bool PollEmotion(uint32_t& seen, int& mood, bool& sticky) {
+    bool PollEmotion(uint32_t& seen, int& mood, bool& sticky, bool& speak) {
         const uint32_t seq = emotion_seq_.load(std::memory_order_acquire);
         if (seq == seen) return false;
         seen = seq;
         mood = emotion_value_.load(std::memory_order_relaxed);
         sticky = emotion_sticky_.load(std::memory_order_relaxed);
+        speak = emotion_speak_.load(std::memory_order_relaxed);
+        return true;
+    }
+    // Called once at the five-second animation deadline by the display tick.
+    // All Xiaozhi work is scheduled on the Application task, never LVGL.
+    bool TrySpeakMood(int mood) {
+        auto& app = Application::GetInstance();
+        if (app.GetDeviceState() != kDeviceStateIdle) return false;
+        const int64_t now = esp_timer_get_time();
+        const int64_t previous = last_say_us_.load(std::memory_order_acquire);
+        if (previous && now - previous < 7000000) return false;
+        const auto seq = phrase_count_.fetch_add(1, std::memory_order_relaxed);
+        const char* phrase = MoodPhrase(static_cast<Mood>(mood), seq);
+        if (!phrase) return false;
+        last_say_us_.store(now, std::memory_order_release);
+        {
+            std::lock_guard<std::mutex> lock(reply_lock_);
+            last_reply_.clear();
+        }
+        app.EspenSayText(phrase, Name());
         return true;
     }
     void RememberReply(const char* text) {
