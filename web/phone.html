@@ -19,9 +19,14 @@ button{border:0;background:#79e3d4;color:#062331;border-radius:13px;padding:13px
 small{display:block;color:#96aabe;margin-top:9px;line-height:1.5}.status{color:#a9dece;min-height:22px;font-size:14px;margin-top:11px}
 </style></head>
 <body><main>
-<div class="top"><div><div class="eyebrow">HOMEMIND · ESPEN</div><h1>💙 Pilot Ali</h1></div><span id="connection">Łączenie…</span></div>
+<div class="top"><div><div class="eyebrow">HOMEMIND · ESPEN</div><h1 id="pilot-title">💙 Pilot Ali</h1></div><span id="connection">Łączenie…</span></div>
 <section><h2>🔐 Połącz z Alą</h2><p>Telefon i Ala muszą być w tej samej sieci Wi-Fi. Kod zobaczysz na ekranie Ali w Ustawieniach.</p>
 <div class="inline"><input id="pin" type="password" maxlength="8" inputmode="numeric" autocomplete="off" placeholder="8-cyfrowy kod z Ali"><button id="savePin">Połącz</button></div><div id="authStatus" class="status" role="status"></div>
+</section>
+<section><h2>✏️ Zmień imię robota</h2>
+<p>Wybierz, jak ma się nazywać robot. Zmiana zostanie zapisana na Ali, także po restarcie. Nie zmienia wyuczonego hasła wybudzania.</p>
+<div class="inline"><input id="robot-name" type="text" maxlength="48" autocomplete="off" placeholder="Nowe imię, np. Zosia"><button id="save-name">Zapisz</button></div>
+<div id="name-status" class="status" role="status">Połącz z robotem, aby odczytać jego imię.</div>
 </section>
 <section><h2>✍️ Co Ala ma powiedzieć?</h2><p>Wpisz tekst. Xiaozhi może poprawić go i wypowiedzieć albo wygenerować odpowiedź na Twoje pytanie.</p>
 <div id="typed" aria-label="Wpisany tekst">Napisane: (jeszcze nic)</div>
@@ -50,7 +55,42 @@ async function request(path,method='GET',body){const ctrl=new AbortController();
 const r=await fetch(path,{method,body,cache:'no-store',signal:ctrl.signal,headers:{'X-Ala-Pin':pin,...(body===undefined?{}:{'Content-Type':'text/plain;charset=UTF-8'})}});
 const message=await r.text();if(!r.ok)throw Error(r.status===401?'Błędny kod. Sprawdź kod na Ali.':(message||'Błąd połączenia '+r.status));return message;
 }finally{clearTimeout(timer)}}
-async function verify(){try{await request('/api/status');$('connection').textContent='● Ala połączona';$('authStatus').textContent='Połączono. Możesz sterować Alą.'}catch(e){$('connection').textContent='● Brak dostępu';$('authStatus').textContent=e.message}}
+let currentName='Ala';
+function showRobotName(name){
+  currentName=name;
+  $('pilot-title').textContent='💙 Pilot: '+name;
+  $('robot-name').value=name;
+}
+async function verify(){
+  try{
+    await request('/api/status');
+    const name=await request('/api/name');
+    showRobotName(name);
+    $('connection').textContent='● '+name+' połączona';
+    $('authStatus').textContent='Połączono z robotem '+name+'.';
+    $('name-status').textContent='Aktualne imię: '+name;
+  }catch(e){
+    $('connection').textContent='● Brak dostępu';
+    $('authStatus').textContent=e.message;
+    $('name-status').textContent='Sprawdź Wi-Fi, kod i wersję oprogramowania Ali.';
+  }
+}
+$('save-name').onclick=async()=>{
+  const name=$('robot-name').value.trim();
+  if(!/^[A-Za-zĄąĆćĘęŁłŃńÓóŚśŹźŻż]+(?:[ -][A-Za-zĄąĆćĘęŁłŃńÓóŚśŹźŻż]+)*$/u.test(name)||
+      [...name].filter(c=>/[A-Za-zĄąĆćĘęŁłŃńÓóŚśŹźŻż]/u.test(c)).length>24||
+      [...name].filter(c=>/[A-Za-zĄąĆćĘęŁłŃńÓóŚśŹźŻż]/u.test(c)).length<2){
+    $('name-status').textContent='Użyj 2–24 liter, ewentualnie spacji lub łącznika.';return;
+  }
+  $('save-name').disabled=true;
+  try{
+    await request('/api/name','POST',name);
+    const confirmed=await request('/api/name');
+    showRobotName(confirmed);
+    $('name-status').textContent='✅ Zapisano imię: '+confirmed;
+  }catch(e){$('name-status').textContent='Nie udało się zmienić imienia: '+e.message}
+  finally{$('save-name').disabled=false}
+};
 $('savePin').onclick=()=>{pin=$('pin').value.trim();localStorage.setItem('alaPhonePin',pin);verify()};
 async function changeMood(mood,name,button){try{await request('/api/emotion','POST',mood+'|'+($('sticky').checked?'1':'0'));selected=mood;document.querySelectorAll('.emotion').forEach(b=>b.classList.toggle('selected',b===button));$('emotionStatus').textContent='Za 5 sekund: '+name+($('sticky').checked?' (do naciśnięcia X).':' (na chwilę).')}catch(e){$('emotionStatus').textContent='Nie udało się: '+e.message}}
 $('stop').onclick=async()=>{try{await request('/api/emotion','POST','reset');selected='';document.querySelectorAll('.emotion').forEach(b=>b.classList.remove('selected'));$('emotionStatus').textContent='Emocja wyłączona.'}catch(e){$('emotionStatus').textContent=e.message}};
