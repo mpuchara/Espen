@@ -5,11 +5,15 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.graphics.Color;
+import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
 import android.text.InputFilter;
 import android.text.InputType;
+import android.text.Editable;
+import android.text.TextWatcher;
+import android.view.inputmethod.InputMethodManager;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
@@ -41,6 +45,7 @@ public final class MainActivity extends Activity {
     private Button speakButton;
     private int pollCount = 0;
     private boolean polling = false;
+    private boolean nextHello = false;
     private final String[] moods = {"happy","laugh","sad","surprise","angry","thinking","sleepy","love",
             "confident","shy","confused","fear","wink","bored","excited","neutral"};
     private final String[] titles = {"😄 Radość","😂 Śmiech","😢 Smutek","😲 Zdziwienie",
@@ -136,23 +141,76 @@ public final class MainActivity extends Activity {
 
         LinearLayout speech=card(root);
         speech.addView(text("✍️ Co Ala ma powiedzieć?",20,LIGHT,true));
-        speech.addView(text("Wpisz zdanie. Przycisk poprawi podstawowe błędy zapisu, a Xiaozhi poprosi Alę o pełną korektę i wypowiedzenie tekstu.",14,MUTED,false));
+        speech.addView(text("Wpisz tekst. Możesz poprawić jego zapis, poprosić Alę o wypowiedzenie go albo zapytać Xiaozhi o odpowiedź.",14,MUTED,false));
+        final TextView typedPreview = text("Napisane: (jeszcze nic)",16,LIGHT,false);
+        speech.addView(typedPreview);
         sentence=edit("Np. czesc wszystkim, jak sie macie", "",InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
         sentence.setMinLines(3);
         sentence.setMaxLines(7);
         sentence.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
         sentence.setFilters(new InputFilter[]{new InputFilter.LengthFilter(220)});
+        sentence.setTextSize(17);
         speech.addView(sentence);
+        sentence.addTextChangedListener(new TextWatcher() {
+            public void beforeTextChanged(CharSequence s,int start,int count,int after) {}
+            public void onTextChanged(CharSequence s,int start,int before,int count) {
+                typedPreview.setText(s.length()==0 ? "Napisane: (jeszcze nic)" : "Napisane: "+s);
+            }
+            public void afterTextChanged(Editable e) {}
+        });
+        // When the IME opens, move the editable area into the resized viewport;
+        // the previous long emotions grid left it hidden under the keyboard.
+        sentence.setOnFocusChangeListener((v,focused)->{
+            if(focused)main.postDelayed(()->sentence.requestRectangleOnScreen(
+                new Rect(0,0,sentence.getWidth(),sentence.getHeight()+dp(28)),false),300);
+        });
         Button correct=action("✨ Wstępnie popraw zdanie",false);
         speech.addView(correct);
         correct.setOnClickListener(v -> sentence.setText(normalize(sentence.getText().toString())));
         speakButton=action("🔊 Niech Ala powie",true);
         speech.addView(speakButton);
+        final Button chatButton = action("💬 Zapytaj Alę (Xiaozhi)",true);
+        speech.addView(chatButton);
         speechStatus=text("Ala musi być połączona i gotowa do rozmowy.",14,ACCENT,false);
         speech.addView(speechStatus);
         speech.addView(text("Odpowiedź Ali",16,LIGHT,true));
         reply=text("Jeszcze nic nie powiedziała.",15,MUTED,false);
         speech.addView(reply);
+        chatButton.setOnClickListener(v -> {
+            final boolean hello=nextHello;
+            final String textToSend=hello ? "Cześć." : normalize(sentence.getText().toString());
+            if (!hello && textToSend.isEmpty()) {
+                speechStatus.setText("Wpisz pytanie dla Ali.");return;
+            }
+            if(textToSend.contains("\\"") || textToSend.contains("\\\\") ||
+               textToSend.contains("\\n") || textToSend.contains("\\r") ||
+               textToSend.getBytes(StandardCharsets.UTF_8).length>400) {
+                speechStatus.setText("Skróć tekst i usuń cudzysłowy oraz nowe linie.");return;
+            }
+            if(!hello)sentence.setText(textToSend);
+            typedPreview.setText("Wysłano do Xiaozhi: "+textToSend);
+            sentence.clearFocus();
+            InputMethodManager keyboard=(InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
+            if(keyboard!=null)keyboard.hideSoftInputFromWindow(sentence.getWindowToken(),0);
+            polling=false;pollCount=0;
+            speakButton.setEnabled(false);chatButton.setEnabled(false);
+            speechStatus.setText(hello ? "Proszę Alę o samo Cześć..." : "Pytam Xiaozhi o odpowiedź...");
+            reply.setText("Czekam na odpowiedź Ali...");
+            call("/api/chat","POST",hello?"hello":"ask|"+textToSend,
+                result -> {
+                    nextHello=!hello;
+                    chatButton.setText(nextHello ? "👋 Powiedz tylko: Cześć" : "💬 Zapytaj Alę (Xiaozhi)");
+                    speakButton.setEnabled(true);chatButton.setEnabled(true);
+                    speechStatus.setText(hello ? "✅ Wysłano prośbę o powitanie." : "✅ Pytanie wysłane do Xiaozhi.");
+                    polling=true;pollReply();
+                    scroll.post(()->scroll.smoothScrollTo(0,speech.getTop()+reply.getTop()));
+                },
+                error -> {
+                    speakButton.setEnabled(true);chatButton.setEnabled(true);
+                    speechStatus.setText("❌ "+error);
+                    reply.setText("Nie udało się wysłać wiadomości.");
+                });
+        });
         speakButton.setOnClickListener(v -> {
             String content=normalize(sentence.getText().toString());
             if (content.isEmpty()) {speechStatus.setText("Wpisz najpierw zdanie.");return;}
@@ -164,21 +222,29 @@ public final class MainActivity extends Activity {
             polling=false;
             pollCount=0;
             speakButton.setEnabled(false);
+            chatButton.setEnabled(false);
+            typedPreview.setText("Wysłano do Xiaozhi: "+content);
+            sentence.clearFocus();
+            InputMethodManager keyboard=(InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
+            if(keyboard!=null)keyboard.hideSoftInputFromWindow(sentence.getWindowToken(),0);
             speechStatus.setText("Wysyłam zdanie...");
             reply.setText("Oczekuję na odpowiedź Ali...");
             call("/api/say","POST",content,
                 result -> {
-                    speakButton.setEnabled(true);
+                    speakButton.setEnabled(true);chatButton.setEnabled(true);
                     speechStatus.setText("✅ Wysłano. Xiaozhi przygotowuje wypowiedź.");
                     polling=true;
                     pollReply();
                 },
                 error -> {
-                    speakButton.setEnabled(true);
+                    speakButton.setEnabled(true);chatButton.setEnabled(true);
                     speechStatus.setText("❌ "+error);
                     reply.setText("Nie wysłano zdania.");
                 });
         });
+        // Put writing before the 16 large emotion buttons on compact phones.
+        root.removeView(speech);
+        root.addView(speech,root.indexOfChild(faces));
         root.addView(text("Pilot lokalny • wymagane Wi-Fi i firmware Ali z obsługą panelu. Połączenie HTTP nie jest szyfrowane — używaj prywatnej sieci.",12,MUTED,false));
     }
 
