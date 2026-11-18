@@ -98,7 +98,7 @@ $('chat-toggle').onclick=async()=>{
 $('say').onclick=async()=>{
   const s=preview();
   if(!s){$('speechStatus').textContent='Wpisz zdanie.';return;}
-  if(/[\\x00-\\x1f"\\\\]/.test(s)||new TextEncoder().encode(s).length>400){$('speechStatus').textContent='Usuń cudzysłowy, ukośniki i nowe linie.';return;}
+  if(/[\x00-\x1f"\\]/.test(s)||new TextEncoder().encode(s).length>400){$('speechStatus').textContent='Usuń cudzysłowy, ukośniki i nowe linie.';return;}
   $('say').disabled=true;$('chat-toggle').disabled=true;
   $('sentence').blur();
   $('typed').textContent='Wysłano do Xiaozhi: '+s;
