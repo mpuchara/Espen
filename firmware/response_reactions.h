@@ -12,7 +12,7 @@ namespace espen {
 enum class ReplyBeat : uint8_t {
     None, Celebrate, Giggle, Astonished, Oops, Whisper, Puzzle, Warmth, Magic,
     Dance, EyeRoll, Victory, Eureka, Suspense, Sneaky, Sadness, Sleep,
-    Detective, Robot, Drumroll, Agree
+    Detective, Robot, Drumroll, Agree, Blush
 };
 
 inline ReplyBeat ClassifyReplyBeat(std::string_view text) {
@@ -26,6 +26,12 @@ inline ReplyBeat ClassifyReplyBeat(std::string_view text) {
         return words.find(needle) != std::string::npos;
     };
     // Keep specific, unambiguous phrases ahead of generic excitement.
+    // A shy response to a compliment; never infer embarrassment from user STT.
+    if (has("zawstydzasz mnie") || has("ale mnie zawstydziles") ||
+        has("ale mnie zawstydzilas") || has("rumienie sie") ||
+        has("zarumienilam sie") || has("az mi procesor sie rumieni") ||
+        has("ojej jaki komplement") || has("ojej dziekuje za komplement"))
+        return ReplyBeat::Blush;
     if (has("ups") || has("oops") || has("moja pomylka") ||
         has("ojej pomylilem") || has("ojej pomylilam"))
         return ReplyBeat::Oops;
@@ -113,6 +119,7 @@ inline EmotionalCue ReplyCue(ReplyBeat beat) {
         case ReplyBeat::Robot: return EmotionalCue::Robot;
         case ReplyBeat::Drumroll: return EmotionalCue::Drumroll;
         case ReplyBeat::Agree: return EmotionalCue::Agree;
+        case ReplyBeat::Blush: return EmotionalCue::Shy;
         default: return EmotionalCue::Count;
     }
 }
