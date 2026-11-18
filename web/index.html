@@ -9,32 +9,47 @@ main{max-width:720px;margin:auto} h1{font-size:clamp(2.7rem,9vw,5rem);letter-spa
 </style></head><body><main>
 <span class="tag">HOMEMIND / ESPEN · 0.2.15 EXPERIMENTAL</span>
 <h1>Espen.</h1><p>Twój asystent głosowy AI. Mów po polsku, czytaj odpowiedzi na ekranie.</p>
-<section><h2>💙 Szukasz kodu do aplikacji Pilot Ali?</h2>
-<p>Nowy <b>Espen 0.2.15</b> zawiera pilota telefonu, 8-cyfrowy kod i emocje.
-Po instalacji znajdziesz przycisk <b>Ustawienia → Pilot telefonu / kod</b>.
-Jeżeli Ala poprawnie się uruchamia, wybierz zwykłą aktualizację; zachowuje Wi-Fi i Xiaozhi.
-Jeżeli masz <code>invalid header: 0xffffffff</code>, wybierz pełne przywracanie poniżej.</p>
-<p><a href="pilot/" style="display:inline-block;padding:14px 20px;border-radius:12px;background:#78e1cb;color:#08202a;text-decoration:none;font-weight:800">Otwórz instalator Ala Pilot</a></p></section>
-<section style="border-color:#f3c579"><h2>🛠️ Ala nie startuje? (invalid header / bootloop)</h2>
-<p>Po nieudanej aktualizacji <b>Ala Pilot</b> użyj osobnej strony <b>Pełne przywracanie Ali</b>.
-Wgrywa kompletny firmware z kodem pilota, w tym bootloader, partycje, aplikację i zasoby.
-<b>Może skasować zapisane Wi-Fi i parowanie Xiaozhi.</b></p>
-<p><a href="pilot/" style="display:block;text-align:center;background:#78e1cb;color:#08202a;border-radius:12px;padding:15px 20px;font-weight:800;text-decoration:none">🔧 Otwórz przywracanie Ala Pilot (PEŁNE)</a></p>
-<small>Instalacja wyłącznie na GUITION ESP32-P4 rev1, flash 16 MB. Wymaga połączenia USB z portem P4 i przeglądarki z obsługą Web Serial.</small>
+<section style="border-color:#78e1cb">
+<h2>🔧 Pełna instalacja Ali 0.2.15</h2>
+<p>To główny instalator Espen z pilotem telefonu. Wgrywa <b>kompletny obraz firmware</b> od adresu <code>0x0</code>:
+bootloader ESP32-P4, tablicę partycji, aplikację i zasoby.
+To także właściwa opcja po błędzie <code>invalid header: 0xffffffff</code>.</p>
+<p class="warning"><b>Uwaga:</b> pełna instalacja może usunąć zapisane Wi-Fi, konfigurację i parowanie Xiaozhi.
+Po wgraniu może być potrzebne ich ponowne ustawienie.
+Tylko dla <b>GUITION JC4880P443C_I_W(_Y), ESP32-P4 rev1, flash 16 MB</b>.
+Przed podłączeniem zabezpiecz odsłonięte przewody przy głośniku.</p>
+<p id="status" role="status" aria-live="polite">Sprawdzanie pełnego obrazu firmware…</p>
+<esp-web-install-button id="full-installer" manifest="manifest-full.json" hidden>
+<button slot="activate">🔌 Pełna instalacja Ali 0.2.15</button>
+<span slot="unsupported">Ta przeglądarka nie obsługuje wgrywania USB. Otwórz stronę w Chrome lub Edge na komputerze.</span>
+<span slot="not-allowed">Otwórz instalator przez HTTPS.</span>
+</esp-web-install-button>
+<p><a id="bin" href="espen.bin" hidden>Pobierz pełny firmware espen.bin</a> <a id="hash" href="espen.bin.sha256" hidden>· Suma SHA-256</a></p>
+<p><small>Podłącz kabel z przesyłaniem danych do portu <b>ESP32-P4</b> (nie C6).
+Jeśli portu nie widać, sprawdź kabel i tryb BOOT + RESET.
+Ta strona używa tylko pełnego obrazu; nie ma tu przycisku aktualizacji częściowej.</small></p>
 </section>
-<section><h2>Wgraj firmware</h2><p>GUITION JC4880P443C_I_W(_Y) • ESP32-P4 rev1 • 16 MB flash • ST7701S 480 × 800</p>
-<p class="warning">Masz już Espen 0.1.x? Wybierz <b>Aktualizuj Espen</b>. Zapisze tylko aplikację i zasoby, nie partycję NVS (Wi-Fi, UUID, konfiguracja Xiaozhi). Nie wybieraj kasowania pamięci. Jeśli masz Home-Buddy lub inne oprogramowanie, użyj pełnej instalacji, która może skasować wszystkie dane. Tylko dla tej płytki P4.</p>
-<p id="status" role="status">Sprawdzanie dostępności firmware…</p>
-<esp-web-install-button id="installer" manifest="manifest.json" hidden><button slot="activate">Aktualizuj Espen (zachowaj dane)</button><span slot="unsupported">Użyj Chrome lub Edge na komputerze.</span><span slot="not-allowed">Otwórz instalator przez HTTPS.</span></esp-web-install-button>
-<p><esp-web-install-button id="full-installer" manifest="manifest-full.json" hidden><button slot="activate">Pełna instalacja / pierwszy raz</button></esp-web-install-button></p>
-<p><a id="bin" href="espen.bin" hidden>Pełny obraz (.bin)</a> · <a id="hash" href="espen.bin.sha256" hidden>SHA-256</a> · <a href="espen-app.bin">Aplikacja</a> · <a href="espen-assets.bin">Zasoby</a> · <a href="espen-update.sha256">Sumy aktualizacji</a></p>
-<small>USB z transmisją danych. Jeśli port nie pojawia się, użyj BOOT + RESET. Wybierz port P4, nie C6.</small>
+<section>
+<h2>💙 Kod pilota telefonu</h2>
+<p>Po uruchomieniu otwórz <b>Ustawienia → Pilot telefonu / kod</b>.
+Ala pokaże swój adres IP i wygenerowany 8-cyfrowy kod do aplikacji Pilot Ali.
+Telefon i robot muszą być w tym samym Wi-Fi.</p>
 </section><section><h2>Diagnostyka · logi USB</h2><p>Aby sprawdzić Wi-Fi lub start Xiaozhi, otwórz port P4, a następnie naciśnij RESET na płytce. Skopiuj log od uruchomienia. Nie otwieraj portu jednocześnie w instalatorze.</p><p><button id="serial-open">Otwórz logi USB</button> <button id="serial-close" disabled>Zamknij</button> <button id="serial-copy">Kopiuj log</button></p><pre id="serial-log" style="white-space:pre-wrap;overflow:auto;height:280px;background:#07101a;padding:12px;border-radius:10px" aria-live="off"></pre>
 </section><section><h2>Uruchom rozmowę</h2><ol><li>Wybierz Ustawienia na ekranie Espen, wpisz SSID i hasło sieci 2,4 GHz, zapisz. Alternatywnie użyj hotspotu Espen i portalu konfiguracji.</li><li>Otwórz <a href="https://xiaozhi.me/console/agents">Xiaozhi Console</a>, wybierz agenta i dodaj urządzenie kodem z ekranu (Ustawienia → Xiaozhi / parowanie).</li><li>Dotknij Mów / Zakończ, wypowiedz pytanie, dotknij ponownie i przeczytaj odpowiedź.</li></ol><p>Głośnik nie jest potrzebny. Wypowiedzi są wysyłane do chmury Xiaozhi.</p></section>
 <p><a href="https://github.com/mpuchara/Espen">Kod i instrukcje</a> · <a href="https://github.com/mpuchara/Espen/actions">Status kompilacji</a></p>
 <script type="module">
 const status=document.getElementById("status");
-try{const r=await fetch("espen.bin",{method:"HEAD",cache:"no-store"});if(!r.ok || Number(r.headers.get("content-length"))<1024)throw Error("Firmware unavailable");status.textContent="Firmware dostępny. Wersja eksperymentalna – do testów sprzętowych.";for(const id of ["installer","full-installer","bin","hash"])document.getElementById(id).hidden=false;}catch(e){status.textContent="Firmware nie jest jeszcze dostępny. Sprawdź GitHub Actions.";}
+try {
+  const r=await fetch("espen.bin",{method:"HEAD",cache:"no-store"});
+  if(!r.ok)throw Error("Firmware niedostępne");
+  const size=r.headers.get("content-length");
+  if(size!==null && (Number(size)<9000000||Number(size)>16777216))
+    throw Error("Nieprawidłowy rozmiar pełnego firmware");
+  status.textContent="✅ Pełny firmware 0.2.15 jest dostępny.";
+  for(const id of ["full-installer","bin","hash"])document.getElementById(id).hidden=false;
+} catch(e) {
+  status.textContent="❌ Pełny obraz nie jest dostępny. Nie uruchamiaj instalacji.";
+}
 </script><script type="module">
 const output=document.getElementById("serial-log");
 const open=document.getElementById("serial-open"), close=document.getElementById("serial-close");
