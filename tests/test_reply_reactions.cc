@@ -4,6 +4,10 @@
 #include <iostream>
 using namespace espen;
 int main() {
+    assert(ClassifyReplyBeat("Ojej, mam motylki w procesorze!") == ReplyBeat::Lovestruck);
+    assert(ClassifyReplyBeat("Chyba się zakochałam!") == ReplyBeat::Lovestruck);
+    assert(ReplyCue(ReplyBeat::Lovestruck) == EmotionalCue::Heart);
+    assert(ClassifyReplyBeat("Ktoś się w tobie zakochał") != ReplyBeat::Lovestruck);
     FaceEngine affection;
     affection.SocialReact(Social::Affection, 10000);
     assert(affection.AffectionLevel(10000) == 1);
