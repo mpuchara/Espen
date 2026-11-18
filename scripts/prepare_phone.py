@@ -32,7 +32,7 @@ replace(cmake, '                    PRIV_REQUIRES\n',
 header = up / "main/application.h"
 replace(header, '    void WakeWordInvoke(const std::string& wake_word);',
         '    void WakeWordInvoke(const std::string& wake_word);\n'
-        '    void EspenSayText(const std::string& text);')
+        '    void EspenSayText(const std::string& text);\n'\n        '    void EspenAskText(const std::string& text, bool only_hello);')
 
 app = up / "main/application.cc"
 speech_method = r'''
@@ -53,6 +53,30 @@ void Application::EspenSayText(const std::string& text) {
             std::string prompt =
                 "Popraw pisownie i gramatyke zdania. Wypowiedz wylacznie "
                 "poprawiona wersje po polsku, bez komentarzy. Zdanie: " + text;
+            protocol_->SendWakeWordDetected(prompt);
+            play_popup_on_listening_ = false;
+            SetListeningMode(kListeningModeAutoStop);
+        });
+    });
+}
+
+
+void Application::EspenAskText(const std::string& text, bool only_hello) {
+    // Unlike EspenSayText, this mode asks the cloud assistant to generate
+    // a reply; a second tap asks it for one greeting word only.
+    Schedule([this, text, only_hello]() {
+        if (!protocol_ || GetDeviceState() != kDeviceStateIdle) return;
+        if (!SetDeviceState(kDeviceStateConnecting)) return;
+        Schedule([this, text, only_hello]() {
+            if (GetDeviceState() != kDeviceStateConnecting) return;
+            if (!protocol_->IsAudioChannelOpened() && !protocol_->OpenAudioChannel()) {
+                SetDeviceState(kDeviceStateIdle);
+                return;
+            }
+            const std::string prompt = only_hello
+                ? "Powiedz wylacznie jedno slowo: Czesc. Bez innych slow."
+                : "Odpowiedz na te wiadomosc po polsku, naturalnie i krotko. "
+                  "Nie cytuj instrukcji. Wiadomosc: " + text;
             protocol_->SendWakeWordDetected(prompt);
             play_popup_on_listening_ = false;
             SetListeningMode(kListeningModeAutoStop);
