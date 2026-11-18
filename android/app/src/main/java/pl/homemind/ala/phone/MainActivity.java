@@ -39,8 +39,8 @@ public final class MainActivity extends Activity {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private SharedPreferences prefs;
-    private EditText ip, pin, sentence;
-    private TextView connectStatus, moodStatus, speechStatus, reply;
+    private EditText ip, pin, sentence, robotName;
+    private TextView connectStatus, moodStatus, speechStatus, reply, nameStatus, titleView;
     private CheckBox sticky;
     private Button speakButton;
     private int pollCount = 0;
@@ -67,7 +67,8 @@ public final class MainActivity extends Activity {
         scroll.addView(root);
         setContentView(scroll);
 
-        root.addView(text("💙 Pilot Ali", 30, LIGHT, true));
+        titleView=text("💙 Pilot Ali", 30, LIGHT, true);
+        root.addView(titleView);
         root.addView(text("Sterowanie emocjami i głosem Ali • Wi-Fi", 14, MUTED, false));
 
         LinearLayout settings = card(root);
@@ -82,6 +83,29 @@ public final class MainActivity extends Activity {
         settings.addView(connect);
         connectStatus=text("Najpierw połącz się z Alą.",14,ACCENT,false);
         settings.addView(connectStatus);
+        settings.addView(text("✏️ Zmień imię robota",18,LIGHT,true));
+        settings.addView(text("Nowe imię zostanie zapisane na robocie. Hasło głosowego wybudzania pozostanie bez zmian.",13,MUTED,false));
+        robotName=edit("Nowe imię, np. Zosia","Ala",InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_CAP_WORDS);
+        robotName.setFilters(new InputFilter[]{new InputFilter.LengthFilter(48)});
+        settings.addView(robotName);
+        Button saveRobotName=action("💾 Zapisz imię",false);
+        settings.addView(saveRobotName);
+        nameStatus=text("Po połączeniu odczytam imię robota.",14,ACCENT,false);
+        settings.addView(nameStatus);
+        saveRobotName.setOnClickListener(v -> {
+            String candidate=robotName.getText().toString().trim();
+            if(!validRobotName(candidate)){
+                nameStatus.setText("Imię musi mieć 2–24 litery, może zawierać spację lub łącznik.");
+                return;
+            }
+            saveRobotName.setEnabled(false);
+            nameStatus.setText("Zapisuję...");
+            call("/api/name","POST",candidate,
+                ok->call("/api/name","GET",null,
+                    name->{showRobotName(name);nameStatus.setText("✅ Zapisano imię: "+name);saveRobotName.setEnabled(true);},
+                    error->{nameStatus.setText("Nie udało się odczytać imienia: "+error);saveRobotName.setEnabled(true);}),
+                error->{nameStatus.setText("❌ "+error);saveRobotName.setEnabled(true);});
+        });
         connect.setOnClickListener(v -> {
             String address=ip.getText().toString().trim();
             String code=pin.getText().toString().trim();
@@ -92,7 +116,9 @@ public final class MainActivity extends Activity {
             prefs.edit().putString("ip",address).putString("pin",code).apply();
             connectStatus.setText("Łączenie...");
             call("/api/status","GET",null,
-                 result -> connectStatus.setText("✅ Ala połączona!"),
+                 result -> call("/api/name","GET",null,
+                     name->{showRobotName(name);connectStatus.setText("✅ Połączono z robotem "+name+".");},
+                     error -> connectStatus.setText("❌ Nie odczytano imienia: "+error)),
                  error -> connectStatus.setText("❌ "+error));
         });
 
@@ -248,6 +274,18 @@ public final class MainActivity extends Activity {
         root.addView(text("Pilot lokalny • wymagane Wi-Fi i firmware Ali z obsługą panelu. Połączenie HTTP nie jest szyfrowane — używaj prywatnej sieci.",12,MUTED,false));
     }
 
+    private void showRobotName(String value) {
+        titleView.setText("💙 Pilot: "+value);
+        robotName.setText(value);
+        nameStatus.setText("Aktualne imię: "+value);
+    }
+    private static boolean validRobotName(String name) {
+        if (!name.matches("[A-Za-zĄąĆćĘęŁłŃńÓóŚśŹźŻż]+([ -][A-Za-zĄąĆćĘęŁłŃńÓóŚśŹźŻż]+)*"))
+            return false;
+        int letters=0;
+        for(int i=0;i<name.length();i++)if(Character.isLetter(name.charAt(i)))letters++;
+        return letters>=2 && letters<=24 && name.getBytes(StandardCharsets.UTF_8).length<=48;
+    }
     private static boolean validPrivateIp(String value) {
         if(!value.matches("(?:[0-9]{1,3}\\.){3}[0-9]{1,3}"))return false;
         String[] parts=value.split("\\.");
