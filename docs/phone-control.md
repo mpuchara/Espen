@@ -10,15 +10,17 @@ Panel jest częścią firmware ESP32-P4 w repozytorium Espen. **Nie jest to APK 
 4. W aplikacji **Pilot Ali na Androida** wpisz dokładnie podany IP i 8 cyfr. Możesz też otworzyć w Chrome adres `http://<IP>/` (dokładnie adres wyświetlony przez Alę, nie adres GitHub Pages). Możesz dodać stronę do ekranu głównego.
 5. Wpisz ośmiocyfrowy kod i dotknij **Połącz**. Kod jest unikatowy dla danego urządzenia i zapisywany w jego NVS; aktualizacja aplikacji nie powinna go skasować.
 6. Wybierz emocję: za 5 sekund pojawi się na twarzy Ali. Domyślnie zostaje aż do kliknięcia **X Wyłącz emocję**; możesz odznaczyć opcję „Na stałe”.
-7. Wpisz zdanie, użyj **Wstępnie popraw**, a potem **Niech Ala powie**. Robot poprosi tego samego agenta Xiaozhi o językową korektę zdania i wypowiedzenie samej poprawionej wersji.
+7. Pole pisania znajduje się **nad emocjami**, a aplikacja pokazuje na żywo **Napisane:** — również podczas korzystania z klawiatury. Wpisz zdanie i wybierz **Niech Ala powie**, aby poprosić Xiaozhi o poprawienie i wypowiedzenie tekstu.
+8. Nowy przycisk **💬 Zapytaj Alę (Xiaozhi)** ma dwa kroki: pierwsze naciśnięcie wysyła wpisane pytanie do Xiaozhi, prosi o nową odpowiedź i jej wypowiedzenie; przycisk zmienia napis na **👋 Powiedz tylko: Cześć**. Drugie naciśnięcie wysyła prośbę o wypowiedzenie wyłącznie słowa „Cześć”, po czym przycisk powraca do trybu pytania. Kolejne naciśnięcia powtarzają cykl. Tryb zmienia się **dopiero po zaakceptowaniu polecenia przez Alę**.
+9. Wynik pytania trafia do sekcji **Odpowiedź Ali**; tekst **Wysłano do Xiaozhi** pozwala sprawdzić, co trafiło do robota. Po wysłaniu klawiatura chowa się automatycznie.
 
 ## Granice działania
 
 - Wstępna korekta na telefonie obejmuje tylko odstępy, wielką literę i podstawową interpunkcję. Korektę językową i polski głos realizuje agent Xiaozhi, nie lokalna przeglądarka.
 - Wpisany tekst jest wysyłany przez **lokalne HTTP** do robota, a następnie przez Xiaozhi do zewnętrznego serwera. Nie wpisuj prywatnych informacji. Połączenie LAN nie jest szyfrowane, więc nie używaj niezaufanej sieci.
-- Tekst→AI→TTS wykorzystuje komunikat `listen.detect` i wymaga testu na sprzęcie z serwerem Xiaozhi; nie ma gwarancji, że odpowiedź zachowa dokładnie wpisane słowa. Przy zajętym urządzeniu polecenie jest odrzucane.
+- Tekst→AI→TTS wykorzystuje komunikat `listen.detect` i wymaga testu na sprzęcie z serwerem Xiaozhi. Tryb pytania prosi o wygenerowaną odpowiedź, a tryb „Cześć” o jedno słowo, jednak Xiaozhi może nie zastosować się idealnie do takiej instrukcji. Przy zajętym urządzeniu polecenie jest odrzucane, a między żądaniami obowiązuje 7-sekundowy limit.
 - Nie ma dostępu do urządzenia spoza lokalnej sieci, nie ma automatycznego odkrywania IP i nie ma sterowania z GitHub Pages (przeglądarki blokują HTTPS→HTTP).
-- Serwer HTTP udostępnia tylko stronę panelu i cztery chronione kodem endpointy. Bez kodu nie można wysłać polecenia ani odczytać odpowiedzi.
+- Serwer HTTP udostępnia tylko stronę panelu i pięć chronionych kodem endpointów (`/api/chat` obsługuje dwa nowe tryby). Bez kodu nie można wysłać polecenia ani odczytać odpowiedzi.
 - Nie drukuj kodu w logach ani nie udostępniaj go innym osobom. Panel ogranicza długość tekstu i odrzuca kontrolne znaki wejścia.
 
 ## Test po aktualizacji
