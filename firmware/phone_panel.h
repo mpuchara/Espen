@@ -3,6 +3,7 @@
 #include "application.h"
 #include "face_engine.h"
 #include "phone_panel_html.h"
+#include "robot_name.h"
 #include "settings.h"
 #include <esp_http_server.h>
 #include <esp_log.h>
@@ -22,6 +23,9 @@ class PhonePanel {
     std::string pin_;
     std::mutex reply_lock_;
     std::string last_reply_;
+    std::mutex name_lock_;
+    std::string robot_name_;
+    std::atomic<uint32_t> name_revision_{1};
     std::atomic<uint32_t> emotion_seq_{0};
     std::atomic<int> emotion_value_{-1};
     std::atomic<bool> emotion_sticky_{false};
@@ -78,6 +82,24 @@ class PhonePanel {
     }
     static esp_err_t Status(httpd_req_t* req) {
         if (!Instance().Authorized(req)) return Respond(req, 401, "Niepoprawny kod.");
+        return Respond(req, 200, "OK");
+    }
+    static esp_err_t GetName(httpd_req_t* req) {
+        auto& self = Instance();
+        if (!self.Authorized(req)) return Respond(req, 401, "Niepoprawny kod.");
+        const auto name = self.Name();
+        httpd_resp_set_type(req, "text/plain; charset=utf-8");
+        httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+        httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
+        return httpd_resp_send(req, name.data(), name.size());
+    }
+    static esp_err_t SetName(httpd_req_t* req) {
+        auto& self = Instance();
+        if (!self.Authorized(req)) return Respond(req, 401, "Niepoprawny kod.");
+        std::string name;
+        if (!ReadBody(req, name, 48) || !ValidRobotName(name))
+            return Respond(req, 400, "Imię: 2–24 litery, opcjonalnie spacja lub łącznik.");
+        self.SaveName(name);
         return Respond(req, 200, "OK");
     }
     static esp_err_t Emotion(httpd_req_t* req) {
@@ -153,6 +175,26 @@ class PhonePanel {
         return httpd_resp_send(req, reply.data(), reply.size());
     }
 public:
+    // Copies are protected: the HTTP thread may rename the robot while LVGL
+    // renders the next frame. NVS writes are independent of display drawing.
+    std::string Name() {
+        std::lock_guard<std::mutex> lock(name_lock_);
+        if (robot_name_.empty()) {
+            Settings s("espen_phone", false);
+            auto saved = s.GetString("robot_name", kDefaultRobotName);
+            robot_name_ = ValidRobotName(saved) ? saved : kDefaultRobotName;
+        }
+        return robot_name_;
+    }
+    uint32_t NameRevision() const { return name_revision_.load(std::memory_order_acquire); }
+    void SaveName(const std::string& name) {
+        if (!ValidRobotName(name)) return;
+        std::lock_guard<std::mutex> lock(name_lock_);
+        Settings s("espen_phone", true);
+        s.SetString("robot_name", name);
+        robot_name_ = name;
+        name_revision_.fetch_add(1, std::memory_order_release);
+    }
     static PhonePanel& Instance() {
         static PhonePanel panel;
         return panel;
@@ -180,9 +222,10 @@ public:
     void Start() {
         if (server_) return;
         Pin();
+        Name();
         httpd_config_t config = HTTPD_DEFAULT_CONFIG();
         config.server_port = 80;
-        config.max_uri_handlers = 6;
+        config.max_uri_handlers = 8;
         config.stack_size = 8192;
         if (httpd_start(&server_, &config) != ESP_OK) {
             server_ = nullptr;
@@ -200,6 +243,8 @@ public:
         };
         add("/", HTTP_GET, Index);
         add("/api/status", HTTP_GET, Status);
+        add("/api/name", HTTP_GET, GetName);
+        add("/api/name", HTTP_POST, SetName);
         add("/api/emotion", HTTP_POST, Emotion);
         add("/api/say", HTTP_POST, Say);
         add("/api/chat", HTTP_POST, Chat);
