@@ -33,7 +33,7 @@ with tempfile.TemporaryDirectory() as tmp:
     (up / "main/boards/guition/espen-guition-jc4880p443").mkdir(parents=True)
     b = up / "main/boards/guition/espen-guition-jc4880p443/espen_board.cc"
     b.write_text(board)
-    (up / "main/CMakeLists.txt").write_text('set(MAIN_PRIV_REQUIRES_EXTRA "")\n')
+    (up / "main/CMakeLists.txt").write_text('idf_component_register(SRCS a.cc\n                    PRIV_REQUIRES\n                        esp_pm)\n')
     (up / "main/application.h").write_text(
         '    void WakeWordInvoke(const std::string& wake_word);\n')
     (up / "main/application.cc").write_text(
