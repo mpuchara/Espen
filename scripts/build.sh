@@ -8,9 +8,12 @@ python3 - <<'PYVERSION'
 import json
 from pathlib import Path
 for file in ("web/manifest.json", "web/manifest-full.json"):
-    assert json.loads(Path(file).read_text())["version"] == "0.2.14", file
-assert "0.2.14 EXPERIMENTAL" in Path("web/index.html").read_text()
-assert "Espen 0.2.14 boot:" in Path("firmware/espen_board.cc").read_text()
+    assert json.loads(Path(file).read_text())["version"] == "0.2.15", file
+assert "0.2.15 EXPERIMENTAL" in Path("web/index.html").read_text()
+assert "Espen 0.2.15 boot:" in Path("firmware/espen_board.cc").read_text()
+assert json.loads(Path("web/pilot/manifest.json").read_text())["version"] == "0.2.15"
+assert json.loads(Path("web/pilot/manifest-recovery.json").read_text())["version"] == "0.2.15"
+assert "0.2.15" in Path("web/pilot/index.html").read_text()
 PYVERSION
 # Source-level integration guards for the LVGL/MCP bridge (plus host vision gate tests).
 python3 tests/test_photo_chat_integration.py
