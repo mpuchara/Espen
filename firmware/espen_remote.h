@@ -53,8 +53,8 @@ inline esp_err_t Status(httpd_req_t* req) {
     const bool ready=app.GetDeviceState()==kDeviceStateIdle &&
                      app.GetAudioService().IsPlaybackIdle() && !EspenDiagnosticBusy();
     return Reply(req,"200 OK",ready?
-        "{\"connected\":true,\"version\":\"0.2.14\",\"ready\":true}":
-        "{\"connected\":true,\"version\":\"0.2.14\",\"ready\":false}");
+        "{\"connected\":true,\"version\":\"0.2.15\",\"ready\":true}":
+        "{\"connected\":true,\"version\":\"0.2.15\",\"ready\":false}");
 }
 inline esp_err_t SetEmotion(httpd_req_t* req) {
     if(!Authorized(req))return Reply(req,"401 Unauthorized","{\"error\":\"invalid_pin\"}");
