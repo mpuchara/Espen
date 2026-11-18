@@ -170,17 +170,20 @@ public:
             ESP_LOGW("AlaPhone", "HTTP server could not start");
             return;
         }
-        httpd_uri_t routes[] = {
-            {"/", HTTP_GET, Index, nullptr},
-            {"/api/status", HTTP_GET, Status, nullptr},
-            {"/api/emotion", HTTP_POST, Emotion, nullptr},
-            {"/api/say", HTTP_POST, Say, nullptr},
-            {"/api/reply", HTTP_GET, Reply, nullptr},
-        };
-        for (const auto& route : routes) {
+        auto add = [this](const char* uri, httpd_method_t method,
+                          esp_err_t (*handler)(httpd_req_t*)) {
+            httpd_uri_t route = {};
+            route.uri = uri;
+            route.method = method;
+            route.handler = handler;
             if (httpd_register_uri_handler(server_, &route) != ESP_OK)
-                ESP_LOGW("AlaPhone", "Failed registering %s", route.uri);
-        }
+                ESP_LOGW("AlaPhone", "Failed registering %s", uri);
+        };
+        add("/", HTTP_GET, Index);
+        add("/api/status", HTTP_GET, Status);
+        add("/api/emotion", HTTP_POST, Emotion);
+        add("/api/say", HTTP_POST, Say);
+        add("/api/reply", HTTP_GET, Reply);
         ESP_LOGI("AlaPhone", "Phone panel listening on port 80");
     }
     bool PollEmotion(uint32_t& seen, int& mood, bool& sticky) {
