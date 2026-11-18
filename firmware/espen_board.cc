@@ -1460,6 +1460,9 @@ class EspenDisplay : public LcdDisplay {
     int touch_distance_=0;
     lv_point_t touch_prev_{};
     lv_obj_t* face_=nullptr;
+    lv_obj_t* face_blush_button_=nullptr;
+    lv_obj_t* face_love_button_=nullptr;
+    lv_obj_t* face_clear_button_=nullptr;
     espen::HoldGate hold_gate_;
     lv_obj_t* hold_target_=nullptr;
     lv_obj_t* hold_progress_=nullptr;
@@ -1537,6 +1540,42 @@ class EspenDisplay : public LcdDisplay {
         }
         g={x,y,w,h,angle};
     }
+    void UpdatePinnedButtons() {
+        if(!face_blush_button_||!face_love_button_||!face_clear_button_)return;
+        auto mode=engine_.Pinned();
+        lv_obj_set_style_border_color(face_blush_button_,lv_color_hex(0xFFFFFF),0);
+        lv_obj_set_style_border_color(face_love_button_,lv_color_hex(0xFFFFFF),0);
+        lv_obj_set_style_border_width(face_blush_button_,mode==espen::PinnedFace::Blush?2:0,0);
+        lv_obj_set_style_border_width(face_love_button_,mode==espen::PinnedFace::Love?2:0,0);
+        Hide(face_clear_button_,mode==espen::PinnedFace::None);
+    }
+    void SavePinnedFace() {
+        Settings cfg("espen_ui",true);
+        cfg.SetInt("face_pin",static_cast<int32_t>(engine_.Pinned()));
+        UpdatePinnedButtons();
+    }
+    void SelectPinnedFace(espen::PinnedFace mode) {
+        if(engine_.Pinned()==mode)return;
+        engine_.PinFace(mode);
+        SavePinnedFace();
+    }
+    lv_obj_t* FaceAction(const char* label,int x,uint32_t color) {
+        auto* button=lv_button_create(face_);
+        lv_obj_set_pos(button,x,8);
+        lv_obj_set_size(button,35,30);
+        lv_obj_set_style_bg_color(button,lv_color_hex(color),0);
+        lv_obj_set_style_bg_opa(button,LV_OPA_COVER,0);
+        lv_obj_set_style_radius(button,9,0);
+        lv_obj_set_style_pad_all(button,0,0);
+        lv_obj_set_style_shadow_width(button,0,0);
+        lv_obj_set_style_border_width(button,0,0);
+        auto* text=lv_label_create(button);
+        lv_obj_set_style_text_font(text,EspenUiFont(),0);
+        lv_obj_set_style_text_color(text,lv_color_hex(0xFFFFFF),0);
+        lv_label_set_text(text,label);
+        lv_obj_center(text);
+        return button;
+    }
     bool OverlayVisible() const {
         for(auto* panel:{settings_,wake_panel_,cloud_,speech_diag_,speaker_panel_,camera_panel_})
             if(panel&&!lv_obj_has_flag(panel,LV_OBJ_FLAG_HIDDEN))return true;
@@ -1579,6 +1618,7 @@ class EspenDisplay : public LcdDisplay {
         },LV_EVENT_ALL,this);
     }
     void FaceTouch(lv_event_t* e) {
+        if(lv_event_get_target(e)!=face_)return; // child buttons never become petting
         auto code=lv_event_get_code(e);
         uint32_t now=lv_tick_get();
         // Ignore LVGL's default short long-press event. Only our 5-second
@@ -1643,6 +1683,9 @@ class EspenDisplay : public LcdDisplay {
             ESP_LOGW(TAG,"TV guard v0.2.14: auto-speech disabled; wake phrase and touch remain");
         }
         engine_.SetPersona(static_cast<espen::Persona>(std::clamp<int32_t>(cfg.GetInt("persona",0),0,static_cast<int32_t>(espen::Persona::Count)-1)));
+        // First installation starts with pink cheeks. X clears the setting;
+        // R and Z select blush and love again, even after power cycles.
+        engine_.PinFace(static_cast<espen::PinnedFace>(std::clamp<int32_t>(cfg.GetInt("face_pin",1),0,2)));
         auto_speech_=cfg.GetBool("auto_speech",false);
         visual_enabled_=cfg.GetBool("visual_world",true);
         EspenWake().SetAutoSpeech(auto_speech_);
@@ -1710,6 +1753,20 @@ class EspenDisplay : public LcdDisplay {
         lv_obj_add_event_cb(face_,[](lv_event_t* e){
             static_cast<EspenDisplay*>(lv_event_get_user_data(e))->FaceTouch(e);
         },LV_EVENT_ALL,this);
+        // Tiny expression controls. All widgets are created once, never per-frame.
+        face_blush_button_=FaceAction("R",263,0x9A426E);
+        face_love_button_=FaceAction("Z",304,0x994080);
+        face_clear_button_=FaceAction("X",345,0x445461);
+        lv_obj_add_event_cb(face_blush_button_,[](lv_event_t* e){
+            static_cast<EspenDisplay*>(lv_event_get_user_data(e))->SelectPinnedFace(espen::PinnedFace::Blush);
+        },LV_EVENT_CLICKED,this);
+        lv_obj_add_event_cb(face_love_button_,[](lv_event_t* e){
+            static_cast<EspenDisplay*>(lv_event_get_user_data(e))->SelectPinnedFace(espen::PinnedFace::Love);
+        },LV_EVENT_CLICKED,this);
+        lv_obj_add_event_cb(face_clear_button_,[](lv_event_t* e){
+            static_cast<EspenDisplay*>(lv_event_get_user_data(e))->SelectPinnedFace(espen::PinnedFace::None);
+        },LV_EVENT_CLICKED,this);
+        UpdatePinnedButtons();
         TickFace();
         face_timer_=lv_timer_create([](lv_timer_t* t){
             static_cast<EspenDisplay*>(lv_timer_get_user_data(t))->TickFace();
@@ -1817,7 +1874,9 @@ class EspenDisplay : public LcdDisplay {
             // React to actual played TTS, not to text still queued in the cloud.
             const auto played=EspenVisualLookup(tag);
             reply_tag_=tag;
+            const auto previous=engine_.Pinned();
             engine_.ReplyReact(played.beat,now);
+            if(engine_.Pinned()!=previous)SavePinnedFace();
         }
         auto f=engine_.Tick(now,phase,speech.level,speech.shape,loud);
         auto& p=f.pose;
