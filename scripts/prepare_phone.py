@@ -32,7 +32,8 @@ replace(cmake, '                    PRIV_REQUIRES\n',
 header = up / "main/application.h"
 replace(header, '    void WakeWordInvoke(const std::string& wake_word);',
         '    void WakeWordInvoke(const std::string& wake_word);\n'
-        '    void EspenSayText(const std::string& text);\n'\n        '    void EspenAskText(const std::string& text, bool only_hello);')
+        '    void EspenSayText(const std::string& text);\n'
+        '    void EspenAskText(const std::string& text, bool only_hello);')
 
 app = up / "main/application.cc"
 speech_method = r'''
