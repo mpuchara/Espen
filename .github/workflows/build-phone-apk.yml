@@ -51,13 +51,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tag=ala-panel-v0.1.2
+          tag=ala-panel-v0.1.3
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" Ala-Panel.apk --clobber
           else
             gh release create "$tag" Ala-Panel.apk \
               --target "$GITHUB_SHA" \
-              --title "Pilot Ali na telefon 0.1.2" \
-              --notes "APK na Android 8.0+. Sterowanie 16 emocjami i tekstem Ali przez lokalne Wi-Fi. Wymaga firmware Espen 0.2.16 i tego samego Wi-Fi. Nowy przycisk pytanie Xiaozhi / przywitanie Cześć oraz widoczny tekst nad klawiaturą. Możliwość zmiany imienia robota w panelu przez PIN-zabezpieczone API. Wydanie testowe — APK podpisana kluczem debug." \
+              --title "Pilot Ali na telefon 0.1.3" \
+              --notes "APK na Android 8.0+. 16 animowanych emocji z zapętlonymi sekwencjami, dźwięk dopasowany do każdej emocji i korekta tekstu przez Xiaozhi. Wymaga firmware Espen 0.2.17 i tego samego Wi-Fi. Nowy podgląd poprawionego tekstu i obsługa zgodnego ze starszym firmware głosu emocji. Możliwość zmiany imienia robota w panelu przez PIN-zabezpieczone API. Wydanie testowe — APK podpisana kluczem debug." \
               --prerelease
           fi
