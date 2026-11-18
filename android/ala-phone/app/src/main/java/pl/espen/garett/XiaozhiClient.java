@@ -106,7 +106,7 @@ public final class XiaozhiClient {
             }
         });
     }
-    private static SharedPreferences prefs(Context c){return c.getSharedPreferences("espen_watch_v1",Context.MODE_PRIVATE);}
+    private static SharedPreferences prefs(Context c){return c.getSharedPreferences("espen_phone_v1",Context.MODE_PRIVATE);}
     public static Identity id(Context c){
         SharedPreferences p=prefs(c);
         String d=p.getString("device_id",""),u=p.getString("client_id","");
@@ -660,7 +660,7 @@ public final class XiaozhiClient {
         mcpError(id,-32602,"Nieznane narzędzie");
     }
     private JSONObject serverInfo() throws JSONException{
-        return new JSONObject().put("name","Garett Espen").put("version","0.2.12-watch");
+        return new JSONObject().put("name","Ala Phone").put("version","0.1.0-phone");
     }
     private void mcpResult(Object id,JSONObject value,boolean modern) throws JSONException{
         if(modern){
