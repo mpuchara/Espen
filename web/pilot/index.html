@@ -29,19 +29,30 @@ ol{padding-left:23px}
 <div class="tag">ESPEN · ALA PILOT · 0.2.14-TEST1</div>
 <h1>💙 Ala Pilot</h1>
 <p>Specjalna aktualizacja dla Ali. Dodaje przycisk <b>„Pilot telefonu / kod”</b> w ustawieniach, który pokazuje kod i adres IP dla aplikacji na telefon.</p>
-<section class="card">
-<h2>1. Zaktualizuj Alę</h2>
-<p class="notice"><b>Ważne:</b> tylko dla urządzenia GUITION JC4880P443C (ESP32-P4 rev1, pamięć flash 16 MB), które ma już zainstalowany Espen. Nie używaj pełnego kasowania ani pełnej instalacji: ta aktualizacja zachowuje NVS z Wi-Fi i parowaniem Xiaozhi.</p>
-<p id="status" role="status" aria-live="polite">Sprawdzanie plików aktualizacji…</p>
-<esp-web-install-button id="installer" manifest="manifest.json" hidden>
-<button slot="activate" type="button">🔌 Aktualizuj Alę — dodaj kod pilota</button>
-<span slot="unsupported">Ta przeglądarka nie obsługuje instalacji USB. Użyj Chrome lub Edge na komputerze, podłączając port P4 kablem do transmisji danych. Na wielu telefonach z Androidem Web Serial nie działa.</span>
-<span slot="not-allowed">Otwórz stronę przez HTTPS.</span>
+<section class="card" style="border-color:#d8a456">
+<h2>🛠️ 1. Napraw bootloop — PEŁNA instalacja</h2>
+<p class="notice"><b>Masz na ekranie logów: <code>invalid header: 0xffffffff</code>?</b> To typowy objaw brakującego lub uszkodzonego bootloadera. Zwykła aktualizacja samej aplikacji nie wystarczy — potrzebny jest kompletny obraz zawierający bootloader, tablicę partycji, aplikację i zasoby.</p>
+<p><b>Ważne:</b> ta procedura dotyczy wyłącznie GUITION JC4880P443C, ESP32-P4 rev1 z pamięcią flash 16 MB. <b>Pełne przywracanie może usunąć zapamiętane Wi-Fi, ustawienia i parowanie Xiaozhi.</b> Przygotuj się na ponowną konfigurację. Poproś dorosłego o pomoc i zabezpiecz odsłonięte przewody głośnika przed podłączeniem.</p>
+<p id="recovery-status" role="status" aria-live="polite">Sprawdzanie kompletnego firmware…</p>
+<esp-web-install-button id="recovery-installer" manifest="manifest-recovery.json" hidden>
+  <button slot="activate" type="button">🔧 Przywróć Alę — PEŁNY firmware z pilotem</button>
+  <span slot="unsupported">Brak obsługi Web Serial. Ta przeglądarka nie może wgrać firmware. Użyj Chrome/Edge na komputerze z kablem USB do danych.</span>
+  <span slot="not-allowed">Otwórz instalator przez HTTPS.</span>
 </esp-web-install-button>
-<p><small>Instalator wymaga kabla USB do danych i dostępu do portu P4. Nie aktualizuje Ali przez Wi-Fi. Zabezpiecz odsłonięte przewody robota przed podłączeniem.</small></p>
+<p><small>Port USB <b>P4</b>, nie C6. Plik <code>espen.bin</code> jest instalowany od adresu <code>0x0</code> i zawiera bootloader P4 pod <code>0x2000</code>. Nie przesuwaj adresu ani nie wybieraj pliku zwykłej aplikacji.</small></p>
 </section>
 <section class="card">
-<h2>2. Znajdź kod na Ali</h2>
+<h2>2. Zwykła aktualizacja (tylko gdy Ala się uruchamia)</h2>
+<p>Ta opcja zachowuje ustawienia, ale <b>nie naprawi</b> błędu <code>invalid header: 0xffffffff</code>. Jeśli Ala ma bootloop, użyj <b>pełnego przywracania powyżej</b>.</p>
+<p id="status" role="status">Sprawdzanie plików aktualizacji…</p>
+<esp-web-install-button id="installer" manifest="manifest.json" hidden>
+<button slot="activate" type="button">🔌 Aktualizuj Alę — zachowaj dane</button>
+<span slot="unsupported">Ta przeglądarka nie obsługuje instalacji USB. Użyj Chrome lub Edge na komputerze.</span>
+<span slot="not-allowed">Otwórz instalator przez HTTPS.</span>
+</esp-web-install-button>
+</section>
+<section class="card">
+<h2>3. Znajdź kod na Ali</h2>
 <ol>
 <li>Po restarcie dotknij ekranu Ali i otwórz <b>Ustawienia</b>.</li>
 <li>Naciśnij nowy przycisk <b>Pilot telefonu / kod</b> — jest wysoko, na początku ustawień.</li>
@@ -54,15 +65,23 @@ ol{padding-left:23px}
 <h2>Nie widzisz portu USB?</h2>
 <p>Jeśli widzisz <b>„No port selected”</b>, to nie oznacza złego kodu ani złego firmware. Telefon lub przeglądarka mogą nie udostępniać portu USB stronie internetowej. Sprawdź kabel z transmisją danych i port P4; jeżeli przeglądarka nie obsługuje USB, potrzebny będzie Chrome/Edge na komputerze.</p>
 <p id="support"></p>
-<p>Pliki dla instalatora:
-<a href="espen-app.bin">aplikacja .bin</a> ·
-<a href="espen-assets.bin">zasoby .bin</a> ·
-<a href="espen-update.sha256">SHA-256</a>.
-Przy ręcznym wgrywaniu użyj adresów 0x20000 (aplikacja) i 0x800000 (zasoby); nie wgrywaj tych plików od adresu 0x0.</p>
+<p>Pliki: <a href="espen.bin">pełny firmware (espen.bin)</a> · <a href="espen.bin.sha256">SHA-256 pełnego obrazu</a> · <a href="espen-app.bin">aplikacja</a> · <a href="espen-assets.bin">zasoby</a> · <a href="espen-update.sha256">SHA-256 aktualizacji</a>. Pełny obraz wgrywa się od <code>0x0</code>; pliki samej aktualizacji od <code>0x20000</code> i <code>0x800000</code>. Nie zamieniaj tych adresów.</p>
 </section>
 <p><small>Wersja eksperymentalna z PR #24, firmware z kompilacji <a href="https://github.com/mpuchara/Espen/actions/runs/44334001820">44334001820</a>, commit a1ce7a1. Testy kompilacji przeszły; działania na fizycznej Ali nie potwierdzono. <a href="../">Wróć do głównego instalatora Espen</a>.</small></p>
 </main>
 <script>
+const recoveryStatus=document.getElementById("recovery-status");
+const recoveryInstaller=document.getElementById("recovery-installer");
+fetch("espen.bin",{method:"HEAD",cache:"no-store"}).then(r=>{
+  if(!r.ok)throw Error("HTTP "+r.status);
+  const size=r.headers.get("content-length");
+  if(size!==null && (Number(size)<9000000 || Number(size)>16777216))throw Error("Niewłaściwy rozmiar pełnego obrazu");
+  recoveryStatus.textContent="✅ Pełny firmware Ala Pilot jest dostępny. Ten obraz przywraca też bootloader.";
+  recoveryStatus.className="ok";
+  recoveryInstaller.hidden=false;
+}).catch(()=>{
+  recoveryStatus.textContent="❌ Brak pełnego pliku. Nie uruchamiaj przywracania.";
+});
 const status=document.getElementById("status");
 const installer=document.getElementById("installer");
 const support=document.getElementById("support");
