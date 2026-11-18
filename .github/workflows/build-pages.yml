@@ -30,12 +30,25 @@ jobs:
           set -euo pipefail
           base="https://github.com/mpuchara/Espen/releases/download/ala-pilot-v0.2.14-test1"
           mkdir -p dist/pilot
-          for file in espen-app.bin espen-assets.bin espen-update.sha256; do
+          for file in espen-app.bin espen-assets.bin espen-update.sha256 espen.bin espen.bin.sha256; do
             curl --fail --location --retry 4 --retry-all-errors \
               --output "dist/pilot/$file" "$base/$file"
             test -s "dist/pilot/$file"
           done
-          (cd dist/pilot && sha256sum --check espen-update.sha256)
+          (cd dist/pilot && sha256sum --check espen-update.sha256 && sha256sum --check espen.bin.sha256)
+          # ESP32-P4 ROM expects the second-stage bootloader at 0x2000.
+          # Refuse to publish a "full recovery" image missing it.
+          python3 - <<'PILOT_VALIDATION'
+          from pathlib import Path
+          image = Path("dist/pilot/espen.bin").read_bytes()
+          app = Path("dist/pilot/espen-app.bin").read_bytes()
+          assert len(image) <= 16 * 1024 * 1024, "not a 16 MB flash image"
+          assert len(image) > 0x800000, "not a merged image with assets"
+          assert image[0x2000] == 0xE9, "missing ESP32-P4 bootloader at 0x2000"
+          assert image[0x20000] == 0xE9, "missing application at 0x20000"
+          assert image[0x20000:0x20000+len(app)] == app, "unexpected app content"
+          print("Ala Pilot full recovery image verified (bootloader, app, assets)")
+          PILOT_VALIDATION
       - name: Upload firmware
         uses: actions/upload-artifact@v4
         with:
