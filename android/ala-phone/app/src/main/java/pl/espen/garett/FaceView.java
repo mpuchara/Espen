@@ -29,6 +29,7 @@ public final class FaceView extends View {
     private String emotion = "neutral", subtitle = "", status = "Dotknij mikrofonu";
     private String activationCode = "";
     private String reaction = "";
+    private boolean persistentBlush;
     private long reactionUntil, photoUntil;
     private Bitmap photo;
     private int battery = -1;
@@ -52,6 +53,17 @@ public final class FaceView extends View {
     }
     public void setActivationCode(String c) { activationCode = c == null ? "" : c; invalidate(); }
     public void setBattery(int n){battery=n;invalidate();}
+    public void setBlush(boolean on){persistentBlush=on;invalidate();}
+    public void setEmotionPersistent(String mood){
+        emotion=mood==null?"love":mood.toLowerCase(Locale.ROOT);
+        moodUntil=Long.MAX_VALUE;
+        if(emotion.contains("love"))heartUntil=Long.MAX_VALUE;
+        invalidate();
+    }
+    public void resetPhoneEmotion(){
+        emotion="neutral";moodUntil=0;heartUntil=0;
+        reactionUntil=0;reaction="";persistentBlush=false;invalidate();
+    }
     public void setReaction(String cue){reaction=cue==null?"":cue;reactionUntil=SystemClock.uptimeMillis()+2100;invalidate();}
     public void setPhoto(byte[] compressed){
         if(compressed==null||compressed.length>300000)return;
@@ -157,6 +169,12 @@ public final class FaceView extends View {
             Path mouth=new Path();mouth.moveTo(mouthX-37,mouthY);
             mouth.quadTo(mouthX,mouthY+(laughing?33:sad?-17:17),mouthX+37,mouthY);
             c.drawPath(mouth,p);
+        }
+        if(persistentBlush){
+            color(0xffff7daa);p.setAlpha(150);
+            c.drawOval(new RectF(67,187,131,213),p);
+            c.drawOval(new RectF(229,187,293,213),p);
+            p.setAlpha(255);
         }
         if (now<heartUntil) {
             for(int i=0;i<5;i++){
