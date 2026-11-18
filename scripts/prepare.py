@@ -11,7 +11,7 @@ board.mkdir(parents=True, exist_ok=True)
 for src, dst in [("config.h","config.h"),("config.json","config.json"),
                  ("espen_board.cc","espen_board.cc"),
                  ("board_p4_st7701_init.h","board_p4_st7701_init.h"),
-                 ("face_engine.h","face_engine.h"),("dirty_rect.h","dirty_rect.h"),
+                 ("face_engine.h","face_engine.h"),("espen_remote.h","espen_remote.h"),("dirty_rect.h","dirty_rect.h"),
                  ("social_reactions.h","social_reactions.h"),("response_reactions.h","response_reactions.h"),("speech_quality.h","speech_quality.h"),("visual_world.h","visual_world.h"),("speaker_audio.h","speaker_audio.h"),("emotional_audio.h","emotional_audio.h"),
                  ("espen_camera.h","espen_camera.h"),("espen_camera.cc","espen_camera.cc"),("vision_gate.h","vision_gate.h"),("vision_endpoint.h","vision_endpoint.h")]:
     shutil.copyfile(root / "firmware" / src, board / dst)
@@ -86,6 +86,11 @@ replace("main/Kconfig.projbuild",
 replace("main/CMakeLists.txt",
         'elseif(CONFIG_BOARD_TYPE_ESP32_P4_FUNCTION_EV_BOARD)',
         'elseif(CONFIG_BOARD_TYPE_ESPEN_GUITION_P4)\n    set(BOARD_DIR "guition/espen-guition-jc4880p443")\n    set(BUILTIN_TEXT_FONT font_noto_sans_basic_20_4)\n    set(BUILTIN_ICON_FONT font_material_symbols_20_4)\nelseif(CONFIG_BOARD_TYPE_ESP32_P4_FUNCTION_EV_BOARD)')
+
+# Espen-only LAN phone API: no changes to any other Xiaozhi board.
+replace("main/CMakeLists.txt",
+        "                    PRIV_REQUIRES\n                        esp_pm",
+        "                    PRIV_REQUIRES\n                        esp_http_server\n                        esp_pm")
 
 # The Wi-Fi configuration portal remains an alternative to the on-device form.
 # Hide OTA configuration: custom board firmware is updated only via USB.
