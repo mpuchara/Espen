@@ -7,6 +7,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: espen-pages-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'main' }}
   cancel-in-progress: true
@@ -46,6 +47,40 @@ jobs:
           assert image[:0x800000] != b'\\xff'*0x800000, "empty flash image"
           print("Ala Pilot 0.2.17 verified: bootloader, app, assets, checksums")
           PILOT_VALIDATION
+      # Deliberately publish the audited PR #47 as a SEPARATE EXPERIMENTAL installer.
+      # Do NOT replace the stable root 0.2.17 image or merge experimental firmware into main.
+      - name: Download pinned Stage 9 experimental image
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/download-artifact@v4
+        with:
+          name: espen-guition-p4
+          run-id: 44815907855
+          github-token: ${{ github.token }}
+          path: dist/ala-stage9
+      - name: Verify Stage 9 full-flash image and immutable checksum
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          python3 - <<'STAGE9_VERIFY'
+          import hashlib
+          import json
+          from pathlib import Path
+          folder = Path("dist/ala-stage9")
+          image_path = folder / "espen.bin"
+          sha_path = folder / "espen.bin.sha256"
+          expected = "a5b44d3a86b8051295f6f0bd80458c00edfade6327b325516382beca2de0fcf2"
+          checksum = sha_path.read_text().strip().split()
+          assert checksum == [expected, "espen.bin"], "Stage 9 checksum file is unexpected"
+          binary = image_path.read_bytes()
+          assert len(binary) == 10302462, "Unexpected Stage 9 full image size"
+          assert len(binary) <= 16 * 1024 * 1024, "Stage 9 exceeds 16 MiB flash"
+          assert binary[0x2000] == 0xE9, "Missing bootloader at 0x2000"
+          assert binary[0x20000] == 0xE9, "Missing application at 0x20000"
+          assert hashlib.sha256(binary).hexdigest() == expected, "Stage 9 SHA256 mismatch"
+          manifest = json.loads((folder / "manifest.json").read_text())
+          assert manifest["builds"][0]["parts"] == [{"path":"espen.bin","offset":0}]
+          print("Verified Stage 9 full-flash image, SHA256, size and 0x0 installer")
+          STAGE9_VERIFY
       - name: Upload firmware
         uses: actions/upload-artifact@v4
         with:
