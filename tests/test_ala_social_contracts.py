@@ -16,6 +16,7 @@ assert 'self.Authorized(req)' in panel
 assert 'add("/api/social", HTTP_GET, GetSocial)' in panel
 assert 'add("/api/social", HTTP_POST, SocialCommand)' in panel
 assert 'httpd_config_t config = HTTPD_DEFAULT_CONFIG()' in panel
+assert 'ClassifySocialVoiceCommand(text)' in panel
 assert 'social_.Stop()' in panel and 'social_.Tick(now,standby,online)' in panel
 assert 'app.EspenAskText(prompt,false,self.Name())' in panel
 assert 'kDurationMs = 600000' in policy
