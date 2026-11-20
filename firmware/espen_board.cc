@@ -892,6 +892,50 @@ class EspenDisplay : public LcdDisplay {
         return button;
     }
 
+    // Fixed bottom dock: independent of chat scrolling and face animations.
+    // Its three actions reuse existing game, camera and Xiaozhi controls.
+    void BuildBottomDock() {
+        if(bottom_dock_)return;
+        bottom_dock_=lv_obj_create(lv_layer_top());
+        lv_obj_set_size(bottom_dock_,DISPLAY_WIDTH,76);
+        lv_obj_align(bottom_dock_,LV_ALIGN_BOTTOM_MID,0,0);
+        lv_obj_set_style_radius(bottom_dock_,0,0);
+        lv_obj_set_style_bg_color(bottom_dock_,lv_color_hex(0x101F30),0);
+        lv_obj_set_style_bg_opa(bottom_dock_,LV_OPA_COVER,0);
+        lv_obj_set_style_border_width(bottom_dock_,0,0);
+        lv_obj_set_style_pad_all(bottom_dock_,8,0);
+        lv_obj_set_style_pad_column(bottom_dock_,10,0);
+        lv_obj_set_flex_flow(bottom_dock_,LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(bottom_dock_,LV_FLEX_ALIGN_SPACE_EVENLY,
+                              LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_CENTER);
+        auto* play=MakeButton(bottom_dock_,LV_SYMBOL_PLAY "  Gry",[](lv_event_t* e){
+            static_cast<EspenDisplay*>(lv_event_get_user_data(e))->OpenPlayGames();
+        },this,142);
+        auto* camera=MakeButton(bottom_dock_,LV_SYMBOL_IMAGE "  Aparat",[](lv_event_t* e){
+            auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+            self->pending_story_voice_.clear();
+            if(self->game_panel_)self->Hide(self->game_panel_,true);
+            self->OpenCameraPanel();
+        },this,142);
+        auto* mic=MakeButton(bottom_dock_,LV_SYMBOL_AUDIO "  Mikrofon",[](lv_event_t* e){
+            auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+            self->pending_story_voice_.clear();
+            if(self->game_panel_)self->Hide(self->game_panel_,true);
+            auto& app=Application::GetInstance();
+            if(app.EspenIsStandby())app.EspenWakeFromTouch();
+            else ConversationClick();
+        },this,142);
+        for(auto* button:{play,camera,mic}) {
+            lv_obj_set_height(button,55);
+            lv_obj_set_style_radius(button,14,0);
+            lv_obj_set_style_bg_color(button,lv_color_hex(0x224D70),0);
+            lv_obj_set_style_text_font(lv_obj_get_child(button,0),LV_FONT_DEFAULT,0);
+        }
+        lv_obj_set_style_bg_color(play,lv_color_hex(0x246F86),0);
+        lv_obj_set_style_bg_color(mic,lv_color_hex(0x405A95),0);
+        // The most recent chat bubble can be scrolled above the fixed dock.
+        lv_obj_set_style_pad_bottom(content_,88,0);
+    }
     // Narration is requested only for a visible story scene. The existing
     // Xiaozhi worker owns the sole microphone/speaker; LVGL never calls the
     // protocol directly. A new scene replaces a pending (not yet sent) scene.
@@ -1527,6 +1571,7 @@ class EspenDisplay : public LcdDisplay {
             lv_obj_set_style_text_font(settings_, EspenUiFont(), 0);
             lv_obj_set_style_radius(settings_, 0, 0);
             lv_obj_set_style_pad_all(settings_, 14, 0);
+            lv_obj_set_style_pad_bottom(settings_,94,0);
             lv_obj_set_style_pad_row(settings_, 8, 0);
             lv_obj_set_flex_flow(settings_, LV_FLEX_FLOW_COLUMN);
             auto* title = lv_label_create(settings_);
@@ -2114,6 +2159,14 @@ class EspenDisplay : public LcdDisplay {
     void TickFace() {
         uint32_t now=lv_tick_get();
         RefreshCameraPanel(now);
+        // Other top-layer panels are opened later; keep navigation accessible.
+        // Avoid redundant move_foreground() calls on every 50 ms face tick.
+        if(bottom_dock_) {
+            auto* layer=lv_layer_top();
+            const auto count=lv_obj_get_child_cnt(layer);
+            if(count && lv_obj_get_child(layer,static_cast<int32_t>(count)-1)!=bottom_dock_)
+                lv_obj_move_foreground(bottom_dock_);
+        }
         // Consent expiry and standby STOP must run even while Settings/Chat
         // overlays hide the face. No phone/browser polling is required.
         const bool social_standby=Application::GetInstance().EspenIsStandby();
