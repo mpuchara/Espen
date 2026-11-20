@@ -81,6 +81,7 @@ class AlaBehaviorEngine {
     uint32_t living_at_ = 0, living_duration_ = 0, living_next_at_ = 0;
     uint32_t living_sequence_ = 0, living_rng_ = 0x91e10da5u;
     bool forced_sleep_ = false;
+    bool social_speech_permission_ = false;
     static bool DueAt(uint32_t now, uint32_t deadline) {
         return static_cast<int32_t>(now-deadline) >= 0;
     }
@@ -184,6 +185,9 @@ public:
     // Reset/X is immediate: removes both active and delayed commands, including
     // pending speech. No previous request can mature after cancellation.
     void SetPersona(Persona persona) { persona_ = persona; }
+    // Only an already consented and VERIFIED semantic verdict may lift the
+    // default deny. Stage 5 public Xiaozhi fallback supplies no such verdict.
+    void SetSocialSpeechPermission(bool allowed) { social_speech_permission_ = allowed; }
     void SetDayPart(DayPart part) { daypart_ = part; }
     void SetLivingTiming(LivingTiming timing) {
         // All intervals must be less than half the 32-bit clock range.
@@ -405,6 +409,8 @@ public:
         d.preempted = d.changed && d.priority > previous_.priority &&
                       previous_.source != BehaviorSource::Neutral;
         if (d.changed) chosen_at_ = now;
+        d.allow_spontaneous_speech = !standby && phase == Phase::Idle &&
+            social_speech_permission_ && !pending_phone_ && !phone_.Alive(now);
         previous_ = d;
         return d;
     }
@@ -422,9 +428,13 @@ public:
     void PhoneSpeechResult(bool accepted) {
         if (accepted) pending_voice_ = false;
     }
-    bool AllowSpontaneousSpeech() const { return false; }
+    bool AllowSpontaneousSpeech() const {
+        return social_speech_permission_ && !previous_standby_ &&
+            previous_phase_ == Phase::Idle && !previous_.phone_locked;
+    }
     uint32_t RejectedAutonomousCount() const { return rejected_micro_; }
     void ResetTransient() {
+        social_speech_permission_ = false;
         living_cue_ = LivingCue::None;
         cloud_.Clear(); social_.Clear(); afterglow_.Clear(); reply_.Clear();
         direct_.Clear(); micro_.Clear();
