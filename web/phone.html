@@ -297,6 +297,7 @@ async function refreshMemory(){
       row.append(label,edit,remove);list.append(row);
     }
     $('memory-candidate').hidden=!data.candidate;
+    $('memory-accept').textContent=data.pending_delete?'🗑 Potwierdź usunięcie':'✅ Zapisz wspomnienie';
     $('memory-candidate-text').textContent=data.candidate||'';
     $('memory-save').disabled=!data.enabled;
     $('memory-ask').disabled=!data.enabled||!data.count;
