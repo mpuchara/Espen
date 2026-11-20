@@ -37,13 +37,35 @@ int main() {
  assert(g.View().option_count==3);
  assert(g.Choose(2) && g.Next());
  assert(g.View().round==2);
+ // Story starts by offering three themes, including lake and mom's car.
+ for(int theme=0;theme<3;++theme) {
+   assert(g.Start(PlayMode::Story,static_cast<uint32_t>(theme+1)));
+   v=g.View();
+   assert(v.mode==PlayMode::Story && v.option_count==3 && v.round==0);
+   assert(std::strcmp(v.options[1],"Nad jeziorem")==0);
+   assert(std::strcmp(v.options[2],"Z mamą w samochodzie")==0);
+   assert(!g.Choose(-1) && !g.Choose(3));
+   assert(g.Choose(theme));
+   assert(g.View().option_count==2 && g.View().round==1);
+   if(theme==1) assert(std::strstr(g.View().prompt,"jeziorem"));
+   if(theme==2) assert(std::strstr(g.View().prompt,"mamą"));
+   assert(g.Choose(1) && g.View().phase==PlayPhase::Feedback);
+   assert(!g.Choose(0));
+   assert(g.Next());
+   assert(g.View().option_count==2 && g.View().round==2);
+   assert(g.Choose(0) && g.Next());
+   assert(g.View().option_count==2 && g.View().round==3);
+   assert(g.Choose(1) && g.Next());
+   assert(g.View().phase==PlayPhase::Finished && g.View().score==30);
+   assert(g.View().prompt && std::strlen(g.View().prompt)>20);
+   if(theme==1) assert(std::strstr(g.View().prompt,"jezior")||std::strstr(g.View().prompt,"wysp"));
+   if(theme==2) assert(std::strstr(g.View().prompt,"mamą")||std::strstr(g.View().prompt,"Mama"));
+   assert(!g.Choose(0));
+ }
+ // Retain prior forest-branch behavior after theme selection.
  assert(g.Start(PlayMode::Story,1));
- assert(g.View().option_count==2);
- assert(g.Choose(1)&&g.View().phase==PlayPhase::Feedback&&g.Next());
- auto river=g.View();assert(std::strstr(river.prompt,"rzeką"));
- assert(g.Choose(0)&&g.Next());
- assert(g.View().option_count==2);
+ assert(g.Choose(0)); // select forest
  assert(g.Choose(1)&&g.Next());
- assert(g.View().phase==PlayPhase::Finished&&g.View().score==30);
+ assert(std::strstr(g.View().prompt,"rzeką"));
  g.Reset();assert(g.View().mode==PlayMode::Menu);
 }
