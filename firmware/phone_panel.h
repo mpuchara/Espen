@@ -367,7 +367,7 @@ class PhonePanel {
                 std::lock_guard<std::mutex> guard(self.memory_lock_);
                 self.EnsureMemory();
                 if(!self.memory_.State().enabled)return Respond(req,409,"Włącz najpierw pamięć.");
-                const auto records=self.memory_.Search(body=="ask"?"":body.substr(4),3);
+                const auto records=self.memory_.SearchQuestion(body=="ask"?"":body.substr(4),3);
                 self.memory_.DismissCandidate();
                 if(records.empty())return Respond(req,409,"Brak pasujących wspomnień.");
                 prompt="Odpowiedz po polsku na pytanie o lokalnie zapisane informacje Ali. "
