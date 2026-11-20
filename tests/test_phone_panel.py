@@ -13,7 +13,9 @@ android = (root / "android/app/src/main/java/pl/homemind/ala/phone/MainActivity.
 board = (root / "firmware/espen_board.cc").read_text(encoding="utf-8")
 assert '<textarea id="sentence"' in html
 assert 'Na stałe' in html
-assert 'http://' not in html, "Phone page must connect to its current same-origin robot"
+assert "await fetch(path,{method,body" in html, "Panel API must remain same-origin"
+# Only the optional service configuration may contain a remote LAN URL.
+assert "request('/api/social/backend','POST',url+'|'+token)" in html
 for api in ("/api/emotion", "/api/say", "/api/chat", "/api/reply", "/api/status", "/api/name"):
     assert api in html and api in phone, api
 assert "X-Ala-Pin" in html and "X-Ala-Pin" in phone
@@ -26,7 +28,7 @@ assert "bool Started() const" in phone
 assert "std::all_of(pin_.begin(), pin_.end()" in phone, "The stored PIN must be 8 digits"
 assert "std::atomic<uint32_t> emotion_seq_" in phone
 assert "GetDeviceState() != kDeviceStateIdle" in phone
-assert "config.max_uri_handlers = 10;" in phone
+assert "config.max_uri_handlers = 12;" in phone
 assert 'add("/api/social", HTTP_GET, GetSocial)' in phone
 assert 'add("/api/social", HTTP_POST, SocialCommand)' in phone
 assert "EspenAskText(body, hello, self.Name())" in phone
@@ -83,4 +85,6 @@ with tempfile.TemporaryDirectory() as tmp:
     assert 'void EspenAskText(const std::string& text, bool only_hello, const std::string& robot_name);' in (up / "main/application.h").read_text()
     assert 'Powiedz wylacznie jedno slowo: Czesc' in (up / "main/application.cc").read_text()
     assert 'esp_http_server' in (up / "main/CMakeLists.txt").read_text()
+    assert 'esp_http_client' in (up / "main/CMakeLists.txt").read_text()
+    assert (b.parent / "ala_social_bridge.h").is_file()
 print("Ala phone panel integration: OK")

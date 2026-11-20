@@ -46,11 +46,16 @@ small{display:block;color:#96aabe;margin-top:9px;line-height:1.5}.status{color:#
 </section>
 <section id="social-section"><h2>💬 Inteligencja społeczna</h2>
 <p>Tryb Towarzyski działa maksymalnie 10 minut i po restarcie jest wyłączony. Głos w aktywnej sesji może trafić do chmury Xiaozhi.</p>
-<p><strong>Ograniczenie:</strong> obecny publiczny Xiaozhi nie zapewnia tutaj niezależnej analizy STT bez automatycznej odpowiedzi. Ala <strong>nie podsłuchuje w tle</strong> i nie wtrąca się sama. Przycisk „Skomentuj teraz” używa kontekstu z wcześniej aktywnej sesji Xiaozhi.</p>
+<p>Bez skonfigurowanego własnego backendu Ala nie komentuje automatycznie — ręczny przycisk wykorzystuje kontekst Xiaozhi. Gdy skonfigurujesz Social Bridge, Ala może przez maksymalnie 10 minut przekazywać nagrane fragmenty do backendu, a on do zewnętrznego OpenAI (STT, LLM i TTS). Nie uruchamiaj tej funkcji bez zgody osób w pomieszczeniu. Jednym STOP przerwiesz sesję.</p>
 <div class="buttons"><button id="social-start">▶ Włącz (10 min)</button><button id="social-stop" class="danger">■ STOP</button></div>
 <div class="buttons"><button id="social-quiet" class="secondary">Cicha</button><button id="social-normal" class="secondary">Normalna</button><button id="social-talkative" class="secondary">Rozmowna</button></div>
 <div class="buttons"><button id="social-comment" class="secondary">💬 Skomentuj teraz</button></div>
-<div id="social-status" class="status" role="status" aria-live="polite">Tryb wyłączony.</div>
+<div id="social-status" class="status" role="status" aria-live="polite">Tryb wyłączony. Auto-ocena STT: niedostępna</div>
+<div class="status">Social Bridge (opcjonalny komputer / Raspberry Pi). Adres prywatnego LAN: <input id="social-backend-url" type="url" maxlength="120" placeholder="http://192.168.1.50:8765" autocomplete="off">
+Token serwera: <input id="social-backend-token" type="password" maxlength="96" placeholder="Wklej 32-bajtowy token" autocomplete="off">
+<button id="social-backend-save" class="secondary">Zapisz backend</button>
+<button id="social-backend-clear" class="secondary">Usuń backend</button>
+<small>Połączenie ESP → backend używa HTTP w zaufanej sieci Wi-Fi; token w NVS. Nie używaj publicznych ani niezaufanych sieci. Serwis może wysyłać mowę i tekst do OpenAI; domyślnie jest WYŁĄCZONY.</small></div>
 <small id="social-limits">Wszystkie polecenia wymagają kodu PIN. Kontekst znika po STOP, upływie czasu lub wyłączeniu sieci.</small>
 </section>
 <small>Panel działa lokalnie przez Wi-Fi. Nie udostępniaj kodu sterowania innym osobom. Połączenie ze sztuczną inteligencją Xiaozhi wymaga Internetu i działającego głośnika.</small>
@@ -221,8 +226,13 @@ async function refreshSocial(){
     const state=JSON.parse(raw);
     const seconds=Math.ceil(state.remaining_ms/1000);
     const desc=state.active?'✅ Aktywny '+Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0'):'⚪ Wyłączony';
+    const bridgeStates=['Brak backendu','Łączenie','Gotowy','Nasłuch','Analiza kontekstu','Oczekiwanie','Wypowiada','Błąd'];
+    const backendState=bridgeStates[state.backend_state]||'Nieznany';
     $('social-status').textContent=desc+' · Kontekst: '+state.context+' · Komentarze: '+state.comments+
-      ' · Słucha w aktywnej sesji: '+(state.listening?'tak':'nie')+' · Auto-ocena STT: niedostępna';
+      ' · Xiaozhi nasłuch: '+(state.listening?'tak':'nie')+
+      ' · Social Bridge: '+backendState+' · Auto-ocena STT: '+(state.auto_evaluation?'DOSTĘPNA':'niedostępna')+
+      ' · STT: '+state.analysed+' · Zaakceptowane: '+state.accepted+
+      ' · Pominięte: '+state.ignored+' · Anulowane: '+state.cancelled;
     $('social-comment').disabled=!state.active||!state.context||state.listening;
     ['quiet','normal','talkative'].forEach((name,index)=>{
       $('social-'+name).style.outline=state.activity===index?'2px solid #79e3d4':'none';
@@ -247,6 +257,21 @@ $('social-quiet').onclick=()=>socialAction('quiet');
 $('social-normal').onclick=()=>socialAction('normal');
 $('social-talkative').onclick=()=>socialAction('talkative');
 $('social-comment').onclick=()=>socialAction('comment');
+async function saveSocialBackend(clear=false){
+  if(!pin)return;
+  const url=clear?'':$('social-backend-url').value.trim();
+  const token=clear?'':$('social-backend-token').value.trim();
+  $('social-backend-save').disabled=true;
+  try{
+    const result=await request('/api/social/backend','POST',url+'|'+token);
+    $('social-status').textContent=result;
+    $('social-backend-token').value='';
+    if(clear)$('social-backend-url').value='';
+  }catch(e){$('social-status').textContent='Backend: '+e.message;}
+  finally{$('social-backend-save').disabled=false;refreshSocial();}
+}
+$('social-backend-save').onclick=()=>saveSocialBackend(false);
+$('social-backend-clear').onclick=()=>saveSocialBackend(true);
 setInterval(refreshSocial,3000);
 verify();
 setTimeout(refreshSocial,1200);

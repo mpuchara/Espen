@@ -1869,3 +1869,12 @@ src = src[:a] + """void Application::EspenCheckSilence() {
 }
 """ + src[b:]
 p.write_text(src)
+
+# Stage 5.1: one nonblocking PCM observer on the existing AudioService input
+# path. No second microphone, I2S, AFE or network calls in the audio thread.
+replace("main/audio/audio_service.cc",
+        '                espen_read_failures = 0;\n                bool feed_voice = false;',
+        '                espen_read_failures = 0;\n'
+        '                extern void EspenSocialPcm(const int16_t*, size_t);\n'
+        '                EspenSocialPcm(data.data(),data.size());\n'
+        '                bool feed_voice = false;')

@@ -407,6 +407,10 @@ bool EspenNetworkAvailable() {
     auto& wifi=WifiManager::GetInstance();
     return wifi.IsInitialized()&&wifi.IsConnected();
 }
+void EspenSocialPcm(const int16_t* data,size_t count) {
+    // Called by the existing AudioService input task: bounded copy only.
+    espen::PhonePanel::Instance().CaptureSocialPcm(data,count);
+}
 void EspenAmbientPeak(int peak) {
     if (peak > 11000) espen_ambient_ms.store(
         static_cast<uint32_t>(esp_timer_get_time()/1000),std::memory_order_relaxed);
@@ -1388,7 +1392,7 @@ class EspenDisplay : public LcdDisplay {
             lv_label_set_text(social_disclosure,
                 "Tryb 10 min, domyślnie wyłączony. W aktywnej sesji głos może być "
                 "przesłany do chmury Xiaozhi. Automatyczne komentarze wymagają "
-                "zgodnej usługi STT bez TTS; obecnie dostępny komentarz na żądanie z telefonu.");
+                "zewnętrznego Social Bridge (STT/LLM/TTS). Przy braku backendu dostępny jest komentarz ręczny. Zgoda wszystkich osób obecnych jest wymagana.");
             MakeButton(settings_, "Wyczyść rozmowę", [](lv_event_t* e) {
                 auto* self = static_cast<EspenDisplay*>(lv_event_get_user_data(e));
                 self->CloseSettings();
@@ -1882,7 +1886,8 @@ class EspenDisplay : public LcdDisplay {
             engine_.SleepNow(now);
             behavior_.SleepRequested();
         }
-        if(state==kDeviceStateSpeaking||state==kDeviceStateNotifying) {
+        if(state==kDeviceStateSpeaking||state==kDeviceStateNotifying||
+           phone.BridgeSpeaking()) {
             phase=Phase::Speaking;waiting_answer_=false;last_audio_=now;
         } else if(state==kDeviceStateConnecting) phase=Phase::Wake;
         else if(state==kDeviceStateListening) phase=espen_turn_waiting.load(std::memory_order_relaxed)?Phase::Thinking:Phase::Listening;
@@ -1932,13 +1937,13 @@ class EspenDisplay : public LcdDisplay {
             if(seconds!=social_label_second_) {
                 social_label_second_=seconds;
                 lv_label_set_text_fmt(social_indicator_,
-                    "Towarzyski %02lu:%02lu / Xiaozhi",
+                    "Towarzyski %02lu:%02lu",
                     static_cast<unsigned long>(seconds/60),
                     static_cast<unsigned long>(seconds%60));
             }
         } else social_label_second_=UINT32_MAX;
-        // Stage 5 intentionally remains fail-closed until Xiaozhi offers
-        // a real STT -> semantic verdict -> conditional TTS interface.
+        // Stage 5.1 model verdict is mediated by AlaSocialBridge and
+        // permitted by AlaSocialIntelligence; never let the LLM own playback.
         behavior_.SetSocialSpeechPermission(espen::PhonePanel::Instance().SocialSpeechPermission());
         // Never gate autonomy on the previous Frame.asleep: that used to make
         // the five-second renderer sleep suppress every 27-second reaction.
