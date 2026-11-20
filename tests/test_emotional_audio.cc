@@ -47,5 +47,8 @@ int main() {
     assert(!limit.CanPlay(EmotionalCue::Laugh, 2500));
     limit.NewTurn();
     assert(limit.CanPlay(EmotionalCue::Laugh, 2500));
+    limit.Played(EmotionalCue::Laugh, 2500);
+    limit.NewTurn(true); // a new reply must survive the previous cue's cooldown
+    assert(limit.CanPlay(EmotionalCue::Heart, 2501));
     std::cout << "Espen Emotional Audio Engine: 37 cues, envelope, limiter OK\n";
 }
