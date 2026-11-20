@@ -28,6 +28,10 @@ assert 'Towarzyski: włącz / STOP' in board
 assert 'social-start' in html and 'social-stop' in html
 assert 'social-comment' in html and 'Auto-ocena STT: niedostępna' in html
 assert 'auto_evaluation' in panel
+assert 'xiaozhi_channel_open' in panel
+assert 'manual_requests' in panel
+assert 'kVerifiedNativeXiaozhiAutonomy' in panel
+assert 'espen_xiaozhi_channel_open_' in prep
 assert 'tests/test_ala_social_intelligence.cc' in build
 assert 'feature/ala-conversation-intelligence-stage4' in (
     root / ".github/workflows/build-pages.yml").read_text()
