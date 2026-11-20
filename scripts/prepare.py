@@ -1924,18 +1924,23 @@ replace("main/audio/audio_service.cc",
 }
 
 void AudioService::CancelEspenSocialPcm() {
-    std::lock_guard<std::mutex> lock(audio_queue_mutex_);
-    ++espen_social_generation_;
-    // FixedQueue does not expose erase/remove_if. Keep other producers intact.
-    FixedQueue<AudioTask, MAX_PLAYBACK_TASKS_IN_QUEUE> retained;
-    while (!audio_playback_queue_.empty()) {
-        auto task = std::move(audio_playback_queue_.front());
-        audio_playback_queue_.pop_front();
-        if (!task.espen_social_pcm) retained.push_back(std::move(task));
+    bool notify_drained = false;
+    {
+        std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+        ++espen_social_generation_;
+        // FixedQueue has no erase: retain only other producers' packets.
+        FixedQueue<AudioTask, MAX_PLAYBACK_TASKS_IN_QUEUE> retained;
+        while (!audio_playback_queue_.empty()) {
+            auto task = std::move(audio_playback_queue_.front());
+            audio_playback_queue_.pop_front();
+            if (!task.espen_social_pcm) retained.push_back(std::move(task));
+        }
+        audio_playback_queue_.swap(retained);
+        notify_drained = MarkPlaybackDrainedLocked();
+        audio_queue_cv_.notify_all();
     }
-    audio_playback_queue_.swap(retained);
-    MarkPlaybackDrainedLocked();
-    audio_queue_cv_.notify_all();
+    if (notify_drained && callbacks_.on_playback_drained)
+        callbacks_.on_playback_drained();
 }
 
 bool AudioService::QueueEspenDiagnosticPcm(std::vector<int16_t>&& pcm) {""")
