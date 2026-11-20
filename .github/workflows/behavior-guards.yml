@@ -1,7 +1,7 @@
 name: Ala behavior contracts
 on:
   pull_request:
-    branches: [main, feature/ala-central-behavior-engine-stage2, feature/ala-living-robot-engine-stage3, feature/ala-conversation-intelligence-stage4, feature/ala-social-intelligence-stage5]
+    branches: [main, feature/ala-central-behavior-engine-stage2, feature/ala-living-robot-engine-stage3, feature/ala-conversation-intelligence-stage4, feature/ala-social-intelligence-stage5, feature/ala-social-autonomy-bridge-stage5-1]
   push:
     branches: [main]
   workflow_dispatch:
