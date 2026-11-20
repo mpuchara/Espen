@@ -7,6 +7,13 @@
 
 using namespace espen;
 int main() {
+    assert(ClassifySocialVoiceCommand("Ala, dołącz do rozmowy.") == SocialVoiceCommand::Start);
+    assert(ClassifySocialVoiceCommand("Ala! Włącz tryb towarzyski!") == SocialVoiceCommand::Start);
+    assert(ClassifySocialVoiceCommand("Ala, nie wtrącaj się.") == SocialVoiceCommand::Stop);
+    assert(ClassifySocialVoiceCommand("Ala, koniec rozmowy!") == SocialVoiceCommand::Stop);
+    assert(ClassifySocialVoiceCommand("Ktoś powiedział Ala dołącz do rozmowy") ==
+           SocialVoiceCommand::None);
+    assert(ClassifySocialVoiceCommand("\"Ala dołącz do rozmowy\"") == SocialVoiceCommand::None);
     AlaSocialIntelligence social;
     assert(!social.Active() && !social.AllowSpontaneousSpeech());
     assert(!social.Start(0, true, true));  // standby cannot opt in
