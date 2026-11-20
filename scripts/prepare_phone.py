@@ -106,32 +106,28 @@ replace(source,
 
 anchor = ('if(seq!=seen_mood_) {seen_mood_=seq;engine_.Emotion('
           'pending_mood_.load(std::memory_order_relaxed),now);}')
-remote = '''if(seq!=seen_mood_) {seen_mood_=seq;engine_.Emotion(pending_mood_.load(std::memory_order_relaxed),now);}
-        // Local HTTP commands are delivered through atomics. LVGL owns
-        // the FaceEngine; no server task may directly draw or animate.
-        static uint32_t phone_seq = 0, phone_due = 0;
-        static int phone_mood = -1;
-        static bool phone_sticky = false, phone_voice = false;
+remote = '''if(seq!=seen_mood_) {
+            seen_mood_=seq;
+            const auto mood=pending_mood_.load(std::memory_order_relaxed);
+            engine_.Emotion(mood, now);
+            behavior_.CloudEmotion(mood, now);
+        }
+        // The LVGL tick is the only consumer of HTTP emotion commands.
+        // The arbiter handles the five-second delay and cancels pending X
+        // requests without FaceEngine::Preview(Neutral) masking Xiaozhi.
+        static uint32_t phone_seq = 0;
         int incoming_mood = -1;
         bool incoming_sticky = false, incoming_voice = false;
-        if (espen::PhonePanel::Instance().PollEmotion(phone_seq, incoming_mood, incoming_sticky, incoming_voice)) {
-            phone_mood = incoming_mood;
-            phone_sticky = incoming_sticky;
-            phone_voice = incoming_voice;
-            phone_due = now + 5000;
-            if (phone_mood < 0) engine_.Preview(espen::Mood::Neutral, now);
+        auto& panel = espen::PhonePanel::Instance();
+        if (panel.PollEmotion(phone_seq, incoming_mood, incoming_sticky, incoming_voice)) {
+            behavior_.PhoneCommand(incoming_mood, incoming_sticky, incoming_voice,
+                                   phone_seq, now);
         }
-        if (phone_mood >= 0 && static_cast<int32_t>(now-phone_due) >= 0) {
-            engine_.Preview(static_cast<espen::Mood>(phone_mood), now);
-            // Speak ONCE for a selected mood. Sticky preview may repeat,
-            // but it must not endlessly restart cloud TTS or interrupt speech.
-            if (phone_voice) {
-                espen::PhonePanel::Instance().TrySpeakMood(phone_mood);
-                phone_voice = false;
-            }
-            if (phone_sticky) phone_due = now + 2500; // keep preview alive until X
-            else phone_mood = -1; // one transient 4.2-second preview
-        }'''
+        const auto& app = Application::GetInstance();
+        const int voice_mood = behavior_.PhoneSpeechDue(
+            now, app.EspenIsStandby(), app.GetDeviceState() == kDeviceStateIdle);
+        if (voice_mood >= 0) behavior_.PhoneSpeechResult(panel.TrySpeakMood(voice_mood));
+        '''
 replace(source, anchor, remote)
 replace(source, 'if (!role || !message || !button_added_) return;',
         'if(role && message && strcmp(role,"assistant")==0)\n'
