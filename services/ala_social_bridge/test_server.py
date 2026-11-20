@@ -204,6 +204,21 @@ class ServiceTests(unittest.TestCase):
         t.join(timeout=2)
         self.assertEqual(responses[0][0], 409)
 
+    def test_empty_stt_advances_revision_without_llm_or_tts(self):
+        self.start()
+        self.model.transcript = ""
+        code, result = self.turn()
+        self.assertEqual(code, 200)
+        self.assertEqual(result["action"], "IGNORE")
+        self.assertEqual(result["context_revision"], 1)
+        self.assertEqual(result["ticket"], "")
+        self.assertEqual(self.model.tts_calls, 0)
+        # No stale revision error on next legitimate utterance.
+        self.model.transcript = "Zgubiłem telefon"
+        code, result = self.turn(rev=1, turn=2)
+        self.assertEqual(code, 200)
+        self.assertEqual(result["context_revision"], 2)
+
     def test_100_sequential_ignored_turns_bounded_state(self):
         self.start()
         self.model.action = "IGNORE"
