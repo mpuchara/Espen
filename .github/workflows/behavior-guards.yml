@@ -18,5 +18,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 tests/test_behavior_contracts.py
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_behavior_engine.cc -o /tmp/ala-behavior-engine-test
+          /tmp/ala-behavior-engine-test
           c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_behavior_foundation.cc -o /tmp/ala-behavior-foundation-test
           /tmp/ala-behavior-foundation-test
