@@ -21,6 +21,9 @@ jobs:
           python3 tests/test_ala_face_contracts.py
           python3 tests/test_audio_cue_integration.py
           python3 tests/test_stage9_regression_contracts.py
+          python3 tests/test_ala_play_games_contracts.py
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_play_games.cc -o /tmp/ala-play-games-stage10-test
+          /tmp/ala-play-games-stage10-test
           c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_emotional_audio.cc -o /tmp/ala-stage9-emotional-test
           /tmp/ala-stage9-emotional-test
           c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_reply_reactions.cc -o /tmp/ala-stage9-reply-test
