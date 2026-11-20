@@ -163,7 +163,13 @@ class EmotionalCueLimiter {
     bool has_played_ = false;
     bool emotion_used_ = false;
 public:
-    void NewTurn() { emotion_used_ = false; }
+    // A new assistant answer may follow a listening/social cue immediately.
+    // Its first expressive beat should not be lost to the previous phase's
+    // cooldown. Touch and listening transitions keep the cooldown intact.
+    void NewTurn(bool reset_cooldown=false) {
+        emotion_used_ = false;
+        if (reset_cooldown) has_played_ = false;
+    }
     bool CanPlay(EmotionalCue cue, uint32_t now) const {
         if (!ValidCue(static_cast<int>(cue))) return false;
         const bool expressive = static_cast<int>(cue) >= static_cast<int>(EmotionalCue::Joy);
