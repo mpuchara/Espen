@@ -5,7 +5,7 @@
 ## Co jest rzeczywiście zaimplementowane
 
 - `firmware/ala_social_intelligence.h` — lekki, deterministyczny arbiter zgody i limitów społecznych; nie przechwytuje dźwięku, nie posiada Xiaozhi, LVGL ani sprzętu.
-- Domyślnie wyłączony Tryb Towarzyski. Aktywacja świadomie na ekranie Ali albo przez **autoryzowany PIN-em** panel WWW. Trwa maksymalnie 10 minut; STOP, „bez odbioru”, brak Wi-Fi i restart go wyłączają.
+- Domyślnie wyłączony Tryb Towarzyski. Aktywacja świadomie na ekranie Ali albo przez **autoryzowany PIN-em** panel WWW. Trwa maksymalnie 10 minut; STOP, „bez odbioru”, brak Wi-Fi i restart go wyłączają. Aktywacja i zakończenie mogą też nastąpić przez **wyraźne polecenie w już otwartej sesji Xiaozhi**: „Ala, dołącz do rozmowy”, „Ala, włącz tryb towarzyski”, „Ala, nie wtrącaj się”, „Ala, koniec rozmowy”, „Ala, wyłącz tryb towarzyski”. Nie są to polecenia lokalnego wake word; transkrypcja i pierwsza odpowiedź mogą trafić do chmury.
 - Wskaźnik odliczania na twarzy; ekran ustawień i panel WWW informują o możliwym przekazywaniu dźwięku do zewnętrznej usługi.
 - Kontekst tworzy maksymalnie pięć ostatnich transkrypcji **wyłącznie wtedy, gdy użytkownik normalnie używa aktywnej sesji Xiaozhi i wyraził zgodę na ten tryb**. Wypowiedzi pozostają w RAM, nie w NVS ani logach, są obcinane do 160 bajtów/sztukę i usuwane przy wyłączeniu.
 - Model nie może sterować Alą przez tekst cytowany w kontekście: model otrzymuje go jako dane; znaki niebezpieczne dla tekstowego protokołu `SendWakeWordDetected` są usuwane. Nadal zachowuj ostrożność — ochrona promptów nie jest gwarancją bezpieczeństwa zachowania LLM.
@@ -28,7 +28,7 @@ Automatycznie (CI host): `tests/test_ala_social_intelligence.cc`, `tests/test_al
 **Fizyczne ESP32-P4 (nie wykonane w tym PR):**
 
 1. Po zimnym starcie Tryb Towarzyski jest wyłączony, brak wskaźnika i spontanicznych komentarzy.
-2. Na LCD w ustawieniach włącz tryb; sprawdź opis chmury i licznik 10:00. Porównaj z panelem telefonu.
+2. Na LCD w ustawieniach włącz tryb; sprawdź opis chmury i licznik 10:00. Porównaj z panelem telefonu. Powtórz aktywację/STOP wyraźną komendą w otwartej sesji Xiaozhi, sprawdź, że cytaty/fragmenty zdań nie aktywują trybu.
 3. Rozpocznij świadomie zwykłą sesję Xiaozhi i wypowiedz trzy kwestie o kluczach; poza tą sesją brak pasywnego STT. Panel powinien podać licznik kontekstu.
 4. Po zakończeniu TTS, gdy Ala jest idle, kliknij **Skomentuj teraz**; posłuchaj jednej wypowiedzi i sprawdź w `/api/reply`. Oceniaj naturalność i adekwatność.
 5. Przeprowadź neutralne, poważne i dziecięce scenariusze; odnotuj, że **model może jednak wypowiedzieć coś nietrafnego**, bo obecny backend nie obsługuje cichego wyboru.
