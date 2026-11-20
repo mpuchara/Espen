@@ -26,6 +26,7 @@ python3 tests/test_photo_chat_integration.py
 python3 tests/test_tv_safe_release.py
 python3 tests/test_phone_panel.py
 python3 tests/test_mood_voice.py
+python3 tests/test_listening_start_silent.py
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_robot_name.cc -o /tmp/espen-robot-name-test
 /tmp/espen-robot-name-test
 # Host-side regression tests for the local wake feature extractor and DTW.
