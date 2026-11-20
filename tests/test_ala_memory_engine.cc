@@ -38,6 +38,8 @@ int main(){
     assert(memory.Search("ASTRONOMI").size()==1);
     assert(memory.Search("astronomi").size()==1);
     assert(memory.Search("nieistnieje").empty());
+    assert(memory.Search("",3,MemoryCategory::Interest).size()==1);
+    assert(memory.Search("",3,MemoryCategory::Robot).empty());
     assert(!memory.Add(MemoryCategory::Fact,"Moje hasło to 12345"));
     assert(!memory.Add(MemoryCategory::Fact,"Mam diagnozę ADHD"));
     assert(!memory.Add(MemoryCategory::Fact,"Mój PIN: 1234"));
