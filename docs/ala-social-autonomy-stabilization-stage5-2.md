@@ -10,7 +10,7 @@ Use only the **full 16 MB ESP32-P4 image** from CI corresponding to the PR SHA.
 ```text
 existing AudioService input callback (16 kHz mono PCM16, single ES8311 mic)
   -> AlaSocialBridge::Capture (bounded memcpy, nonblocking skip when busy)
-  -> 8 s PSRAM PCM buffer; adaptive energy floor, >=30 voiced 20 ms blocks
+  -> 8 s PSRAM PCM buffer; adaptive energy floor, >=30 voiced 10 ms blocks
   -> single low-priority worker, serialized PCM copy and WAV header
   -> HTTP POST /v1/turn (separate trusted-LAN Python companion)
   -> OpenAI whisper-1 -> gpt-4o-mini verdict (JSON)
