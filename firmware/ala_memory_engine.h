@@ -210,6 +210,43 @@ public:
         }
         return found;
     }
+
+    // A cheap, bounded lexical match for natural questions such as
+    // "Co pamiętasz o astronomii?" vs saved "Interesuję się astronomią".
+    // No embeddings, transcript storage or second AI model.
+    std::vector<MemoryItem> SearchQuestion(const std::string& question,
+                                            size_t max=3) const {
+        auto direct=Search(question,max);
+        if(!direct.empty() || !state_.enabled || max==0)return direct;
+        std::string q=Fold(question);
+        std::vector<std::string> terms;
+        std::string word;
+        auto collect=[&]() {
+            if(word.size()>=5 && word!="pamietasz" && word!="pamietam" &&
+               word!="wspomnienia" && word!="pokaz" && word!="prosze" &&
+               word!="jakie" && word!="twoje" && terms.size()<12)
+                terms.push_back(word.substr(0,std::min<size_t>(6,word.size())));
+            word.clear();
+        };
+        for(unsigned char c:q){
+            if((c>='a'&&c<='z')||(c>='0'&&c<='9')) word+=static_cast<char>(c);
+            else collect();
+        }
+        collect();
+        if(terms.empty())return Search("",max); // explicit general recall
+        std::vector<MemoryItem> matches;
+        for(const auto& item:state_.items) {
+            const auto normalized=Fold(item.text);
+            for(const auto& term:terms) {
+                if(normalized.find(term)!=std::string::npos) {
+                    matches.push_back(item);break;
+                }
+            }
+            if(matches.size()>=max)break;
+        }
+        return matches;
+    }
+
     // STT is untrusted (TV, quoted speech, partial transcripts). Only OFFER to
     // the PIN-protected panel; no implicit flash writes or autonomous replies.
     bool OfferVoice(const std::string& speech) {
