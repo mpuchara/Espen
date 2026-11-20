@@ -20,6 +20,7 @@ jobs:
           python3 tests/test_behavior_contracts.py
           python3 tests/test_ala_social_contracts.py
           python3 services/ala_social_bridge/test_server.py -v
+          python3 services/ala_social_bridge/test_evaluation.py
           c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_social_intelligence.cc -o /tmp/ala-social-test
           /tmp/ala-social-test
           c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_behavior_engine.cc -o /tmp/ala-behavior-engine-test
