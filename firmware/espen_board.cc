@@ -1503,7 +1503,9 @@ class EspenDisplay : public LcdDisplay {
             lv_obj_set_style_bg_opa(camera_panel_,LV_OPA_COVER,0);
             lv_obj_set_style_text_color(camera_panel_,lv_color_white(),0);
             lv_obj_set_style_text_font(camera_panel_,EspenUiFont(),0);
-            lv_obj_set_style_pad_all(camera_panel_,12,0);lv_obj_set_style_pad_row(camera_panel_,8,0);
+            lv_obj_set_style_pad_all(camera_panel_,12,0);
+            lv_obj_set_style_pad_bottom(camera_panel_,96,0);
+            lv_obj_set_style_pad_row(camera_panel_,8,0);
             lv_obj_set_flex_flow(camera_panel_,LV_FLEX_FLOW_COLUMN);
             auto* title=lv_label_create(camera_panel_);lv_label_set_text(title,"ESPEN / Kamera");
             camera_status_=lv_label_create(camera_panel_);lv_obj_set_width(camera_status_,lv_pct(100));
@@ -2162,10 +2164,23 @@ class EspenDisplay : public LcdDisplay {
         // Other top-layer panels are opened later; keep navigation accessible.
         // Avoid redundant move_foreground() calls on every 50 ms face tick.
         if(bottom_dock_) {
-            auto* layer=lv_layer_top();
-            const auto count=lv_obj_get_child_cnt(layer);
-            if(count && lv_obj_get_child(layer,static_cast<int32_t>(count)-1)!=bottom_dock_)
-                lv_obj_move_foreground(bottom_dock_);
+            // Never cover the bottom row of on-screen Wi-Fi/wake keyboards.
+            const bool editing=(keyboard_ && settings_ &&
+                !lv_obj_has_flag(settings_,LV_OBJ_FLAG_HIDDEN) &&
+                !lv_obj_has_flag(keyboard_,LV_OBJ_FLAG_HIDDEN)) ||
+                (wake_keyboard_ && wake_panel_ &&
+                !lv_obj_has_flag(wake_panel_,LV_OBJ_FLAG_HIDDEN) &&
+                !lv_obj_has_flag(wake_keyboard_,LV_OBJ_FLAG_HIDDEN)) ||
+                (cloud_keyboard_ && cloud_ &&
+                !lv_obj_has_flag(cloud_,LV_OBJ_FLAG_HIDDEN) &&
+                !lv_obj_has_flag(cloud_keyboard_,LV_OBJ_FLAG_HIDDEN));
+            Hide(bottom_dock_,editing);
+            if(!editing) {
+                auto* layer=lv_layer_top();
+                const auto count=lv_obj_get_child_cnt(layer);
+                if(count && lv_obj_get_child(layer,static_cast<int32_t>(count)-1)!=bottom_dock_)
+                    lv_obj_move_foreground(bottom_dock_);
+            }
         }
         // Consent expiry and standby STOP must run even while Settings/Chat
         // overlays hide the face. No phone/browser polling is required.
