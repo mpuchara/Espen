@@ -53,15 +53,28 @@ for mood in api_moods:
 assert "std::atomic<uint32_t> emotion_seq_" in phone
 assert "bool PollEmotion(uint32_t& seen" in phone
 assert "self.emotion_seq_.fetch_add(1, std::memory_order_release);" in phone
-assert "PhonePanel::Instance().PollEmotion(phone_seq" in phone_overlay
-assert "phone_due = now + 5000;" in phone_overlay
-assert "static_cast<int32_t>(now-phone_due) >= 0" in phone_overlay
-assert "if (phone_sticky) phone_due = now + 2500;" in phone_overlay
-assert "else phone_mood = -1;" in phone_overlay
-assert "if (phone_mood < 0) engine_.Preview(espen::Mood::Neutral, now);" in phone_overlay
-assert "if (phone_voice)" in phone_overlay
-assert "phone_voice = false;" in phone_overlay
-assert "TrySpeakMood(phone_mood)" in phone_overlay
+# Phone snapshot is forwarded to the arbiter on the LVGL thread.
+# The arbiter owns one five-second timer, indefinite sticky and cancel-safe X.
+assert "PhonePanel::Instance().PollEmotion(phone_seq" not in phone_overlay
+assert "panel.PollEmotion(phone_seq" in phone_overlay
+assert "behavior_.PhoneCommand(incoming_mood, incoming_sticky, incoming_voice," in phone_overlay
+assert "behavior_.PhoneSpeechDue(" in phone_overlay
+assert "behavior_.PhoneSpeechResult(panel.TrySpeakMood(voice_mood))" in phone_overlay
+behavior = read("firmware/ala_behavior_engine.h")
+assert "kPhoneDelayMs = 5000" in behavior
+assert "kPhonePreviewMs = 4200" in behavior
+assert "phone_.Set(pending_mood_" in behavior
+assert "pending_phone_ = false;" in behavior
+assert "pending_voice_ = false;" in behavior
+assert "AllowSpontaneousSpeech() const { return false; }" in behavior
+assert "std::mutex emotion_lock_" in phone
+assert "std::lock_guard<std::mutex> command_lock(emotion_lock_)" in phone
+assert "engine_.ManagedMood(decision.mood" in board
+assert "behavior_.CloudEmotion(mood, now)" in board
+assert "behavior_.SocialReaction(reaction,last_stt_)" in board
+assert "behavior_.ReplyReaction(played.beat,now)" in board
+assert "ala_behavior_engine.h" in read("scripts/prepare.py")
+assert "test_ala_behavior_engine.cc" in build
 assert "root.addView(speech,root.indexOfChild(faces))" in android
 
 # Both UIs cancel any delayed fallback speech after selecting a new mood / X.
