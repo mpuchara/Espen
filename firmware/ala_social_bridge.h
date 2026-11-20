@@ -418,7 +418,8 @@ public:
         while(!url.empty() && url.back()=='/')url.pop_back();
         base_=std::move(url);token_=std::move(token);
         configured_.store(!base_.empty());
-        state_.store(base_.empty()?BridgeActivity::NoBackend:BridgeActivity::Ready);
+        // Only a successful /v1/session/start establishes readiness.
+        state_.store(BridgeActivity::NoBackend);
         return true;
     }
     bool Start() {
@@ -448,7 +449,7 @@ public:
         // chunks before codec OutputData; an in-flight 40 ms DMA is the bound.
         Application::GetInstance().GetAudioService().CancelEspenSocialPcm();
         if(state_.load()!=BridgeActivity::Error)
-            state_.store(configured_.load()?BridgeActivity::Ready:BridgeActivity::NoBackend);
+            state_.store(BridgeActivity::NoBackend);
     }
     void Arm(bool value) {
         const bool permitted = value && ready_.load() && enabled_.load() && !speaking_.load();
