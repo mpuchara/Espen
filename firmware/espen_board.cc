@@ -1531,6 +1531,12 @@ class EspenDisplay : public LcdDisplay {
             return;
         }
         if(vision_tap_busy_.exchange(true,std::memory_order_acq_rel))return;
+        // Never display or narrate a previous photo as the new request.
+        {
+            std::lock_guard<std::mutex> guard(vision_tap_mutex_);
+            vision_tap_result_.clear();
+            vision_tap_ready_=false;
+        }
         if(!camera.GrantOneTap()){
             vision_tap_busy_.store(false,std::memory_order_release);
             lv_label_set_text(camera_analysis_label_,"Analiza obrazu jest niedostępna.");
@@ -1555,7 +1561,8 @@ class EspenDisplay : public LcdDisplay {
             vision_tap_ready_=false;
         }
         if(camera_analysis_label_)lv_label_set_text(camera_analysis_label_,result.c_str());
-        if(ok && camera_panel_ && !lv_obj_has_flag(camera_panel_,LV_OBJ_FLAG_HIDDEN))
+        if(ok && EspenVision().CloudEnabled() && camera_panel_ &&
+           !lv_obj_has_flag(camera_panel_,LV_OBJ_FLAG_HIDDEN))
             pending_vision_voice_=std::move(result);
     }
     void PumpVisionNarration(){
