@@ -624,7 +624,8 @@ public:
         f.pose.accent=p.accent;
         f.eye_left=Approach(f.eye_left,std::max(4,(p.eye_h+p.asym/2)*blink/100),speed*7);
         f.eye_right=Approach(f.eye_right,std::max(4,(p.eye_h-p.asym)*blink/100),speed*7);
-        f.gaze_x=Approach(f.gaze_x,gx,speed);f.gaze_y=Approach(f.gaze_y,gy,speed);
+        const int gaze_speed=(behavior_active_ && (phase==Phase::Idle || phase==Phase::Offline)) ? std::min(speed,3) : speed;
+        f.gaze_x=Approach(f.gaze_x,gx,gaze_speed);f.gaze_y=Approach(f.gaze_y,gy,gaze_speed);
         int bob=0;
         if(!behavior_phone_ && (dance||social_==Social::Celebration)) {
             int step=static_cast<int>(((now-(social_==Social::Celebration?social_at_:celebrate_at_))/40)%24);
