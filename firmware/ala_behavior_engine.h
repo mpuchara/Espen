@@ -31,6 +31,8 @@ struct BehaviorDecision {
     bool allow_spontaneous_speech = false; // deliberately false in stage 2
     bool allow_emotional_sound = false;   // existing audio cues own sound policy
     bool changed = false;
+    bool preempted = false;
+    BehaviorSource previous_source = BehaviorSource::Neutral;
 };
 class AlaBehaviorEngine {
     struct Slot {
@@ -54,6 +56,7 @@ class AlaBehaviorEngine {
     uint32_t pending_at_ = 0, pending_sequence_ = 0, active_sequence_ = 0;
     uint32_t voice_ready_at_ = 0, voice_last_attempt_ = 0;
     bool voice_attempted_ = false;
+    bool speaking_emotion_ = false, previous_standby_ = false;
     bool initial_ = false;
     uint32_t idle_at_ = 0, next_micro_at_ = 0, chosen_at_ = 0;
     Phase previous_phase_ = Phase::Startup;
@@ -127,6 +130,7 @@ public:
         if (mood == Mood::Neutral) return; // preserve a short afterglow
         cloud_.Set(mood, now, 7500);
         afterglow_.Set(mood, now, kAfterglowMs);
+        speaking_emotion_ = true;
     }
     void SocialReaction(Social kind, uint32_t now) {
         if (kind == Social::None) return;
@@ -137,6 +141,7 @@ public:
         social_.Set(praise ? Mood::Surprise : joke ? Mood::Wink : final,
                     now, (praise || joke) ? 650 : 2400);
         afterglow_.Set(final, now, kAfterglowMs);
+        speaking_emotion_ = true;
     }
     void Touch(Gesture gesture, uint32_t now) {
         const Mood mood = gesture == Gesture::DoubleTap ? Mood::Surprise :
@@ -148,22 +153,46 @@ public:
         afterglow_.Set(mood, now, 7000);
     }
     void ReplyReaction(ReplyBeat beat, uint32_t now) {
-        if (beat != ReplyBeat::None) reply_.Set(ReplyMood(beat), now, 1800);
+        if (beat != ReplyBeat::None) {
+            reply_.Set(ReplyMood(beat), now, 1800);
+            afterglow_.Set(ReplyMood(beat), now, kAfterglowMs);
+            speaking_emotion_ = true;
+        }
     }
     void DifficultQuestion(uint32_t now) {
         direct_.Set(Mood::Thinking, now, 2400);
         afterglow_.Set(Mood::Thinking, now, 7000);
     }
+    void LocalPreview(Mood mood, uint32_t now) {
+        direct_.Set(mood, now, kPhonePreviewMs); // on-device demo button
+    }
+    void Woke(uint32_t now) {
+        direct_.Set(Mood::Happy, now, 1700);
+        afterglow_.Set(Mood::Happy, now, 4000);
+    }
+    void Celebrate(uint32_t now) {
+        direct_.Set(Mood::Excited, now, 2200);
+    }
+    void SleepRequested() { ResetTransient(); speaking_emotion_ = false; }
     // No wake-word classifier or TV classifier is introduced here.
     // External standby/wake policy remains the only authority for Xiaozhi.
     BehaviorDecision Tick(uint32_t now, Phase phase, bool standby, bool awake = true) {
         if (initial_ && previous_phase_ == Phase::Speaking &&
-            phase != Phase::Speaking &&
-            (cloud_.Alive(now) || reply_.Alive(now))) {
-            // Mood starts decaying when TTS ends, not when the first packet arrived.
-            afterglow_.Set(cloud_.Alive(now) ? cloud_.mood : reply_.mood,
-                           now, kAfterglowMs);
+            phase != Phase::Speaking) {
+            // A long TTS must not spend its afterglow while still speaking.
+            if (speaking_emotion_ && afterglow_.valid)
+                afterglow_.Set(afterglow_.mood, now, kAfterglowMs);
+            speaking_emotion_ = false;
         }
+        if (phase == Phase::Speaking && speaking_emotion_ && afterglow_.valid)
+            afterglow_.Set(afterglow_.mood, now, kAfterglowMs);
+        if (standby && !previous_standby_) {
+            // No social reaction from a cancelled conversation leaks into wake.
+            ResetTransient();
+            pending_voice_ = false;
+            speaking_emotion_ = false;
+        }
+        previous_standby_ = standby;
         if (!initial_ || phase != previous_phase_) {
             if (!initial_ || phase == Phase::Idle || phase == Phase::Offline) {
                 idle_at_ = now;
@@ -241,6 +270,9 @@ public:
         d.changed = d.mood != previous_.mood ||
                     d.source != previous_.source ||
                     d.phone_locked != previous_.phone_locked;
+        d.previous_source = previous_.source;
+        d.preempted = d.changed && d.priority > previous_.priority &&
+                      previous_.source != BehaviorSource::Neutral;
         if (d.changed) chosen_at_ = now;
         previous_ = d;
         return d;
