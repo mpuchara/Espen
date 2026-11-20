@@ -3,7 +3,7 @@ on:
   pull_request:
     branches: [main, feature/ala-central-behavior-engine-stage2, feature/ala-living-robot-engine-stage3, feature/ala-conversation-intelligence-stage4, feature/ala-social-intelligence-stage5, feature/ala-native-xiaozhi-social-stage5-2, feature/ala-personal-memory-engine-stage6, feature/ala-local-face-recognition-stage7, feature/ala-multimodal-perception-stage7c]
   push:
-    branches: [main, feature/ala-personal-memory-engine-stage6]
+    branches: [main, feature/ala-personal-memory-engine-stage6, feature/ala-play-games-stage10]
   workflow_dispatch:
 permissions:
   contents: read
