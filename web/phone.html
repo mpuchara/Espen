@@ -53,6 +53,20 @@ small{display:block;color:#96aabe;margin-top:9px;line-height:1.5}.status{color:#
 <div id="social-status" class="status" role="status" aria-live="polite">Tryb wyłączony.</div>
 <small id="social-limits">Wszystkie polecenia wymagają kodu PIN. Kontekst znika po STOP, upływie czasu lub wyłączeniu sieci.</small>
 </section>
+<section id="face-section"><h2>📷 Rozpoznawanie domowników</h2>
+<p>Rozpoznawanie twarzy odbywa się <strong>wyłącznie w Ali</strong> na ESP32-P4. Jest domyślnie wyłączone. Twarze i wektory nie trafiają do Xiaozhi ani przez ten panel.</p>
+<p><strong>Uwaga:</strong> profile są tylko w RAM — znikną po restarcie. Rozpoznanie nie służy do logowania ani udostępniania wspomnień. Powitanie jest wyłącznie na ekranie.</p>
+<div class="buttons"><button id="face-on">▶ Włącz rozpoznawanie</button><button id="face-off" class="secondary">■ Wyłącz</button></div>
+<div id="face-status" class="status" role="status" aria-live="polite">Połącz z Alą, aby sprawdzić kamerę i model.</div>
+<h2 style="font-size:16px">Zarejestruj osobę</h2>
+<div class="inline"><input id="face-name" maxlength="48" autocomplete="off" placeholder="Imię, np. Tadeusz"></div>
+<label class="options"><span>Potwierdzam świadomą zgodę osoby; w przypadku dziecka jestem opiekunem i wyrażam zgodę.</span><input type="checkbox" id="face-consent"></label>
+<div class="buttons"><button id="face-enroll">📸 Zbieraj próbki</button><button id="face-commit" class="secondary">✅ Zatwierdź profil</button><button id="face-cancel" class="secondary">Anuluj</button></div>
+<div id="face-profiles" aria-live="polite"></div>
+<div class="buttons"><button id="face-clear" class="danger">🗑 Usuń wszystkie profile</button></div>
+<div id="face-message" class="status" role="status" aria-live="polite"></div>
+<small>Rejestracja wymaga czterech różnych, wyraźnych klatek z jedną twarzą. Nie traktuj wyniku rozpoznania jako gwarancji tożsamości. Funkcja eksperymentalna — wymaga testów fizycznych.</small>
+</section>
 <section id="memory-section"><h2>🧠 Co Ala pamięta?</h2>
 <p>Pamięć jest lokalna w Ali, domyślnie wyłączona. Zapisujesz tylko wybrane informacje; rozmowy nie są archiwizowane. Nie podawaj haseł, informacji medycznych ani danych wrażliwych.</p>
 <div class="buttons"><button id="memory-on">Włącz pamięć</button><button id="memory-off" class="secondary">Wyłącz</button></div>
@@ -280,6 +294,62 @@ $('social-quiet').onclick=()=>socialAction('quiet');
 $('social-normal').onclick=()=>socialAction('normal');
 $('social-talkative').onclick=()=>socialAction('talkative');
 $('social-comment').onclick=()=>socialAction('comment');
+
+
+let faceBusy=false;
+async function refreshFace(){
+  if(!pin||faceBusy)return;
+  try{
+    const data=JSON.parse(await request('/api/face'));
+    $('face-status').textContent=(data.enabled?'🟢 Włączone':'⚪ Wyłączone')+
+      ' · Kamera: '+(data.camera_running?'aktywna':'spoczywa')+
+      ' · Model: '+(data.model_error?'⚠ błąd':data.model_loaded?'gotowy':'niezaładowany')+
+      ' · Wynik: '+data.last+' · Osoby: '+data.count+'/'+data.limit+
+      ' · Próbki: '+data.samples+'/4'+
+      ' · Inferencja: '+data.inference_ms+' ms · Wolna PSRAM: '+data.free_psram_kb+' KB';
+    $('face-on').disabled=data.enabled;
+    $('face-off').disabled=!data.enabled;
+    $('face-commit').disabled=!data.enrolling||data.samples<4;
+    $('face-cancel').disabled=!data.enrolling;
+    $('face-enroll').disabled=data.enrolling||data.count>=5||data.model_error;
+    const list=$('face-profiles');list.replaceChildren();
+    for(const p of data.profiles){
+      const row=document.createElement('div');row.className='buttons';row.style.alignItems='center';
+      const label=document.createElement('div');label.style.flex='1';label.textContent='#'+p.id+' · '+p.name;
+      const remove=document.createElement('button');remove.className='danger';remove.textContent='✕ Usuń';
+      remove.onclick=()=>{if(confirm('Usunąć profil '+p.name+'?'))faceAction('delete|'+p.id)};
+      row.append(label,remove);list.append(row);
+    }
+  }catch(e){$('face-status').textContent='Rozpoznawanie: '+e.message;}
+}
+async function faceAction(command){
+  if(faceBusy)return;
+  faceBusy=true;
+  try{
+    const result=await request('/api/face','POST',command);
+    $('face-message').textContent=result==='OK'?'✅ Polecenie wykonane.':result;
+  }catch(e){$('face-message').textContent='⚠ '+e.message;}
+  finally{faceBusy=false;refreshFace();}
+}
+$('face-on').onclick=()=>faceAction('on');
+$('face-off').onclick=()=>faceAction('off');
+$('face-enroll').onclick=()=>{
+  const name=$('face-name').value.trim();
+  if(!$('face-consent').checked){$('face-message').textContent='Wymagana świadoma zgoda osoby lub opiekuna.';return;}
+  if(!name||new TextEncoder().encode(name).length>48||/[|\r\n]/.test(name)){
+    $('face-message').textContent='Podaj krótkie imię bez znaku | i znaków sterujących.';return;
+  }
+  faceAction('begin|YES|'+name);
+};
+$('face-commit').onclick=()=>faceAction('commit');
+$('face-cancel').onclick=()=>faceAction('cancel');
+$('face-clear').onclick=async()=>{
+  if(confirm('Usunąć wszystkie profile twarzy z RAM?') &&
+     prompt('Wpisz USUŃ, aby potwierdzić:')==='USUŃ')
+    await faceAction('clear|POTWIERDZAM');
+};
+setInterval(refreshFace,3500);
+setTimeout(refreshFace,1500);
 
 const memoryCategories={'1':'Preferencje','2':'Zainteresowania','3':'Robot','4':'Ustalenia','5':'Ważne'};
 let memoryEditing=0, memoryEnabled=false, memoryBusy=false;

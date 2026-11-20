@@ -36,8 +36,11 @@ c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_social_intelligence.cc -
 python3 tests/test_ala_social_contracts.py
 python3 tests/test_ala_native_xiaozhi.py
 python3 tests/test_memory_contracts.py
+python3 tests/test_ala_face_contracts.py
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_memory_engine.cc -o /tmp/ala-memory-test
 /tmp/ala-memory-test
+c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_face_recognition.cc -o /tmp/ala-face-test
+/tmp/ala-face-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_conversation_manager.cc -o /tmp/ala-turn-policy-test
 /tmp/ala-turn-policy-test
 /tmp/ala-behavior-engine-test
@@ -129,6 +132,8 @@ for setting in \
   CONFIG_WAKE_WORD_DISABLED=y \
   CONFIG_USE_AUDIO_PROCESSOR=y \
   CONFIG_CAM_CTLR_MIPI_CSI_ISR_CACHE_SAFE=y \
+  CONFIG_FLASH_HUMAN_FACE_FEAT_MFN_S8_V1=y \
+  CONFIG_FLASH_HUMAN_FACE_DETECT_MSRMNP_S8_V1=y \
   CONFIG_SR_NSN_NSNET2=y \
   CONFIG_SR_VADN_VADNET1_MEDIUM=y \
   CONFIG_ESP_HOSTED_MEMPOOL_PREFER_SPIRAM=y \
@@ -156,7 +161,13 @@ flash = json.loads((build / "flasher_args.json").read_text())["flash_files"]
 offsets = {Path(name).name: int(address, 0) for address, name in flash.items()}
 assert offsets.get("xiaozhi.bin") == 0x20000, offsets
 assert offsets.get("generated_assets.bin") == 0x800000, offsets
-assert (build / "xiaozhi.bin").stat().st_size <= 0x3f0000
+# Explicitly validate layout, not only requested board defaults.
+from pathlib import Path
+layout=Path("firmware/partitions_face_16m.csv").read_text()
+assert "ota_0,      app,  ota_0,   0x20000,   0x7e0000" in layout
+assert "assets,     data, spiffs,  0x800000,  8M" in layout
+assert "ota_1" not in [line.split(",")[0].strip() for line in layout.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+assert (build / "xiaozhi.bin").stat().st_size <= 0x7e0000
 assert (build / "generated_assets.bin").stat().st_size <= 0x800000
 manifest = json.loads(Path("web/manifest.json").read_text())
 assert manifest["builds"][0]["parts"] == [

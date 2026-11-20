@@ -5,6 +5,7 @@
 #include "config.h"
 #include "face_engine.h"
 #include "ala_behavior_engine.h"
+#include "ala_face_runtime.h"
 #include "speech_quality.h"
 #include "standby_policy.h"
 #include "speaker_audio.h"
@@ -1479,6 +1480,8 @@ class EspenDisplay : public LcdDisplay {
     uint32_t seen_local_wake_=0,seen_sleep_=0;
     lv_obj_t* wake_indicator_=nullptr;
     lv_obj_t* social_indicator_=nullptr;
+    lv_obj_t* face_greeting_label_=nullptr;
+    uint32_t face_greeting_seen_=0,face_greeting_until_=0;
     uint32_t social_label_second_=UINT32_MAX;
     lv_obj_t* speech_mode_label_=nullptr;
     lv_obj_t* waves_[5]={};
@@ -1742,6 +1745,12 @@ class EspenDisplay : public LcdDisplay {
         lv_obj_set_pos(social_indicator_,15,39);
         lv_obj_set_width(social_indicator_,355);
         Passive(social_indicator_);Hide(social_indicator_,true);
+        face_greeting_label_=lv_label_create(face_);
+        lv_obj_set_style_text_font(face_greeting_label_,EspenUiFont(),0);
+        lv_obj_set_style_text_color(face_greeting_label_,lv_color_hex(0x8CE7CB),0);
+        lv_obj_set_pos(face_greeting_label_,15,66);
+        lv_obj_set_width(face_greeting_label_,355);
+        Passive(face_greeting_label_);Hide(face_greeting_label_,true);
         // Persistent local name, refreshed on the LVGL task after a phone edit.
         // Place it in the top-right corner without obscuring the face or mic bar.
         robot_name_label_=lv_label_create(face_);
@@ -1841,6 +1850,19 @@ class EspenDisplay : public LcdDisplay {
             static_cast<uint32_t>(esp_timer_get_time()/1000),social_standby,
             EspenNetworkAvailable());
         if(!face_||OverlayVisible())return;
+        // Local biometric result is only a benign visual event in the existing
+        // arbiter. It never wakes Xiaozhi or overrides a persistent phone mood.
+        std::string face_hello;
+        if(espen::AlaFaceRuntime::Instance().PollGreeting(face_greeting_seen_,face_hello)) {
+            lv_label_set_text(face_greeting_label_,face_hello.c_str());
+            face_greeting_until_=now+4000;
+            Hide(face_greeting_label_,false);
+            behavior_.SocialReaction(espen::Social::Greeting,now);
+        }
+        if(face_greeting_until_ && static_cast<int32_t>(now-face_greeting_until_)>=0) {
+            Hide(face_greeting_label_,true);
+            face_greeting_until_=0;
+        }
         auto& phone=espen::PhonePanel::Instance();
         const uint32_t name_rev=phone.NameRevision();
         if(name_rev!=seen_robot_name_revision_ && robot_name_label_) {

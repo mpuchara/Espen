@@ -1,0 +1,8 @@
+# Single full-install ESP32-P4 image for Stage 7. No OTA updates on Ala.
+# App expands only into previously unused ota_1 space. Assets unchanged at 0x800000.
+# Name,     Type, SubType, Offset,    Size,       Flags
+nvs,        data, nvs,     0x9000,    0x4000,
+otadata,    data, ota,     0xd000,    0x2000,
+phy_init,   data, phy,     0xf000,    0x1000,
+ota_0,      app,  ota_0,   0x20000,   0x7e0000,
+assets,     data, spiffs,  0x800000,  8M,

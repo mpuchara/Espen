@@ -1,7 +1,7 @@
 name: Ala behavior contracts
 on:
   pull_request:
-    branches: [main, feature/ala-central-behavior-engine-stage2, feature/ala-living-robot-engine-stage3, feature/ala-conversation-intelligence-stage4, feature/ala-social-intelligence-stage5, feature/ala-native-xiaozhi-social-stage5-2]
+    branches: [main, feature/ala-central-behavior-engine-stage2, feature/ala-living-robot-engine-stage3, feature/ala-conversation-intelligence-stage4, feature/ala-social-intelligence-stage5, feature/ala-native-xiaozhi-social-stage5-2, feature/ala-personal-memory-engine-stage6]
   push:
     branches: [main, feature/ala-personal-memory-engine-stage6]
   workflow_dispatch:
@@ -18,8 +18,11 @@ jobs:
         run: |
           set -euo pipefail
           python3 tests/test_memory_contracts.py
+          python3 tests/test_ala_face_contracts.py
           c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_memory_engine.cc -o /tmp/ala-memory-test
           /tmp/ala-memory-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_face_recognition.cc -o /tmp/ala-face-test
+          /tmp/ala-face-test
           python3 tests/test_behavior_contracts.py
           python3 tests/test_ala_social_contracts.py
           python3 tests/test_ala_native_xiaozhi.py
