@@ -29,7 +29,7 @@ assert "kSamplesRequired" in header and "consecutive_<3" in header
 assert "if(!consent" in header and "void Clear()" in header
 assert 'add("/api/face", HTTP_GET, FaceGet)' in panel
 assert 'add("/api/face", HTTP_POST, FacePost)' in panel
-assert "config.max_uri_handlers = 15" in panel
+assert "config.max_uri_handlers = 17" in panel
 assert "if(!Instance().Authorized(req))" in panel
 assert '"storage"' in html or 'tylko w RAM' in html
 assert 'id="face-consent"' in html and "begin|YES|" in html
