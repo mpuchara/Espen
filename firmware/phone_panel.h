@@ -219,9 +219,9 @@ class PhonePanel {
             Application::GetInstance().GetDeviceState() == kDeviceStateListening;
         char json[410];
         snprintf(json, sizeof(json),
-            "{\\"active\\":%s,\\"remaining_ms\\":%lu,\\"activity\\":%u,"
-            "\\"context\\":%u,\\"listening\\":%s,\\"auto_evaluation\\":false,"
-            "\\"comments\\":%lu,\\"utterances\\":%lu}",
+            "{\"active\":%s,\"remaining_ms\":%lu,\"activity\":%u,"
+            "\"context\":%u,\"listening\":%s,\"auto_evaluation\":false,"
+            "\"comments\":%lu,\"utterances\":%lu}",
             snapshot.active?"true":"false",
             static_cast<unsigned long>(snapshot.remaining_ms),
             static_cast<unsigned>(snapshot.activity),
