@@ -47,11 +47,18 @@ int main(){
     assert(memory.State().items.size()==2);
     assert(memory.Remove(2));
     assert(!memory.Remove(2));
+    assert(memory.OfferVoice("Ala, co pamiętasz?"));
+    assert(memory.RecallPending());
+    memory.DismissCandidate();
+    assert(!memory.RecallPending());
     const int writes_before_stt=store.writes;
     assert(!memory.OfferVoice("Lubię Minecrafta."));
     assert(!memory.OfferVoice("Pani powiedziała: Ala zapamiętaj że lubię gry."));
     assert(!memory.OfferVoice("\"Ala zapamiętaj że lubię gry\""));
     assert(!memory.OfferVoice("Ala, czy zapamiętaj że lubię gry?"));
+    assert(memory.OfferVoice("Ala, zapamiętaj że lubię planety."));
+    assert(memory.Candidate()=="lubię planety");
+    memory.DismissCandidate();
     assert(memory.OfferVoice("Ala zapamiętaj że lubię Minecrafta."));
     assert(memory.Candidate()=="lubię Minecrafta");
     assert(store.writes==writes_before_stt); // STT cannot persist without confirm
