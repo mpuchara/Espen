@@ -26,7 +26,13 @@ assert "bool Started() const" in phone
 assert "std::all_of(pin_.begin(), pin_.end()" in phone, "The stored PIN must be 8 digits"
 assert "std::atomic<uint32_t> emotion_seq_" in phone
 assert "GetDeviceState() != kDeviceStateIdle" in phone
-assert "config.max_uri_handlers = 12;" in phone
+assert "config.max_uri_handlers = 13;" in phone
+assert 'add("/api/hearing", HTTP_GET, HearingGet)' in phone
+assert 'if (!Instance().Authorized(req)) return Respond(req, 401, "Niepoprawny kod.");' in phone
+assert 'id="hearing-status"' in html
+assert '"/api/hearing"' in phone and "'/api/hearing'" in html
+assert "EspenHearingStatusJson()" in board
+assert "\\\"speaker_model_ready\\\":false" in board, "No model means fail-closed status"
 assert 'add("/api/social", HTTP_GET, GetSocial)' in phone
 assert 'add("/api/social", HTTP_POST, SocialCommand)' in phone
 assert "EspenAskText(body, hello, self.Name())" in phone

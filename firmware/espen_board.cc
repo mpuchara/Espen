@@ -135,6 +135,28 @@ void EspenMicStats(int rms,int peak,int clip) {
     int n=mic_noise.load(std::memory_order_relaxed);
     if(!n||rms<n*2)mic_noise.store(n?(n*15+rms)/16:rms,std::memory_order_relaxed);
 }
+// Aggregate only; no audio samples or personal identity over HTTP.
+std::string EspenHearingStatusJson() {
+    Settings settings("espen_audio", false);
+    const int mode = espen::ResolveMicMode(settings.GetInt("mic_profile", -1),
+                                            settings.GetInt("mic_gain", -1));
+    const auto wake = EspenWake().Get();
+    const bool vad = Application::GetInstance().GetAudioService().IsVoiceDetected();
+    char result[640];
+    snprintf(result, sizeof(result),
+        "{\"microphone_profile\":%d,\"rms\":%d,\"noise\":%d,\"peak\":%d,"
+        "\"clip_per_mille\":%d,\"vad\":%s,\"wake_running\":%s,"
+        "\"wake_frames\":%lu,\"pre_roll_ms\":300,\"pcm_rate\":16000,"
+        "\"speaker_model_ready\":false,\"speaker_profiles\":0,"
+        "\"speaker_storage\":\"unavailable\"}",
+        mode, mic_rms.load(std::memory_order_relaxed),
+        mic_noise.load(std::memory_order_relaxed),
+        mic_peak.load(std::memory_order_relaxed),
+        mic_clip.load(std::memory_order_relaxed),
+        vad ? "true" : "false", wake.running ? "true" : "false",
+        static_cast<unsigned long>(wake.frames));
+    return result;
+}
 static int EspenMicMeter() {
     uint32_t v=espen_mic_meter.load(std::memory_order_relaxed);
     uint32_t now=static_cast<uint32_t>(esp_timer_get_time()/1000);

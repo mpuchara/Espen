@@ -82,6 +82,12 @@ small{display:block;color:#96aabe;margin-top:9px;line-height:1.5}.status{color:#
 <div class="buttons"><button id="memory-ask" class="secondary">💬 Zapytaj Xiaozhi — wyrażam zgodę</button></div>
 <div id="memory-message" class="status" role="status" aria-live="polite"></div>
 </section>
+<section id="hearing-section"><h2>🎤 Jakość słyszenia i głosy</h2>
+<p>Bieżące, anonimowe poziomy mikrofonu z Ali. Żadne nagrania nie są wysyłane do panelu.</p>
+<div id="hearing-status" class="status" role="status">Połącz z Alą, aby sprawdzić mikrofon.</div>
+<small>Pre-roll 300 ms pozostaje domyślny do walidacji na prawdziwym urządzeniu. Profile mikrofonu można zmieniać w diagnostyce Ali.</small>
+<p><strong>Rozpoznawanie domowników po głosie:</strong> niedostępne w tym wydaniu. Brak podłączonego modelu, rejestracja głosów wyłączona.</p>
+</section>
 <small>Panel działa lokalnie przez Wi-Fi. Nie udostępniaj kodu sterowania innym osobom. Połączenie ze sztuczną inteligencją Xiaozhi wymaga Internetu i działającego głośnika.</small>
 </main>
 <script>
@@ -386,6 +392,21 @@ $('memory-ask').onclick=async()=>{
   const result=await memoryAction('ask|'+query);
   if(result){$('answer').textContent='Czekam na odpowiedź Xiaozhi…';startReplyPolling();}
 };
+async function refreshHearing(){
+ if(!pin)return;
+ try{
+   const d=JSON.parse(await request('/api/hearing'));
+   const modes=['Automatyczny','Standardowy','Czuły','Bardzo czuły','Poprzedni'];
+   $('hearing-status').textContent='🎙️ '+(modes[d.microphone_profile]||'Nieznany')+
+      ' · RMS '+d.rms+' · szum ~'+d.noise+' · peak '+d.peak+
+      ' · clipping '+d.clip_per_mille+'/1000 (ostatni blok)'+
+      ' · VAD '+(d.vad?'mowa':'cisza')+
+      ' · wake '+(d.wake_running?'aktywne':'nieaktywne')+
+      ' · pre-roll '+d.pre_roll_ms+' ms · PCM '+d.pcm_rate+' Hz';
+ }catch(e){$('hearing-status').textContent='Diagnostyka mikrofonu: '+e.message;}
+}
+setInterval(refreshHearing,2500);
+setTimeout(refreshHearing,1500);
 setInterval(refreshMemory,4000);
 setTimeout(refreshMemory,1400);
 

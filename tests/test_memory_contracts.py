@@ -17,7 +17,7 @@ assert 'memory_.OfferVoice(text)' in panel
 assert 'ObserveMemoryStt(text);' in panel
 assert 'memory_.Search' in panel and 'app.EspenAskText(prompt,false,self.Name())' in panel
 assert 'app.EspenIsStandby()' in panel
-assert 'config.max_uri_handlers = 12;' in panel
+assert 'config.max_uri_handlers = 13;' in panel
 assert 'MemoryNvsStore' in engine and 'nvs_commit(h)' in engine
 assert '"ala_memory"' in engine and '"snapshot"' in engine
 assert 'kMaxItems=20' in engine and 'kMaxTextBytes=160' in engine
