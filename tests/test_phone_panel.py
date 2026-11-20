@@ -26,7 +26,9 @@ assert "bool Started() const" in phone
 assert "std::all_of(pin_.begin(), pin_.end()" in phone, "The stored PIN must be 8 digits"
 assert "std::atomic<uint32_t> emotion_seq_" in phone
 assert "GetDeviceState() != kDeviceStateIdle" in phone
-assert "config.max_uri_handlers = 8;" in phone
+assert "config.max_uri_handlers = 10;" in phone
+assert 'add("/api/social", HTTP_GET, GetSocial)' in phone
+assert 'add("/api/social", HTTP_POST, SocialCommand)' in phone
 assert "EspenAskText(body, hello, self.Name())" in phone
 assert 'body.compare(0,4,"ask|")==0' in phone
 assert '"hello"' in phone
