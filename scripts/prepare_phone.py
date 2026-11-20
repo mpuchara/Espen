@@ -24,6 +24,7 @@ assert ")ALA_PHONE_HTML\"" not in html
 (board / "phone_panel.h").write_bytes((root / "firmware/phone_panel.h").read_bytes())
 (board / "robot_name.h").write_bytes((root / "firmware/robot_name.h").read_bytes())
 (board / "ala_social_intelligence.h").write_bytes((root / "firmware/ala_social_intelligence.h").read_bytes())
+(board / "ala_memory_engine.h").write_bytes((root / "firmware/ala_memory_engine.h").read_bytes())
 
 # The HTTP listener is only enabled for our board; ESP-IDF 6 requires an
 # explicit component dependency rather than relying on transitive headers.
