@@ -1,0 +1,55 @@
+name: Ala Stage 10 - story, dock, and firmware checks
+on:
+  push:
+    branches: [feature/ala-play-games-stage10]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  story-host-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test stories and UI/audio contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/prepare_phone.py
+          python3 tests/test_ala_play_games_contracts.py
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_play_games.cc -o /tmp/ala-story-test
+          /tmp/ala-story-test
+  esp32-p4-build:
+    needs: story-host-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    container:
+      image: espressif/idf:v6.1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and verify complete firmware image
+        shell: bash
+        run: |
+          set -euo pipefail
+          source "$IDF_PATH/export.sh"
+          bash scripts/build.sh
+          (cd dist && sha256sum --check espen.bin.sha256 && sha256sum --check espen-update.sha256)
+          python3 - <<'PY'
+          from pathlib import Path
+          full=Path("dist/espen.bin").read_bytes()
+          app=Path("dist/espen-app.bin").read_bytes()
+          assert 0x800000<len(full)<=16*1024*1024
+          assert full[0x2000]==0xE9 and full[0x20000]==0xE9
+          assert full[0x20000:0x20000+len(app)]==app
+          print("Stage 10 full firmware layout and checksums OK")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ala-stage10-spoken-story-full-flash
+          path: |
+            dist/espen.bin
+            dist/espen.bin.sha256
+            dist/espen-app.bin
+            dist/espen-assets.bin
+            dist/espen-update.sha256
+          if-no-files-found: error
