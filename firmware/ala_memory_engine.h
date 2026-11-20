@@ -219,12 +219,15 @@ public:
             s.pop_back();
         }
         // Find the payload boundary in the original UTF-8, preserving its spelling.
-        const bool remember=s.compare(0,16,"ala zapamietaj ze ")==0 ||
-               s.compare(0,18,"ala, zapamietaj, ze ")==0 ||
-               s.compare(0,20,"hej ala zapamietaj ze ")==0 ||
-               s.compare(0,22,"hej ala, zapamietaj, ze ")==0;
-        const bool forget=s.compare(0,14,"ala zapomnij ze ")==0 ||
-               s.compare(0,16,"ala, zapomnij, ze ")==0;
+        const auto starts=[&s](const char* prefix) {
+            return s.compare(0,std::strlen(prefix),prefix)==0;
+        };
+        const bool remember=starts("ala zapamietaj ze ") ||
+               starts("ala, zapamietaj, ze ") ||
+               starts("hej ala zapamietaj ze ") ||
+               starts("hej ala, zapamietaj, ze ");
+        const bool forget=starts("ala zapomnij ze ") ||
+               starts("ala, zapomnij, ze ");
         if(!remember && !forget)return false;
         // Folded character lengths can differ in UTF-8; extract after the
         // original "że " delimiter, never from an arbitrary substring.
