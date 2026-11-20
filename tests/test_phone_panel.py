@@ -13,7 +13,7 @@ android = (root / "android/app/src/main/java/pl/homemind/ala/phone/MainActivity.
 board = (root / "firmware/espen_board.cc").read_text(encoding="utf-8")
 assert '<textarea id="sentence"' in html
 assert 'Na stałe' in html
-assert 'http://' not in html, "Phone page must connect to its current same-origin robot"
+assert "await fetch(path,{method" in html, "Phone panel API must be same-origin; the optional HA URL is a field"
 for api in ("/api/emotion", "/api/say", "/api/chat", "/api/reply", "/api/status", "/api/name"):
     assert api in html and api in phone, api
 assert "X-Ala-Pin" in html and "X-Ala-Pin" in phone
@@ -26,7 +26,7 @@ assert "bool Started() const" in phone
 assert "std::all_of(pin_.begin(), pin_.end()" in phone, "The stored PIN must be 8 digits"
 assert "std::atomic<uint32_t> emotion_seq_" in phone
 assert "GetDeviceState() != kDeviceStateIdle" in phone
-assert "config.max_uri_handlers = 15;" in phone  # Twelve existing routes plus Stage 7 GET/POST face routes
+assert "config.max_uri_handlers = 17;" in phone  # Twelve existing routes plus Stage 7 GET/POST face routes
 assert 'add("/api/hearing", HTTP_GET, HearingGet)' in phone
 assert 'id="hearing-status"' in html
 assert '"/api/hearing"' in phone and "'/api/hearing'" in html
