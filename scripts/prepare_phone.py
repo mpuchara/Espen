@@ -23,6 +23,7 @@ assert ")ALA_PHONE_HTML\"" not in html
     encoding="utf-8")
 (board / "phone_panel.h").write_bytes((root / "firmware/phone_panel.h").read_bytes())
 (board / "robot_name.h").write_bytes((root / "firmware/robot_name.h").read_bytes())
+(board / "ala_social_intelligence.h").write_bytes((root / "firmware/ala_social_intelligence.h").read_bytes())
 
 # The HTTP listener is only enabled for our board; ESP-IDF 6 requires an
 # explicit component dependency rather than relying on transitive headers.
@@ -124,6 +125,9 @@ replace(source, anchor, remote)
 replace(source, 'if (!role || !message || !button_added_) return;',
         'if(role && message && strcmp(role,"assistant")==0)\n'
         '            espen::PhonePanel::Instance().RememberReply(message);\n'
+        '        if(role && message && strcmp(role,"user")==0)\n'
+        '            espen::PhonePanel::Instance().ObserveSocialStt(message,\n'
+        '                static_cast<uint32_t>(esp_timer_get_time()/1000));\n'
         '        if (!role || !message || !button_added_) return;')
 # Dedicated pairing screen: IP and PIN must be easy to find even when the
 # Wi-Fi settings keyboard takes half the LCD. Show the same NVS-backed PIN that
