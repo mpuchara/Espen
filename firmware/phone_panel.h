@@ -335,6 +335,7 @@ class PhonePanel {
                  ",\"limit\":20,\"bytes\":"+std::to_string(self.memory_.EstimatedBytes())+
                  ",\"candidate\":"+JsonString(self.memory_.Candidate())+
                  ",\"pending_delete\":"+(self.memory_.PendingDelete()?"true":"false")+
+                 ",\"recall_pending\":"+(self.memory_.RecallPending()?"true":"false")+
                  ",\"items\":[";
             bool first=true;
             for(const auto& item:state.items) {
@@ -367,6 +368,7 @@ class PhonePanel {
                 self.EnsureMemory();
                 if(!self.memory_.State().enabled)return Respond(req,409,"Włącz najpierw pamięć.");
                 const auto records=self.memory_.Search(body=="ask"?"":body.substr(4),3);
+                self.memory_.DismissCandidate();
                 if(records.empty())return Respond(req,409,"Brak pasujących wspomnień.");
                 prompt="Odpowiedz po polsku na pytanie o lokalnie zapisane informacje Ali. "
                        "Tylko te zatwierdzone wspomnienia wolno wykorzystac, "
