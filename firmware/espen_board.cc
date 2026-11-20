@@ -1834,6 +1834,12 @@ class EspenDisplay : public LcdDisplay {
     void TickFace() {
         uint32_t now=lv_tick_get();
         RefreshCameraPanel(now);
+        // Consent expiry and standby STOP must run even while Settings/Chat
+        // overlays hide the face. No phone/browser polling is required.
+        const bool social_standby=Application::GetInstance().EspenIsStandby();
+        const auto social=espen::PhonePanel::Instance().TickSocial(
+            static_cast<uint32_t>(esp_timer_get_time()/1000),social_standby,
+            EspenNetworkAvailable());
         if(!face_||OverlayVisible())return;
         auto& phone=espen::PhonePanel::Instance();
         const uint32_t name_rev=phone.NameRevision();
@@ -1917,11 +1923,9 @@ class EspenDisplay : public LcdDisplay {
             behavior_.SetDayPart(part);
         }
         behavior_.SetPersona(engine_.GetPersona());
-        const bool standby=Application::GetInstance().EspenIsStandby();
+        const bool standby=social_standby;
         // Existing LVGL tick updates only a compact consent status.
         // Neither the indicator nor consent starts passive audio capture.
-        const auto social=espen::PhonePanel::Instance().TickSocial(
-            static_cast<uint32_t>(esp_timer_get_time()/1000),standby,wifi_online_);
         Hide(social_indicator_,!social.active);
         if(social.active) {
             const auto seconds=(social.remaining_ms+999u)/1000u;
