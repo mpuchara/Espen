@@ -1,13 +1,17 @@
-# Ala Stage 10 — gry dotykowe
-**Repo:** mpuchara/Espen; bazowy PR #47. Trzy gry offline dla dzieci (bez HA, API, STT/TTS, nowego serwera).
-## Sterowanie
-Dotknij **GRY** na twarzy Ali lub **Ustawienia → Gry dla dzieci**. Trzy duże przyciski, X (wyjście), Dalej, Zagraj ponownie i Inna gra. Tekst po polsku z pełnym fontem. UI i stan gier działają na LVGL, niezależnie od audio.
-## Gry
-- **Quiz Mistrza:** 12 pytań z wiedzy ogólnej, pięć różnych pytań na rozgrywkę, trzy możliwości, 10 gwiazdek za poprawną odpowiedź.
-- **Zgadnij zwierzę:** dziewięć zagadek przyrodniczych, pięć w rozgrywce, trzy możliwości, punkty i zachęcające komunikaty.
-- **Magiczna opowieść:** trzy decyzje, po dwie opcje, wybory wpływają na dalszą scenę i jedno z czterech zakończeń.
-## Prywatność i ograniczenia
-Rozgrywka w RAM, bez kamery, mikrofonu, Internetu, danych osobowych ani NVS. Gry nie przerywają strumienia audio Xiaozhi. Nie ma jeszcze automatycznego mówienia instrukcji gier ani głosowego wybierania odpowiedzi; interakcja odbywa się dotykiem. Nie dodano LLM ani nowego TTS/STT.
+# Ala Stage 10 — aktualizacja gier Ali i nawigacji
+
+**Gałąź:** `feature/ala-play-games-stage10` (PR #50). Funkcja dziecięca, bez integracji Home Assistant.
+
+## Magiczna opowieść
+Wybór tematu na ekranie: **W magicznym lesie**, **Nad jeziorem** oraz **Z mamą w samochodzie**. Każdy temat ma trzy etapy decyzji, dwa warianty na etap i cztery zakończenia. Scena i dalsze możliwości pojawiają się w kartach blisko dolnej części ekranu.
+
+**Głos:** po wyświetleniu sceny Ala prosi już skonfigurowanego asystenta Xiaozhi, aby przeczytał tekst historii i kolejno nazwał opcje (pierwsza, druga, trzecia). Przycisk **Powtórz opcje** pozwala ponowić narrację aktualnej sceny, również przy zakończeniu. Nowy tekst jest kolejkowany, aż urządzenie będzie gotowe; nie rozbrzmiewają jednocześnie dwa wywołania. **To nie jest lokalny TTS:** bez Wi-Fi i działającego Xiaozhi historia oraz odpowiedzi nadal działają na dotyk, lecz narracja głosowa nie jest dostępna. Ostateczny sposób odczytania tekstu zależy od odpowiedzi chmury Xiaozhi.
+
+## Stały dolny pasek
+Trzy duże ikony **Gry**, **Aparat**, **Mikrofon** zostały przeniesione na dół ekranu pod przewijaną rozmowę. Pasek jest niezależny od twarzy robota, a stary przycisk GRY z twarzy usunięty. Aparat otwiera dotychczasowy widok kamery; Mikrofon wywołuje dotychczasowe ręczne start/stop nasłuchiwania, a w stanie bez odbioru służy do wybudzenia. Bez nowych sterowników, torów audio i zadań nagrywania. Pasek jest nad warstwą modalną; pamiętaj o przewijaniu ustawień do ostatnich elementów.
+
 ## Testy
-Host: test_ala_play_games.cc, test_ala_play_games_contracts.py. Firmware: ESP32-P4 + pełny espen.bin SHA256. 
-**WYMAGANE na fizycznej Ali:** sprawdzić przycisk GRY, odpowiedzi, punkty, wszystkie zakończenia historii, polski font, działanie X i powrotu, 30 min rozmów Xiaozhi podczas uruchamiania/zamykania gier, dotyk, standby, barge-in i STOP. Nie oznaczać wersji jako stable bez testów urządzenia.
+- Host: `tests/test_ala_play_games.cc` — trzy tematy i ścieżki wyboru.
+- Kontrakty: `tests/test_ala_play_games_contracts.py`.
+- ESP-IDF: pełny build ESP32-P4 + walidacja obrazu instalacyjnego przed publikacją.
+- Na fizycznej Ali: sprawdzić trzy przyciski dolne i brak starego na twarzy, oba mikrofonowe stany, aparat, poziom/głośność narracji, odtwarzanie opcji i ich powtarzanie, zachowanie w trakcie mowy, przejścia pomiędzy etapami, offline, standby, dotyk w ustawieniach oraz normalne rozmowy Xiaozhi. **Nie oznaczać wersji jako stabilnej bez testu na urządzeniu.**
