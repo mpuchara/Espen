@@ -21,12 +21,23 @@ inline const char* BehaviorSourceName(BehaviorSource s) {
         default: return "neutral";
     }
 }
+// Visual activity is deliberately independent of Xiaozhi standby.
+enum class DayPart : uint8_t { Unknown, Day, Evening, Night };
+struct LivingTiming {
+    uint32_t active_ms = 45000;
+    uint32_t sleep_ms = 210000;
+    uint32_t evening_sleep_ms = 150000;
+    uint32_t night_sleep_ms = 90000;
+};
 struct BehaviorDecision {
     Mood mood = Mood::Neutral;
     BehaviorSource source = BehaviorSource::Neutral;
     uint8_t priority = 0;
     uint32_t remaining_ms = 0; // UINT32_MAX means user-locked.
     bool phone_locked = false;
+    LivingActivity activity = LivingActivity::Active;
+    LivingCue living_cue = LivingCue::None;
+    uint32_t living_sequence = 0; // new cue edge, never a per-frame trigger
     bool allow_autonomous_animation = false;
     bool allow_spontaneous_speech = false; // deliberately false in stage 2
     bool allow_emotional_sound = false;   // existing audio cues own sound policy
@@ -62,6 +73,72 @@ class AlaBehaviorEngine {
     Phase previous_phase_ = Phase::Startup;
     BehaviorDecision previous_{};
     uint32_t rejected_micro_ = 0;
+    LivingTiming living_timing_{};
+    LivingActivity living_activity_ = LivingActivity::Active;
+    DayPart daypart_ = DayPart::Unknown;
+    Persona persona_ = Persona::Friendly;
+    LivingCue living_cue_ = LivingCue::None, previous_cue_ = LivingCue::None;
+    uint32_t living_at_ = 0, living_duration_ = 0, living_next_at_ = 0;
+    uint32_t living_sequence_ = 0, living_rng_ = 0x91e10da5u;
+    bool forced_sleep_ = false;
+    static bool DueAt(uint32_t now, uint32_t deadline) {
+        return static_cast<int32_t>(now-deadline) >= 0;
+    }
+    uint32_t Random(uint32_t range) {
+        living_rng_ ^= living_rng_ << 13;
+        living_rng_ ^= living_rng_ >> 17;
+        living_rng_ ^= living_rng_ << 5;
+        return living_rng_ % range;
+    }
+    void MarkInteraction(uint32_t now) {
+        forced_sleep_ = false;
+        idle_at_ = now;
+        living_next_at_ = now+6500;
+        living_cue_ = LivingCue::None;
+    }
+    LivingCue ChooseCue(Mood mood) {
+        const auto traits = Personality(persona_);
+        // Energy and warmth influence the palette; no independent mood owner.
+        const LivingCue quiet[] = {LivingCue::Left, LivingCue::Right,
+            LivingCue::Up, LivingCue::Down, LivingCue::Blink, LivingCue::Smile,
+            LivingCue::Tilt, LivingCue::Squint};
+        const LivingCue lively[] = {LivingCue::Left, LivingCue::Right,
+            LivingCue::Up, LivingCue::Down, LivingCue::Blink, LivingCue::DoubleBlink,
+            LivingCue::Smile, LivingCue::Tilt, LivingCue::Squint};
+        const bool lively_style = traits.energy >= 65 &&
+            living_activity_ == LivingActivity::Active;
+        LivingCue cue = LivingCue::None;
+        for (int attempt=0; attempt<5; ++attempt) {
+            cue = lively_style ? lively[Random(9)] : quiet[Random(8)];
+            if (mood == Mood::Sleepy && cue == LivingCue::DoubleBlink)
+                cue = LivingCue::Blink;
+            if (mood == Mood::Love && cue == LivingCue::Squint)
+                cue = LivingCue::Smile;
+            if (cue != previous_cue_) break;
+        }
+        if (cue == previous_cue_) cue = cue == LivingCue::Left ?
+            LivingCue::Right : LivingCue::Left;
+        previous_cue_ = cue;
+        return cue;
+    }
+    void ScheduleLiving(uint32_t now, Mood mood, bool enabled) {
+        if (!enabled) { living_cue_ = LivingCue::None; return; }
+        if (living_cue_ != LivingCue::None &&
+            uint32_t(now-living_at_) >= living_duration_)
+            living_cue_ = LivingCue::None;
+        if (!DueAt(now, living_next_at_)) return;
+        living_cue_ = ChooseCue(mood);
+        living_at_ = now;
+        living_duration_ = living_cue_ == LivingCue::Tilt ||
+            living_cue_ == LivingCue::Smile ? 1650 : 1250;
+        ++living_sequence_;
+        const auto traits = Personality(persona_);
+        uint32_t pause = 6500 + Random(9700) + (100-traits.energy)*65;
+        if (living_activity_ == LivingActivity::Calm) pause += 4500;
+        if (daypart_ == DayPart::Evening) pause += 3500;
+        if (daypart_ == DayPart::Night) pause += 9500;
+        living_next_at_ = now + pause;
+    }
     static constexpr uint32_t kPhoneDelayMs = 5000;
     static constexpr uint32_t kPhonePreviewMs = 4200;
     static constexpr uint32_t kAfterglowMs = 14000;
@@ -106,6 +183,20 @@ public:
     // Phone command is a complete, versioned snapshot from HTTP -> LVGL mailbox.
     // Reset/X is immediate: removes both active and delayed commands, including
     // pending speech. No previous request can mature after cancellation.
+    void SetPersona(Persona persona) { persona_ = persona; }
+    void SetDayPart(DayPart part) { daypart_ = part; }
+    void SetLivingTiming(LivingTiming timing) {
+        // All intervals must be less than half the 32-bit clock range.
+        if (timing.active_ms >= 1000 &&
+            timing.sleep_ms > timing.active_ms &&
+            timing.sleep_ms < 0x7fffffffu &&
+            timing.evening_sleep_ms > timing.active_ms &&
+            timing.night_sleep_ms > timing.active_ms)
+            living_timing_ = timing;
+    }
+    void SetSeed(uint32_t seed) { living_rng_ = seed ? seed : 1u; }
+    LivingActivity Activity() const { return living_activity_; }
+    // All user-facing mood selection still goes through the stage-2 arbiter.
     void PhoneCommand(int mood, bool sticky, bool speak, uint32_t sequence, uint32_t now) {
         // Reject out-of-order HTTP/rollover snapshots, including a command
         // received before X. Equality alone would allow old seq to revive it.
@@ -135,6 +226,7 @@ public:
     void SocialReaction(Social kind, uint32_t now) {
         if (kind == Social::None) return;
         const Mood final = SocialMood(kind);
+        MarkInteraction(now);
         // Express a short moment of surprise before delight or amusement.
         const bool praise = kind == Social::Praise;
         const bool joke = kind == Social::Tickle || kind == Social::Celebration;
@@ -144,6 +236,7 @@ public:
         speaking_emotion_ = true;
     }
     void Touch(Gesture gesture, uint32_t now) {
+        MarkInteraction(now);
         const Mood mood = gesture == Gesture::DoubleTap ? Mood::Surprise :
             gesture == Gesture::TripleTap ? Mood::Excited :
             gesture == Gesture::Tickle ? Mood::Laugh :
@@ -164,16 +257,23 @@ public:
         afterglow_.Set(Mood::Thinking, now, 7000);
     }
     void LocalPreview(Mood mood, uint32_t now) {
+        MarkInteraction(now);
         direct_.Set(mood, now, kPhonePreviewMs); // on-device demo button
     }
     void Woke(uint32_t now) {
+        MarkInteraction(now);
         direct_.Set(Mood::Happy, now, 1700);
         afterglow_.Set(Mood::Happy, now, 4000);
     }
     void Celebrate(uint32_t now) {
+        MarkInteraction(now);
         direct_.Set(Mood::Excited, now, 2200);
     }
-    void SleepRequested() { ResetTransient(); speaking_emotion_ = false; }
+    void SleepRequested() {
+        forced_sleep_ = true;
+        ResetTransient();
+        speaking_emotion_ = false;
+    }
     // No wake-word classifier or TV classifier is introduced here.
     // External standby/wake policy remains the only authority for Xiaozhi.
     BehaviorDecision Tick(uint32_t now, Phase phase, bool standby, bool awake = true) {
@@ -194,37 +294,68 @@ public:
         }
         previous_standby_ = standby;
         if (!initial_ || phase != previous_phase_) {
-            if (!initial_ || phase == Phase::Idle || phase == Phase::Offline) {
+            const bool was_quiet = previous_phase_ == Phase::Idle ||
+                previous_phase_ == Phase::Offline || previous_phase_ == Phase::Startup;
+            const bool now_quiet = phase == Phase::Idle ||
+                phase == Phase::Offline || phase == Phase::Startup;
+            // Wi-Fi flapping between Idle and Offline must NOT renew activity.
+            if (!initial_ || (now_quiet && !was_quiet)) {
                 idle_at_ = now;
-                next_micro_at_ = now;
+                living_next_at_ = now+6500;
+            }
+            if (phase == Phase::Wake || phase == Phase::Listening) {
+                forced_sleep_ = false;
+                idle_at_ = now;
             }
             previous_phase_ = phase;
             initial_ = true;
         }
         if (pending_phone_ && After(now, pending_at_, kPhoneDelayMs)) {
             phone_.Set(pending_mood_, now, pending_sticky_ ? UINT32_MAX : kPhonePreviewMs);
+            if (!standby) MarkInteraction(now);
             active_sequence_ = pending_sequence_;
             pending_phone_ = false;
             voice_ready_at_ = now;
             voice_attempted_ = false;
             // pending_voice_ remains set until successful playback, expiry or X.
         }
-        const bool quiet = phase == Phase::Idle;
+        const bool quiet = phase == Phase::Idle || phase == Phase::Offline ||
+                           phase == Phase::Startup;
         const bool locked = phone_.Alive(now);
         const bool engaged = phase == Phase::Speaking || phase == Phase::Listening ||
                              phase == Phase::Thinking || phase == Phase::Wake;
-        const bool autonomous = quiet && !standby && !locked && !pending_phone_ && awake;
-        if (After(now, next_micro_at_, kMicroIntervalMs)) {
-            next_micro_at_ = now;
-            if (autonomous && !direct_.Alive(now) && !social_.Alive(now) &&
-                !cloud_.Alive(now) && !afterglow_.Alive(now)) {
-                micro_.Set(Mood::Wink, now, 1400);
-            } else {
-                ++rejected_micro_;
-            }
+        const uint32_t quiet_age = uint32_t(now-idle_at_);
+        const uint32_t sleep_threshold = daypart_ == DayPart::Night ?
+            living_timing_.night_sleep_ms : daypart_ == DayPart::Evening ?
+            living_timing_.evening_sleep_ms : living_timing_.sleep_ms;
+        living_activity_ = (standby || forced_sleep_) ? LivingActivity::Sleep :
+            (engaged || !quiet || quiet_age < living_timing_.active_ms) ?
+            LivingActivity::Active : quiet_age < sleep_threshold ?
+            LivingActivity::Calm : LivingActivity::Sleep;
+        const bool autonomous = (phase == Phase::Idle || phase == Phase::Offline) &&
+            !standby && !pending_phone_ &&
+            living_activity_ != LivingActivity::Sleep && awake;
+        // Face-only cues can coexist with a phone-locked mood. They never
+        // change that mood and cannot enqueue audio or start a conversation.
+        const bool visual_safe = autonomous && !direct_.Alive(now) &&
+            !social_.Alive(now) && !cloud_.Alive(now) && !afterglow_.Alive(now);
+        ScheduleLiving(now, locked ? phone_.mood : previous_.mood,
+                       visual_safe || (autonomous && locked));
+        if (living_cue_ != LivingCue::None && visual_safe && !locked &&
+            !micro_.Alive(now) && (living_cue_ == LivingCue::Smile ||
+             living_cue_ == LivingCue::Tilt || living_cue_ == LivingCue::DoubleBlink)) {
+            const Mood expression = living_cue_ == LivingCue::DoubleBlink ?
+                Mood::Wink : living_cue_ == LivingCue::Tilt ?
+                Mood::Thinking : Mood::Happy;
+            micro_.Set(expression, now, 1250);
+        } else if (!autonomous && living_cue_ != LivingCue::None) {
+            ++rejected_micro_;
         }
         BehaviorDecision d;
         d.allow_autonomous_animation = autonomous;
+        d.activity = living_activity_;
+        d.living_cue = living_cue_;
+        d.living_sequence = living_sequence_;
         auto pick = [&](const Slot& s, BehaviorSource source, uint8_t priority) {
             d.mood = s.mood; d.source = source; d.priority = priority;
             d.remaining_ms = s.Remaining(now);
@@ -248,9 +379,9 @@ public:
             pick(social_, BehaviorSource::Social, 60);
         } else if (afterglow_.Alive(now)) {
             pick(afterglow_, BehaviorSource::MoodMemory, 40);
-        } else if (quiet && awake && micro_.Alive(now)) {
+        } else if (autonomous && micro_.Alive(now)) {
             pick(micro_, BehaviorSource::Autonomous, 10);
-        } else if (quiet && After(now, idle_at_, 120000)) {
+        } else if (living_activity_ == LivingActivity::Sleep && quiet && !standby) {
             d.mood = Mood::Sleepy; d.source = BehaviorSource::MoodMemory;
             d.priority = 20;
         } else if (phase == Phase::Thinking) {
@@ -294,6 +425,7 @@ public:
     bool AllowSpontaneousSpeech() const { return false; }
     uint32_t RejectedAutonomousCount() const { return rejected_micro_; }
     void ResetTransient() {
+        living_cue_ = LivingCue::None;
         cloud_.Clear(); social_.Clear(); afterglow_.Clear(); reply_.Clear();
         direct_.Clear(); micro_.Clear();
     }

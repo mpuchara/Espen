@@ -13,6 +13,11 @@ enum class Persona { Friendly, Energetic, Calm, Playful, Shy, Robotic, Count };
 enum class Gesture { Tap, DoubleTap, Stroke, Tickle, TripleTap, Boop };
 enum class MouthShape { Closed, Open, Round, Wide };
 enum class Accent { None, Heart, Star, Tear, Blush, Dots, Sleep };
+// Stage 3 uses the same existing face renderer, with policy-owned visual cues.
+enum class LivingActivity : uint8_t { Active, Calm, Sleep };
+enum class LivingCue : uint8_t {
+    None, Left, Right, Up, Down, Blink, DoubleBlink, Smile, Tilt, Squint
+};
 struct Pose {
     int eye_h=44, eye_w=76, tilt=0, brow=0, asym=0;
     int mouth_w=88, mouth_h=8, smile=14;
@@ -243,6 +248,10 @@ class FaceEngine {
     // Policy comes from AlaBehaviorEngine, not from another animation pipeline.
     bool behavior_active_=false, behavior_phone_=false, behavior_hold_awake_=false;
     Mood behavior_mood_=Mood::Neutral;
+    LivingActivity living_activity_=LivingActivity::Active;
+    LivingCue living_cue_=LivingCue::None;
+    uint32_t living_sequence_seen_=0, sleep_transition_at_=0;
+    bool sleep_transition_=false;
     Social social_=Social::None;
     ReplyBeat reply_=ReplyBeat::None;
     uint32_t reply_at_=0;
@@ -260,6 +269,8 @@ class FaceEngine {
     uint32_t Rand(uint32_t n) { rng_^=rng_<<13; rng_^=rng_>>17; rng_^=rng_<<5; return rng_%n; }
     void ResetIdle(uint32_t now) { idle_since_=now; next_micro_=now+20000+Rand(15000); micro_active_=false; }
 public:
+    // Legacy unmanaged face timeout; managed activity/sleep is decided by
+    // AlaBehaviorEngine, never by this five-second fallback.
     static constexpr uint32_t kSleepMs=5000;
     void Celebrate(uint32_t now) {celebrating_=true;celebrate_at_=now;ResetIdle(now);}
     void LocalWake(uint32_t now) {local_waking_=true;local_wake_at_=now;wake_anim_=true;wake_anim_at_=now;force_sleep_=false;ResetIdle(now);}
@@ -274,6 +285,28 @@ public:
         behavior_mood_=mood;
         behavior_phone_=phone;
         behavior_hold_awake_=hold_awake;
+    }
+    void ManagedLiving(LivingActivity activity, LivingCue cue,
+                       uint32_t sequence, uint32_t now) {
+        if (activity == LivingActivity::Sleep &&
+            living_activity_ != LivingActivity::Sleep) {
+            sleep_transition_at_ = now;
+            sleep_transition_ = true;
+        } else if (activity != LivingActivity::Sleep) {
+            sleep_transition_ = false;
+        }
+        living_activity_ = activity;
+        living_cue_ = cue;
+        if (sequence != living_sequence_seen_) {
+            living_sequence_seen_ = sequence;
+            if ((cue == LivingCue::Blink || cue == LivingCue::DoubleBlink) &&
+                !blink_active_ && !frame_.asleep) {
+                blink_active_ = true;
+                blink_at_ = now;
+                double_blink_ = cue == LivingCue::DoubleBlink;
+                second_blink_ = false;
+            }
+        }
     }
     void Emotion(Mood m,uint32_t now) {
         // Idle/listening neutral messages from the protocol allow a short
@@ -352,7 +385,13 @@ public:
         bool quiet=phase==Phase::Idle||phase==Phase::Offline||phase==Phase::Startup;
         bool dance=celebrating_&&quiet;
         uint32_t idle=quiet?now-idle_since_:0;
-        bool asleep=quiet && !behavior_hold_awake_ && (force_sleep_||idle>=kSleepMs) && !touch_ && !gesture_active_ && social_==Social::None && !dance && !local_waking_;
+        // Visual SLEEP is separate from voice standby. Managed faces must not
+        // fall asleep after 5s, before the first autonomous microreaction.
+        bool asleep=quiet && !behavior_hold_awake_ &&
+            (force_sleep_ || (behavior_active_ ?
+                 living_activity_==LivingActivity::Sleep : idle>=kSleepMs)) &&
+            !touch_ && !gesture_active_ && social_==Social::None &&
+            !dance && !local_waking_;
         if(loud && !behavior_active_ && quiet && !touch_ && !gesture_active_ && social_==Social::None &&
            !dance && !local_waking_ && (!last_startle_||now-last_startle_>=3500)) {
             last_startle_=now;gesture_=Mood::Surprise;gesture_active_=true;gesture_until_=now+1100;
@@ -474,10 +513,23 @@ public:
                 default:break;
             }
         }
+        if(behavior_active_ && phase==Phase::Idle && !asleep) {
+            // Accent, mood and PCM mouth remain owned by the regular renderer.
+            if(living_cue_==LivingCue::Smile) p.smile=std::min(30,p.smile+6);
+            else if(living_cue_==LivingCue::Tilt) p.tilt=std::clamp(p.tilt+7,-23,23);
+            else if(living_cue_==LivingCue::Squint) p.eye_h=std::max(9,p.eye_h-16);
+        }
         if(phase==Phase::Listening && mood==Mood::Neutral) {p.eye_h=54;p.color=0x7CF6DA;}
         if(phase==Phase::Wake) {p.eye_h=58;p.mouth_w=111;}
         if(mood==Mood::Sleepy && !asleep) {p.mouth_h=38;p.mouth_w=42;}
-        if(asleep) {p.eye_h=4;p.mouth_h=5;p.mouth_w=55;}
+        if(asleep) {
+            // Ease the lids closed for ~1.2 s; forced sleep and LVGL state
+            // still take effect immediately, but the face settles naturally.
+            const uint32_t elapsed=sleep_transition_ ?
+                std::min<uint32_t>(uint32_t(now-sleep_transition_at_),1200u) : 1200u;
+            p.eye_h=44-static_cast<int>(40u*elapsed/1200u);
+            p.mouth_h=5;p.mouth_w=55;
+        }
         // A short staggered opening is purely visual; listening starts
         // immediately and is never held up by the wake animation.
         if(wake_anim_) {
@@ -498,7 +550,7 @@ public:
             }
             p.smile=0;
         }
-        if(Due(now,next_gaze_)) {
+        if(!behavior_active_ && Due(now,next_gaze_)) {
             int range=8+traits.curiosity/5;
             target_x_=static_cast<int>(Rand(2*range+1))-range;
             target_y_=static_cast<int>(Rand(17))-8;
@@ -546,6 +598,13 @@ public:
             gy=-5;
             p.tilt=gx/2;
         }
+        if(behavior_active_ && (phase==Phase::Idle || phase==Phase::Offline)) {
+            // Eyes use the existing Approach() interpolation, never snap.
+            gx = living_cue_==LivingCue::Left ? -19 :
+                 living_cue_==LivingCue::Right ? 19 : 0;
+            gy = living_cue_==LivingCue::Up ? -11 :
+                 living_cue_==LivingCue::Down ? 10 : 0;
+        }
         if(touch_) {gx=touch_x_;gy=touch_y_;}
         if(asleep) {gx=gy=0;}
         if(!blink_active_ && !asleep && Due(now,next_blink_)) {
@@ -553,12 +612,23 @@ public:
         }
         int blink=100;
         if(blink_active_) {
+            const bool slow=behavior_active_ && living_activity_==LivingActivity::Calm;
+            const uint32_t closing=slow?125u:70u;
+            const uint32_t closed=slow?210u:125u;
+            const uint32_t opened=slow?410u:255u;
             uint32_t t=now-blink_at_;
-            if(t<70) blink=100-static_cast<int>(t*95/70);
-            else if(t<125) blink=5;
-            else if(t<255) blink=5+static_cast<int>((t-125)*95/130);
-            else if(double_blink_ && !second_blink_ && t>=365) {second_blink_=true;blink_at_=now;}
-            else if(!double_blink_ || second_blink_) {blink_active_=false;next_blink_=now+2200+Rand(3700);}
+            if(t<closing) blink=100-static_cast<int>(t*95/closing);
+            else if(t<closed) blink=5;
+            else if(t<opened)
+                blink=5+static_cast<int>((t-closed)*95/(opened-closed));
+            else if(double_blink_ && !second_blink_ && t>=opened+110u) {
+                second_blink_=true;blink_at_=now;
+            }
+            else if(!double_blink_ || second_blink_) {
+                blink_active_=false;
+                const bool calm=behavior_active_ && living_activity_==LivingActivity::Calm;
+                next_blink_=now+(calm?3800:2200)+Rand(calm?4800:3700);
+            }
         }
         int speed=std::max(1,dt*(35+traits.energy)/800);
         auto& f=frame_;
@@ -576,7 +646,8 @@ public:
         f.pose.accent=p.accent;
         f.eye_left=Approach(f.eye_left,std::max(4,(p.eye_h+p.asym/2)*blink/100),speed*7);
         f.eye_right=Approach(f.eye_right,std::max(4,(p.eye_h-p.asym)*blink/100),speed*7);
-        f.gaze_x=Approach(f.gaze_x,gx,speed);f.gaze_y=Approach(f.gaze_y,gy,speed);
+        const int gaze_speed=(behavior_active_ && (phase==Phase::Idle || phase==Phase::Offline)) ? std::min(speed,3) : speed;
+        f.gaze_x=Approach(f.gaze_x,gx,gaze_speed);f.gaze_y=Approach(f.gaze_y,gy,gaze_speed);
         int bob=0;
         if(!behavior_phone_ && (dance||social_==Social::Celebration)) {
             int step=static_cast<int>(((now-(social_==Social::Celebration?social_at_:celebrate_at_))/40)%24);

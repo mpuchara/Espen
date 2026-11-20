@@ -29,6 +29,8 @@ python3 tests/test_mood_voice.py
 # Cross-module contract + real host behavior tests, before the ESP-IDF build.
 python3 tests/test_behavior_contracts.py
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_behavior_engine.cc -o /tmp/ala-behavior-engine-test
+c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_living_robot_engine.cc -o /tmp/ala-living-robot-test
+/tmp/ala-living-robot-test
 /tmp/ala-behavior-engine-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_behavior_foundation.cc -o /tmp/espen-behavior-foundation-test
 /tmp/espen-behavior-foundation-test

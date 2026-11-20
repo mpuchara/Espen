@@ -40,6 +40,7 @@
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <cmath>
 #include <algorithm>
 #include <atomic>
@@ -1436,7 +1437,7 @@ class EspenDisplay : public LcdDisplay {
     // change widgets. Protocol emotions are passed through an atomic mailbox.
     espen::FaceEngine engine_;
     espen::AlaBehaviorEngine behavior_;
-    bool last_face_asleep_=false;
+    uint32_t last_daypart_probe_=0;
     std::atomic<espen::Mood> pending_mood_{espen::Mood::Neutral};
     std::atomic<uint32_t> mood_seq_{0};
     uint32_t seen_mood_=0,last_stt_=0,last_ambient_=0,last_audio_=0;
@@ -1868,10 +1869,33 @@ class EspenDisplay : public LcdDisplay {
             engine_.ReplyReact(played.beat,now);
             behavior_.ReplyReaction(played.beat,now);
         }
+        // Only a clock with a plausible synchronized year AND explicit local
+        // timezone is suitable. Missing TZ/SNTP means neutral idle policy.
+        // Checking once a minute avoids time API work in the 50ms LVGL tick.
+        if (!last_daypart_probe_ || uint32_t(now-last_daypart_probe_) >= 60000u) {
+            last_daypart_probe_=now;
+            espen::DayPart part=espen::DayPart::Unknown;
+            const char* tz=std::getenv("TZ");
+            const std::time_t epoch=std::time(nullptr);
+            if (tz && *tz && epoch >= static_cast<std::time_t>(1704067200)) {
+                std::tm local{};
+                if (localtime_r(&epoch,&local)) {
+                    part=local.tm_hour>=7 && local.tm_hour<18 ?
+                         espen::DayPart::Day : local.tm_hour>=18 && local.tm_hour<22 ?
+                         espen::DayPart::Evening : espen::DayPart::Night;
+                }
+            }
+            behavior_.SetDayPart(part);
+        }
+        behavior_.SetPersona(engine_.GetPersona());
         const bool standby=Application::GetInstance().EspenIsStandby();
-        const auto decision=behavior_.Tick(now, phase, standby, !last_face_asleep_);
+        // Never gate autonomy on the previous Frame.asleep: that used to make
+        // the five-second renderer sleep suppress every 27-second reaction.
+        const auto decision=behavior_.Tick(now, phase, standby);
         engine_.ManagedMood(decision.mood, decision.phone_locked,
-            decision.priority >= 40 && !standby, now);
+            decision.activity != espen::LivingActivity::Sleep && !standby, now);
+        engine_.ManagedLiving(decision.activity, decision.living_cue,
+                              decision.living_sequence, now);
         // Decisions, not frames: avoid hundreds of log lines per second.
         if(decision.changed) {
             ESP_LOGI(TAG, "Ala behavior: mood=%d source=%s priority=%u ttl=%lu sticky=%d rejected_micro=%lu",
@@ -1885,7 +1909,6 @@ class EspenDisplay : public LcdDisplay {
                     espen::BehaviorSourceName(decision.source));
         }
         auto f=engine_.Tick(now,phase,speech.level,speech.shape,loud);
-        last_face_asleep_=f.asleep;
         auto& p=f.pose;
         const bool scene_on=visual_enabled_&&recent_audio&&
             (phase==Phase::Speaking||(phase==Phase::Listening&&!Application::GetInstance().GetAudioService().IsAudioProcessorRunning()));
