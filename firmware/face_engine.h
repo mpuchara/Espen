@@ -250,7 +250,8 @@ class FaceEngine {
     Mood behavior_mood_=Mood::Neutral;
     LivingActivity living_activity_=LivingActivity::Active;
     LivingCue living_cue_=LivingCue::None;
-    uint32_t living_sequence_seen_=0;
+    uint32_t living_sequence_seen_=0, sleep_transition_at_=0;
+    bool sleep_transition_=false;
     Social social_=Social::None;
     ReplyBeat reply_=ReplyBeat::None;
     uint32_t reply_at_=0;
@@ -287,6 +288,13 @@ public:
     }
     void ManagedLiving(LivingActivity activity, LivingCue cue,
                        uint32_t sequence, uint32_t now) {
+        if (activity == LivingActivity::Sleep &&
+            living_activity_ != LivingActivity::Sleep) {
+            sleep_transition_at_ = now;
+            sleep_transition_ = true;
+        } else if (activity != LivingActivity::Sleep) {
+            sleep_transition_ = false;
+        }
         living_activity_ = activity;
         living_cue_ = cue;
         if (sequence != living_sequence_seen_) {
@@ -514,7 +522,14 @@ public:
         if(phase==Phase::Listening && mood==Mood::Neutral) {p.eye_h=54;p.color=0x7CF6DA;}
         if(phase==Phase::Wake) {p.eye_h=58;p.mouth_w=111;}
         if(mood==Mood::Sleepy && !asleep) {p.mouth_h=38;p.mouth_w=42;}
-        if(asleep) {p.eye_h=4;p.mouth_h=5;p.mouth_w=55;}
+        if(asleep) {
+            // Ease the lids closed for ~1.2 s; forced sleep and LVGL state
+            // still take effect immediately, but the face settles naturally.
+            const uint32_t elapsed=sleep_transition_ ?
+                std::min<uint32_t>(uint32_t(now-sleep_transition_at_),1200u) : 1200u;
+            p.eye_h=44-static_cast<int>(40u*elapsed/1200u);
+            p.mouth_h=5;p.mouth_w=55;
+        }
         // A short staggered opening is purely visual; listening starts
         // immediately and is never held up by the wake animation.
         if(wake_anim_) {
@@ -597,11 +612,18 @@ public:
         }
         int blink=100;
         if(blink_active_) {
+            const bool slow=behavior_active_ && living_activity_==LivingActivity::Calm;
+            const uint32_t closing=slow?125u:70u;
+            const uint32_t closed=slow?210u:125u;
+            const uint32_t opened=slow?410u:255u;
             uint32_t t=now-blink_at_;
-            if(t<70) blink=100-static_cast<int>(t*95/70);
-            else if(t<125) blink=5;
-            else if(t<255) blink=5+static_cast<int>((t-125)*95/130);
-            else if(double_blink_ && !second_blink_ && t>=365) {second_blink_=true;blink_at_=now;}
+            if(t<closing) blink=100-static_cast<int>(t*95/closing);
+            else if(t<closed) blink=5;
+            else if(t<opened)
+                blink=5+static_cast<int>((t-closed)*95/(opened-closed));
+            else if(double_blink_ && !second_blink_ && t>=opened+110u) {
+                second_blink_=true;blink_at_=now;
+            }
             else if(!double_blink_ || second_blink_) {
                 blink_active_=false;
                 const bool calm=behavior_active_ && living_activity_==LivingActivity::Calm;
