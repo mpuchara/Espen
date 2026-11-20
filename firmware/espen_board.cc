@@ -1049,7 +1049,7 @@ class EspenDisplay : public LcdDisplay {
             fx_mode_label_=lv_obj_get_child(fx,0);
             auto* gain=MakeButton(speaker_panel_,"Głośność odgłosów",[](lv_event_t* e){
                 auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
-                self->fx_gain_=self->fx_gain_==40?70:self->fx_gain_==70?90:40;
+                self->fx_gain_=self->fx_gain_<70?70:self->fx_gain_<90?90:40;
                 EspenSaveFxSettings(self->fx_on_,self->fx_gain_);
                 self->RefreshFxControls();
             },this,420);
