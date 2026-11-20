@@ -233,7 +233,7 @@ public:
         }
         // Hysteresis only for weak, non-user-triggered changes. Safety, phone,
         // conversational reactions and explicit cancellation are immediate.
-        if (d.priority <= 20 && previous_.priority <= 20 && initial_ &&
+        if (quiet && awake && d.priority <= 20 && previous_.priority <= 20 && initial_ &&
             !After(now, chosen_at_, 900) && d.mood != previous_.mood) {
             d.mood = previous_.mood; d.source = previous_.source;
             d.priority = previous_.priority;
