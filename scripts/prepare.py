@@ -6,6 +6,8 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
 up = Path(sys.argv[1]).resolve()
+# Full-install-only board; never shift the 0x20000 app or 0x800000 assets.
+shutil.copyfile(root / "firmware/partitions_face_16m.csv", up / "partitions/v2/16m.csv")
 board = up / "main/boards/guition/espen-guition-jc4880p443"
 board.mkdir(parents=True, exist_ok=True)
 for src, dst in [("config.h","config.h"),("config.json","config.json"),
