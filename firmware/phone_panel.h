@@ -386,6 +386,10 @@ public:
         std::lock_guard<std::mutex> lock(social_lock_);
         social_.ObserveStt(text,now);
     }
+    bool SocialSpeechPermission() {
+        std::lock_guard<std::mutex> lock(social_lock_);
+        return social_.AllowSpontaneousSpeech();
+    }
     bool SocialPrompt(std::string& out,uint32_t now,bool busy) {
         std::lock_guard<std::mutex> lock(social_lock_);
         social_.Tick(now,false,true);
