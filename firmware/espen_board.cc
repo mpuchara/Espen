@@ -1822,6 +1822,7 @@ class EspenDisplay : public LcdDisplay {
             engine_.Emotion(mood, now); // preserve the legacy face animation state
             behavior_.CloudEmotion(mood, now);
         }
+        // BEHAVIOR_PHONE_MAILBOX_ANCHOR
         auto state=Application::GetInstance().GetDeviceState();
         using espen::Phase;using espen::Accent;
         Phase phase=Phase::Idle;
