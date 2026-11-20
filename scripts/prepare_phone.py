@@ -36,7 +36,8 @@ header = up / "main/application.h"
 replace(header, '    void WakeWordInvoke(const std::string& wake_word);',
         '    void WakeWordInvoke(const std::string& wake_word);\n'
         '    void EspenSayText(const std::string& text, const std::string& robot_name);\n'
-        '    void EspenAskText(const std::string& text, bool only_hello, const std::string& robot_name);')
+        '    void EspenAskText(const std::string& text, bool only_hello, const std::string& robot_name);\n'
+        '    void EspenNarrateGameText(const std::string& text);')
 
 app = up / "main/application.cc"
 # Observe ONLY the existing, acknowledged Xiaozhi audio channel.
@@ -92,6 +93,30 @@ void Application::EspenSayText(const std::string& text, const std::string& robot
     });
 }
 
+
+// Game narration uses the already provisioned Xiaozhi speech channel; no
+// second TTS/microphone/audio task. The scripted story is the only source.
+void Application::EspenNarrateGameText(const std::string& text) {
+    Schedule([this, text]() {
+        if (!protocol_ || GetDeviceState() != kDeviceStateIdle ||
+            EspenIsStandby() || text.empty() || text.size()>700) return;
+        if (!SetDeviceState(kDeviceStateConnecting)) return;
+        Schedule([this, text]() {
+            if (GetDeviceState() != kDeviceStateConnecting || EspenIsStandby()) return;
+            if (!protocol_->IsAudioChannelOpened() && !protocol_->OpenAudioChannel()) {
+                SetDeviceState(kDeviceStateIdle);
+                return;
+            }
+            const std::string prompt =
+                "Jestes Ala, narratorka bajki dla dzieci. Wypowiedz glosno po polsku "
+                "wylacznie ponizszy tekst, bez wstepu, bez dodatkow, bez zadawania pytan "
+                "poza podanymi w tekscie. Czytaj naturalnie i wyraznie: " + text;
+            protocol_->SendWakeWordDetected(prompt);
+            play_popup_on_listening_ = false;
+            SetListeningMode(kListeningModeAutoStop);
+        });
+    });
+}
 
 void Application::EspenAskText(const std::string& text, bool only_hello, const std::string& robot_name) {
     // Unlike EspenSayText, this mode asks the cloud assistant to generate
