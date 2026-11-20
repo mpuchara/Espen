@@ -42,3 +42,15 @@ for banned in ('i2s_', 'AudioService(', 'esp_http_client', 'xTaskCreate',
                        if not line.lstrip().startswith('//'))
     assert not re.search(re.escape(banned), source), banned
 print("Ala stage5 social integration contracts: OK (source guards)")
+
+# Stage 5.2: selective cancellation is additive to the sole Xiaozhi queue.
+bridge = (root / "firmware/ala_social_bridge.h").read_text()
+overlay = (root / "scripts/prepare.py").read_text()
+assert 'QueueEspenSocialPcm' in bridge
+assert 'CancelEspenSocialPcm' in bridge
+assert 'pcm_gate_' in bridge
+assert 'espen_social_generation_' in overlay
+assert 'if (!task.espen_social_pcm) retained.push_back' in overlay
+assert 'social_.Stop()' in panel
+assert 'ResetDecoder();' not in panel.split("void CancelBridgeAudio()")[1].split("}", 1)[0]
+print("Stage 5.2 Social PCM cancellation and producer/consumer guards: OK")
