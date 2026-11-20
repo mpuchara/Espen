@@ -161,7 +161,13 @@ flash = json.loads((build / "flasher_args.json").read_text())["flash_files"]
 offsets = {Path(name).name: int(address, 0) for address, name in flash.items()}
 assert offsets.get("xiaozhi.bin") == 0x20000, offsets
 assert offsets.get("generated_assets.bin") == 0x800000, offsets
-assert (build / "xiaozhi.bin").stat().st_size <= 0x3f0000
+# Explicitly validate layout, not only requested board defaults.
+from pathlib import Path
+layout=Path("firmware/partitions_face_16m.csv").read_text()
+assert "ota_0,      app,  ota_0,   0x20000,   0x7e0000" in layout
+assert "assets,     data, spiffs,  0x800000,  8M" in layout
+assert "ota_1" not in [line.split(",")[0].strip() for line in layout.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+assert (build / "xiaozhi.bin").stat().st_size <= 0x7e0000
 assert (build / "generated_assets.bin").stat().st_size <= 0x800000
 manifest = json.loads(Path("web/manifest.json").read_text())
 assert manifest["builds"][0]["parts"] == [
