@@ -51,6 +51,7 @@ bool AlaFaceRuntime::Enable(bool value){
     std::lock_guard<std::mutex> guard(lock_);
     profiles_.Enable(value);enabled_.store(value,std::memory_order_release);
     last_=FaceDecision::NO_FACE;
+    recognized_id_=0;recognized_at_ms_=0;recognized_name_.clear();
     if(!value)greeting_.clear();
     return true;
 }
@@ -61,8 +62,16 @@ bool AlaFaceRuntime::Begin(const std::string& name,bool consent){
 }
 bool AlaFaceRuntime::Commit(){std::lock_guard<std::mutex> g(lock_);return profiles_.Commit();}
 void AlaFaceRuntime::Cancel(){std::lock_guard<std::mutex> g(lock_);profiles_.Cancel();}
-bool AlaFaceRuntime::Remove(uint16_t id){std::lock_guard<std::mutex> g(lock_);return profiles_.Remove(id);}
-void AlaFaceRuntime::Clear(){std::lock_guard<std::mutex> g(lock_);profiles_.Clear();greeting_.clear();}
+bool AlaFaceRuntime::Remove(uint16_t id){
+    std::lock_guard<std::mutex> g(lock_);
+    if(id==recognized_id_){recognized_id_=0;recognized_at_ms_=0;recognized_name_.clear();}
+    return profiles_.Remove(id);
+}
+void AlaFaceRuntime::Clear(){
+    std::lock_guard<std::mutex> g(lock_);
+    profiles_.Clear();greeting_.clear();
+    recognized_id_=0;recognized_at_ms_=0;recognized_name_.clear();
+}
 FaceSnapshot AlaFaceRuntime::Snapshot()const{
     FaceSnapshot out;
     {
@@ -70,6 +79,9 @@ FaceSnapshot AlaFaceRuntime::Snapshot()const{
         out.enabled=profiles_.Enabled();out.enrolling=profiles_.Enrolling();
         out.count=profiles_.Count();out.samples=profiles_.SampleCount();
         out.last=last_;out.inference_ms=inference_ms_;
+        out.recognized_id=recognized_id_;
+        out.recognized_at_ms=recognized_at_ms_;
+        out.recognized_name=recognized_name_;
         for(const auto& p:profiles_.Profiles())out.names.emplace_back(p.id,p.name);
     }
     out.model_loaded=model_loaded_.load(std::memory_order_acquire);
@@ -157,13 +169,23 @@ void AlaFaceRuntime::Loop(){
                 FaceResult result=embedding ? profiles_.Identify(embedding,dims,Millis())
                                            : profiles_.Absent(kind);
                 last_=result.decision;
+                if(result.decision==FaceDecision::RECOGNIZED && result.profile_id) {
+                    recognized_id_=result.profile_id;
+                    recognized_name_=result.name;
+                    recognized_at_ms_=Millis();
+                } else {
+                    recognized_id_=0;recognized_at_ms_=0;recognized_name_.clear();
+                }
                 if(result.greet && !app.EspenIsStandby() &&
                     app.GetDeviceState()==kDeviceStateIdle) {
                     greeting_="Cześć, "+result.name+"! 😊";
                     ++greeting_revision_;
                     // No autonomous TTS, no Xiaozhi wake-up, no memory access.
                 }
-            } else last_=FaceDecision::NO_FACE;
+            } else {
+                last_=FaceDecision::NO_FACE;
+                recognized_id_=0;recognized_at_ms_=0;recognized_name_.clear();
+            }
         }
     }
 }
