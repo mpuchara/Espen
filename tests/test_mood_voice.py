@@ -19,10 +19,9 @@ for mood in ("Love", "Happy", "Laugh", "Sad", "Surprise", "Angry", "Thinking",
              "Sleepy", "Confident", "Shy", "Confused", "Fear", "Wink", "Bored",
              "Excited", "Neutral"):
     assert f"case Mood::{mood}:" in phone
-assert "phone_voice = false;" in bridge
-assert "TrySpeakMood(phone_mood)" in bridge
-assert "phone_due = now + 5000;" in bridge
-assert "phone_voice = false;" in bridge[bridge.index("TrySpeakMood(phone_mood)"):]
+assert "behavior_.PhoneCommand(incoming_mood" in bridge
+assert "behavior_.PhoneSpeechDue(" in bridge
+assert "behavior_.PhoneSpeechResult(panel.TrySpeakMood(voice_mood))" in bridge
 assert "calego tekstu" in bridge and "pelna, poprawiona wersje" in bridge
 assert "AnimateEmotionLoop(Mood mood" in face
 assert "f.hearts=mood==Mood::Love" in face

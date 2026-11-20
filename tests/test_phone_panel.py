@@ -41,7 +41,7 @@ assert html.index('<section><h2>✍️ Co Ala ma powiedzieć?') < html.index('<s
 assert "ch == '\\\\'" in phone, "Prevent JSON injection through backslashes"
 moods = re.search(r"const moods=\[(.*?)\];", html)
 assert moods and moods.group(1).count("['") == 16
-assert 'if(seq!=seen_mood_) {seen_mood_' in board
+assert "behavior_.CloudEmotion(mood, now);" in board
 assert 'wifi_online_=wifi.IsInitialized()&&wifi.IsConnected();' in board
 assert 'void SetChatMessage(const char* role, const char* message) override {' in board
 
@@ -73,7 +73,8 @@ with tempfile.TemporaryDirectory() as tmp:
     assert 'RefreshPhonePanel();' in generated_board
     assert 'phone_panel_,wake_panel_' in generated_board
     assert 'PhonePanel::Instance().Start();' in generated_board
-    assert 'phone_due = now + 5000;' in b.read_text()
+    assert 'behavior_.PhoneCommand(incoming_mood, incoming_sticky, incoming_voice,' in b.read_text()
+    assert 'behavior_.PhoneSpeechDue(' in b.read_text()
     assert 'EspenSayText' in (up / "main/application.cc").read_text()
     assert 'EspenAskText' in (up / "main/application.cc").read_text()
     assert 'Masz imie ' in (up / "main/application.cc").read_text()

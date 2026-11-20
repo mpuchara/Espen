@@ -4,6 +4,7 @@
 #include "button.h"
 #include "config.h"
 #include "face_engine.h"
+#include "ala_behavior_engine.h"
 #include "speech_quality.h"
 #include "standby_policy.h"
 #include "speaker_audio.h"
@@ -1385,7 +1386,10 @@ class EspenDisplay : public LcdDisplay {
             MakeButton(settings_,"Test kolejnej emocji",[](lv_event_t* e){
                 auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
                 self->preview_index_=(self->preview_index_+1)%static_cast<int>(espen::Mood::Count);
-                self->engine_.Preview(static_cast<espen::Mood>(self->preview_index_),lv_tick_get());
+                const auto preview=static_cast<espen::Mood>(self->preview_index_);
+                const uint32_t now=lv_tick_get();
+                self->engine_.Preview(preview,now);
+                self->behavior_.LocalPreview(preview,now);
                 self->CloseSettings();
             },this,420);
             auto* lcd=MakeButton(settings_,"Tryb LCD",[](lv_event_t* e){
@@ -1431,6 +1435,8 @@ class EspenDisplay : public LcdDisplay {
     // Model is independent of LVGL; only this timer and touch callbacks
     // change widgets. Protocol emotions are passed through an atomic mailbox.
     espen::FaceEngine engine_;
+    espen::AlaBehaviorEngine behavior_;
+    bool last_face_asleep_=false;
     std::atomic<espen::Mood> pending_mood_{espen::Mood::Neutral};
     std::atomic<uint32_t> mood_seq_{0};
     uint32_t seen_mood_=0,last_stt_=0,last_ambient_=0,last_audio_=0;
@@ -1580,6 +1586,10 @@ class EspenDisplay : public LcdDisplay {
             else self->UpdateHold(target,p,now,indev);
         },LV_EVENT_ALL,this);
     }
+    void ReactUserGesture(espen::Gesture gesture, uint32_t now) {
+        behavior_.Touch(gesture, now);
+        engine_.React(gesture, now); // keep the existing pet animations and effects
+    }
     void FaceTouch(lv_event_t* e) {
         auto code=lv_event_get_code(e);
         uint32_t now=lv_tick_get();
@@ -1589,8 +1599,8 @@ class EspenDisplay : public LcdDisplay {
         if(code==LV_EVENT_PRESS_LOST || code==LV_EVENT_RELEASED) {
             CancelHold(face_);
             if(touch_active_&&!touch_long_&&code==LV_EVENT_RELEASED) {
-                if(pet_kind_==espen::Motion::Tickle)engine_.React(espen::Gesture::Tickle,now);
-                else if(pet_kind_==espen::Motion::Stroke)engine_.React(espen::Gesture::Stroke,now);
+                if(pet_kind_==espen::Motion::Tickle)ReactUserGesture(espen::Gesture::Tickle,now);
+                else if(pet_kind_==espen::Motion::Stroke)ReactUserGesture(espen::Gesture::Stroke,now);
                 else if(now-touch_started_<450) {
                     tap_count_=(last_tap_&&now-last_tap_<380)?tap_count_+1:1;
                     last_tap_=now;
@@ -1598,9 +1608,9 @@ class EspenDisplay : public LcdDisplay {
                     int x=touch_prev_.x-a.x1,y=touch_prev_.y-a.y1;
                     if(visual_mix_)x=192+(x-(192-66*visual_mix_/100))*100/(100-30*visual_mix_/100);
                     x-=listening_layout_.shift;
-                    if(tap_count_>=3){engine_.React(espen::Gesture::TripleTap,now);tap_count_=0;last_tap_=0;}
-                    else if(tap_count_==2)engine_.React(espen::Gesture::DoubleTap,now);
-                    else engine_.React(x>=155&&x<=230&&y>=125&&y<=185?
+                    if(tap_count_>=3){ReactUserGesture(espen::Gesture::TripleTap,now);tap_count_=0;last_tap_=0;}
+                    else if(tap_count_==2)ReactUserGesture(espen::Gesture::DoubleTap,now);
+                    else ReactUserGesture(x>=155&&x<=230&&y>=125&&y<=185?
                         espen::Gesture::Boop:espen::Gesture::Tap,now);
                 }
             }
@@ -1632,7 +1642,7 @@ class EspenDisplay : public LcdDisplay {
                 heart_y_=std::clamp<int>(p.y-a.y1,125,225);
             }
             pet_kind_=motion;last_pet_=now;tap_count_=0;last_tap_=0;
-            engine_.React(motion==espen::Motion::Tickle?espen::Gesture::Tickle:espen::Gesture::Stroke,now);
+            ReactUserGesture(motion==espen::Motion::Tickle?espen::Gesture::Tickle:espen::Gesture::Stroke,now);
         }
     }
     void BuildFace() {
@@ -1809,16 +1819,33 @@ class EspenDisplay : public LcdDisplay {
             if(strcmp(lv_label_get_text(camera_indicator_),message)!=0)lv_label_set_text(camera_indicator_,message);
         }
         uint32_t seq=mood_seq_.load(std::memory_order_acquire);
-        if(seq!=seen_mood_) {seen_mood_=seq;engine_.Emotion(pending_mood_.load(std::memory_order_relaxed),now);}
+        if(seq!=seen_mood_) {
+            seen_mood_=seq;
+            const auto mood=pending_mood_.load(std::memory_order_relaxed);
+            engine_.Emotion(mood, now); // preserve the legacy face animation state
+            behavior_.CloudEmotion(mood, now);
+        }
+        // BEHAVIOR_PHONE_MAILBOX_ANCHOR
         auto state=Application::GetInstance().GetDeviceState();
         using espen::Phase;using espen::Accent;
         Phase phase=Phase::Idle;
-        if(wifi_online_&&!was_online_) engine_.Celebrate(now);
+        if(wifi_online_&&!was_online_) {
+            engine_.Celebrate(now);
+            behavior_.Celebrate(now);
+        }
         was_online_=wifi_online_;
         uint32_t local=espen_local_wake_seq.load(std::memory_order_relaxed);
-        if(local!=seen_local_wake_) {seen_local_wake_=local;engine_.LocalWake(now);}
+        if(local!=seen_local_wake_) {
+            seen_local_wake_=local;
+            engine_.LocalWake(now);
+            behavior_.Woke(now);
+        }
         uint32_t sleep=espen_sleep_seq.load(std::memory_order_relaxed);
-        if(sleep!=seen_sleep_) {seen_sleep_=sleep;engine_.SleepNow(now);}
+        if(sleep!=seen_sleep_) {
+            seen_sleep_=sleep;
+            engine_.SleepNow(now);
+            behavior_.SleepRequested();
+        }
         if(state==kDeviceStateSpeaking||state==kDeviceStateNotifying) {
             phase=Phase::Speaking;waiting_answer_=false;last_audio_=now;
         } else if(state==kDeviceStateConnecting) phase=Phase::Wake;
@@ -1839,8 +1866,26 @@ class EspenDisplay : public LcdDisplay {
             const auto played=EspenVisualLookup(tag);
             reply_tag_=tag;
             engine_.ReplyReact(played.beat,now);
+            behavior_.ReplyReaction(played.beat,now);
+        }
+        const bool standby=Application::GetInstance().EspenIsStandby();
+        const auto decision=behavior_.Tick(now, phase, standby, !last_face_asleep_);
+        engine_.ManagedMood(decision.mood, decision.phone_locked,
+            decision.priority >= 40 && !standby, now);
+        // Decisions, not frames: avoid hundreds of log lines per second.
+        if(decision.changed) {
+            ESP_LOGI(TAG, "Ala behavior: mood=%d source=%s priority=%u ttl=%lu sticky=%d rejected_micro=%lu",
+                static_cast<int>(decision.mood), espen::BehaviorSourceName(decision.source),
+                static_cast<unsigned>(decision.priority),
+                static_cast<unsigned long>(decision.remaining_ms),
+                decision.phone_locked, static_cast<unsigned long>(behavior_.RejectedAutonomousCount()));
+            if(decision.preempted)
+                ESP_LOGI(TAG, "Ala behavior preempted: previous=%s new=%s",
+                    espen::BehaviorSourceName(decision.previous_source),
+                    espen::BehaviorSourceName(decision.source));
         }
         auto f=engine_.Tick(now,phase,speech.level,speech.shape,loud);
+        last_face_asleep_=f.asleep;
         auto& p=f.pose;
         const bool scene_on=visual_enabled_&&recent_audio&&
             (phase==Phase::Speaking||(phase==Phase::Listening&&!Application::GetInstance().GetAudioService().IsAudioProcessorRunning()));
@@ -2114,6 +2159,7 @@ class EspenDisplay : public LcdDisplay {
             if(reaction!=espen::Social::None) {
                 heart_x_=192;heart_y_=190;
                 engine_.SocialReact(reaction,last_stt_);
+                behavior_.SocialReaction(reaction,last_stt_);
                 ESP_LOGI(TAG,"Local social reaction=%d",static_cast<int>(reaction));
             }
         }
