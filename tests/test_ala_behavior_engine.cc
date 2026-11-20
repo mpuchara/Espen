@@ -48,7 +48,9 @@ int main() {
         e.CloudEmotion(Mood::Happy, 100);
         assert(Step(e, 101, Phase::Speaking).source == BehaviorSource::Cloud);
         assert(Step(e, 7500).mood == Mood::Happy);
-        auto end = Step(e, 14100);
+        // Afterglow is restarted at the actual end of speaking (7500).
+        assert(Step(e, 14100).mood == Mood::Happy);
+        auto end = Step(e, 21500);
         assert(end.mood == Mood::Neutral && !end.phone_locked);
     }
     // 6: praise transitions surprise -> happy and doesn't retain social lock.
