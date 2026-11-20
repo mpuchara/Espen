@@ -67,7 +67,7 @@ public:
     explicit AlaMemoryEngine(MemoryStore& store):store_(store) {}
     bool Load() {
         state_=MemoryState{};
-        candidate_.clear(); pending_delete_=0; error_=false;
+        candidate_.clear(); pending_delete_=0; recall_pending_=false; error_=false;
         std::string data;
         if (!store_.Read(data)) {error_=true; return false;}
         if (data.empty()) return true; // opt-in OFF on first boot
@@ -80,6 +80,7 @@ public:
     bool Error() const {return error_;}
     const std::string& Candidate() const {return candidate_;}
     uint8_t PendingDelete() const {return pending_delete_;}
+    bool RecallPending() const {return recall_pending_;}
     static bool ValidUtf8(const std::string& s) {
         for(size_t i=0;i<s.size();) {
             const uint8_t c=static_cast<uint8_t>(s[i]);
@@ -146,7 +147,7 @@ public:
     bool Enable(bool enabled) {
         MemoryState next=state_;next.enabled=enabled;
         if(!Save(next))return false;
-        if(!enabled){candidate_.clear();pending_delete_=0;}
+        if(!enabled)DismissCandidate();
         return true;
     }
     bool Add(MemoryCategory category, const std::string& text) {
@@ -210,24 +211,29 @@ public:
     // STT is untrusted (TV, quoted speech, partial transcripts). Only OFFER to
     // the PIN-protected panel; no implicit flash writes or autonomous replies.
     bool OfferVoice(const std::string& speech) {
-        candidate_.clear();pending_delete_=0;
+        candidate_.clear();pending_delete_=0;recall_pending_=false;
         if(!state_.enabled || speech.size()>230 || !ValidUtf8(speech) ||
-           speech.find('"')!=std::string::npos || speech.find('?')!=std::string::npos ||
+           speech.find('"')!=std::string::npos ||
            speech.find('\'')!=std::string::npos)return false;
         auto s=Fold(speech);
-        if(s.size()>0 && (s.back()=='.'||s.back()=='!')) {
-            s.pop_back();
+        if(!s.empty() && (s.back()=='.'||s.back()=='!'||s.back()=='?'))s.pop_back();
+        std::string compact;compact.reserve(s.size());
+        bool space=false;
+        for(char ch:s){
+            if(ch==',' || ch==' '){if(!space){compact+=' ';space=true;}}
+            else{compact+=ch;space=false;}
         }
-        // Find the payload boundary in the original UTF-8, preserving its spelling.
-        const auto starts=[&s](const char* prefix) {
+        s.swap(compact);
+        if(s=="ala co pamietasz"||s=="ala co o mnie pamietasz"||
+           s=="ala pokaz pamiec"){recall_pending_=true;return true;}
+        if(speech.find('?')!=std::string::npos)return false;
+        // Only anchored full commands, never an embedded instruction.
+        const auto starts=[&s](const char* prefix){
             return s.compare(0,std::strlen(prefix),prefix)==0;
         };
-        const bool remember=starts("ala zapamietaj ze ") ||
-               starts("ala, zapamietaj, ze ") ||
-               starts("hej ala zapamietaj ze ") ||
-               starts("hej ala, zapamietaj, ze ");
-        const bool forget=starts("ala zapomnij ze ") ||
-               starts("ala, zapomnij, ze ");
+        const bool remember=starts("ala zapamietaj ze ")||
+                            starts("hej ala zapamietaj ze ");
+        const bool forget=starts("ala zapomnij ze ");
         if(!remember && !forget)return false;
         // Folded character lengths can differ in UTF-8; extract after the
         // original "że " delimiter, never from an arbitrary substring.
@@ -261,7 +267,7 @@ public:
         if(!Add(MemoryCategory::Fact,copy))return false;
         candidate_.clear();return true;
     }
-    void DismissCandidate(){candidate_.clear();pending_delete_=0;}
+    void DismissCandidate(){candidate_.clear();pending_delete_=0;recall_pending_=false;}
     std::string Export() const {
         const auto bytes=Encode(state_);
         static const char hex[]="0123456789ABCDEF";
@@ -298,6 +304,7 @@ private:
     bool error_=false;
     std::string candidate_;
     uint8_t pending_delete_=0;
+    bool recall_pending_=false;
     static void Put32(std::string& s,uint32_t n) {
         for(int i=0;i<4;++i)s+=static_cast<char>((n>>(8*i))&255);
     }
