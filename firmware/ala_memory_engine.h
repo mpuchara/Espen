@@ -224,7 +224,8 @@ public:
         auto collect=[&]() {
             if(word.size()>=5 && word!="pamietasz" && word!="pamietam" &&
                word!="wspomnienia" && word!="pokaz" && word!="prosze" &&
-               word!="jakie" && word!="twoje" && terms.size()<12)
+               word!="jakie" && word!="twoje" && word!="lubie" &&
+               word!="jestem" && word!="jestes" && terms.size()<12)
                 terms.push_back(word.substr(0,std::min<size_t>(6,word.size())));
             word.clear();
         };
