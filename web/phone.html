@@ -67,6 +67,10 @@ small{display:block;color:#96aabe;margin-top:9px;line-height:1.5}.status{color:#
 <div id="face-message" class="status" role="status" aria-live="polite"></div>
 <small>Rejestracja wymaga czterech różnych, wyraźnych klatek z jedną twarzą. Nie traktuj wyniku rozpoznania jako gwarancji tożsamości. Funkcja eksperymentalna — wymaga testów fizycznych.</small>
 </section>
+<section id="identity-section"><h2>🧠 Kogo Ala rozpoznaje?</h2>
+<div id="identity-status" class="status" role="status" aria-live="polite">Połącz z Alą, aby sprawdzić aktualną identyfikację.</div>
+<small>Wyniki wygasają po 5 sekundach. Głos pozostaje niedostępny do czasu rzeczywistego modelu i świadomego przypisania profili — identyczne imiona nie są dowodem tożsamości.</small>
+</section>
 <section id="memory-section"><h2>🧠 Co Ala pamięta?</h2>
 <p>Pamięć jest lokalna w Ali, domyślnie wyłączona. Zapisujesz tylko wybrane informacje; rozmowy nie są archiwizowane. Nie podawaj haseł, informacji medycznych ani danych wrażliwych.</p>
 <div class="buttons"><button id="memory-on">Włącz pamięć</button><button id="memory-off" class="secondary">Wyłącz</button></div>
@@ -313,6 +317,12 @@ async function refreshFace(){
       ' · Wynik: '+data.last+' · Osoby: '+data.count+'/'+data.limit+
       ' · Próbki: '+data.samples+'/4'+
       ' · Inferencja: '+data.inference_ms+' ms · Wolna PSRAM: '+data.free_psram_kb+' KB';
+    const identity=data.identity||{state:'UNKNOWN',face:'',voice:null,speaker_model_ready:false};
+    $('identity-status').textContent=
+      'Twarz: '+(identity.face||'nie rozpoznano')+
+      ' · Głos: '+(identity.speaker_model_ready?(identity.voice||'nie rozpoznano'):'niedostępny — brak modelu')+
+      ' · Wynik: '+(identity.state==='FACE_ONLY'?'rozpoznano twarz':
+                     identity.state==='UNKNOWN'?'brak aktualnej identyfikacji':identity.state);
     $('face-on').disabled=data.enabled;
     $('face-off').disabled=!data.enabled;
     $('face-commit').disabled=!data.enrolling||data.samples<4;
