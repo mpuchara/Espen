@@ -38,6 +38,31 @@ replace(header, '    void WakeWordInvoke(const std::string& wake_word);',
         '    void EspenAskText(const std::string& text, bool only_hello, const std::string& robot_name);')
 
 app = up / "main/application.cc"
+# Observe ONLY the existing, acknowledged Xiaozhi audio channel.
+# It is NOT proof of conditional STT or TTS capabilities.
+replace(header, '#include <cstdint>',
+        '#include <cstdint>\n#include <atomic>')
+replace(header, '    std::mutex mutex_;',
+        '    std::atomic<bool> espen_xiaozhi_channel_open_{false};\n    std::mutex mutex_;')
+replace(header,
+        '    void EspenAskText(const std::string& text, bool only_hello, const std::string& robot_name);',
+        '    void EspenAskText(const std::string& text, bool only_hello, const std::string& robot_name);\n'
+        '    bool EspenXiaozhiChannelOpen() const {\n'
+        '        return espen_xiaozhi_channel_open_.load(std::memory_order_acquire);\n'
+        '    }')
+replace(app, 'protocol_->OnAudioChannelOpened([this, codec, &board]() {',
+        'protocol_->OnAudioChannelOpened([this, codec, &board]() {\n'
+        '        espen_xiaozhi_channel_open_.store(true, std::memory_order_release);')
+replace(app, 'protocol_->OnAudioChannelClosed([this, &board]() {',
+        'protocol_->OnAudioChannelClosed([this, &board]() {\n'
+        '        espen_xiaozhi_channel_open_.store(false, std::memory_order_release);')
+replace(app, 'void Application::ResetProtocol() {',
+        'void Application::ResetProtocol() {\n'
+        '    espen_xiaozhi_channel_open_.store(false, std::memory_order_release);')
+replace(app, 'void Application::Reboot() {',
+        'void Application::Reboot() {\n'
+        '    espen_xiaozhi_channel_open_.store(false, std::memory_order_release);')
+
 speech_method = r'''
 // Local phone text is sent to the SAME Xiaozhi agent as a detect event.
 // This is an experimental text-to-LLM-to-TTS path, not an offline TTS engine.
