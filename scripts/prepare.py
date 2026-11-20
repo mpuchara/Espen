@@ -1878,3 +1878,72 @@ replace("main/audio/audio_service.cc",
         '                extern void EspenSocialPcm(const int16_t*, size_t);\n'
         '                EspenSocialPcm(data.data(),data.size());\n'
         '                bool feed_voice = false;')
+
+# Stage 5.2: preserve a single AudioService output owner, but tag Social
+# Bridge packets so STOP cannot accidentally discard Xiaozhi or emotional FX.
+# The output task rechecks a social generation after a queued packet is popped.
+replace("main/audio/audio_service.h",
+        '    int espen_cue_gain = 45;',
+        '    int espen_cue_gain = 45;\n'
+        '    bool espen_social_pcm = false;\n'
+        '    uint32_t espen_social_generation = 0;')
+replace("main/audio/audio_service.h",
+        '    uint32_t playback_generation_ = 0;',
+        '    uint32_t playback_generation_ = 0;\n'
+        '    uint32_t espen_social_generation_ = 0;')
+replace("main/audio/audio_service.h",
+        '    bool QueueEspenEmotionalCue(int cue, int gain);',
+        '    bool QueueEspenEmotionalCue(int cue, int gain);\n'
+        '    bool QueueEspenSocialPcm(std::vector<int16_t>&& pcm);\n'
+        '    void CancelEspenSocialPcm();')
+replace("main/audio/audio_service.cc",
+        'bool AudioService::QueueEspenDiagnosticPcm(std::vector<int16_t>&& pcm) {',
+        """bool AudioService::QueueEspenSocialPcm(std::vector<int16_t>&& pcm) {
+    // 40 ms maximum per chunk: bounded time already in codec/DMA at STOP.
+    if (pcm.empty() || pcm.size() > 960) return false;
+    std::unique_lock<std::mutex> lock(audio_queue_mutex_);
+    const auto generation = espen_social_generation_;
+    const auto playback = playback_generation_;
+    if (!audio_queue_cv_.wait_for(lock, std::chrono::milliseconds(500),
+        [this, generation, playback]() {
+            return service_stopped_.load() || generation != espen_social_generation_ ||
+                playback != playback_generation_ || audio_playback_queue_.size() < 2;
+        })) return false;
+    if (service_stopped_.load() || generation != espen_social_generation_ ||
+        playback != playback_generation_ ||
+        !audio_decode_queue_.empty() || decode_in_flight_) return false;
+    AudioTask task;
+    task.type = kAudioTaskTypeDecodeToPlaybackQueue;
+    task.pcm = std::move(pcm);
+    task.espen_social_pcm = true;
+    task.espen_social_generation = generation;
+    if (!audio_playback_queue_.push_back(std::move(task))) return false;
+    playback_drained_notified_ = false;
+    audio_queue_cv_.notify_all();
+    return true;
+}
+
+void AudioService::CancelEspenSocialPcm() {
+    std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+    ++espen_social_generation_;
+    // FixedQueue does not expose erase/remove_if. Keep other producers intact.
+    FixedQueue<AudioTask, MAX_PLAYBACK_TASKS_IN_QUEUE> retained;
+    while (!audio_playback_queue_.empty()) {
+        auto task = std::move(audio_playback_queue_.front());
+        audio_playback_queue_.pop_front();
+        if (!task.espen_social_pcm) retained.push_back(std::move(task));
+    }
+    audio_playback_queue_.swap(retained);
+    MarkPlaybackDrainedLocked();
+    audio_queue_cv_.notify_all();
+}
+
+bool AudioService::QueueEspenDiagnosticPcm(std::vector<int16_t>&& pcm) {""")
+replace("main/audio/audio_service.cc",
+        '        if (!task.pcm.empty()) {\n            EspenVisualPlayback(task.espen_visual_cue);',
+        '        if (task.espen_social_pcm) {\n'
+        '            std::lock_guard<std::mutex> social_lock(audio_queue_mutex_);\n'
+        '            if (task.espen_social_generation != espen_social_generation_)\n'
+        '                task.pcm.clear();\n'
+        '        }\n'
+        '        if (!task.pcm.empty()) {\n            EspenVisualPlayback(task.espen_visual_cue);')
