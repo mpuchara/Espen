@@ -58,6 +58,16 @@ def validate_wav(data: bytes) -> None:
         raise BridgeError(400, "invalid WAV") from exc
 
 
+def provider_json(payload: bytes) -> dict[str, Any]:
+    try:
+        result = json.loads(payload)
+    except (UnicodeError, ValueError) as exc:
+        raise BridgeError(502, "invalid provider JSON") from exc
+    if not isinstance(result, dict):
+        raise BridgeError(502, "provider response must be object")
+    return result
+
+
 class OpenAIAdapter:
     """Three *separate* OpenAI requests. STT and LLM can NEVER initiate TTS."""
     def __init__(self, api_key: str, base_url: str = "https://api.openai.com/v1"):
@@ -100,7 +110,7 @@ class OpenAIAdapter:
             f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"speech.wav\"\r\n"
             "Content-Type: audio/wav\r\n\r\n"
         ).encode() + wav + f"\r\n--{boundary}--\r\n".encode()
-        obj = json.loads(self._post("/audio/transcriptions", payload,
+        obj = provider_json(self._post("/audio/transcriptions", payload,
                                    "multipart/form-data; boundary=" + boundary, 16384))
         text = obj.get("text", "")
         if not isinstance(text, str) or len(text.encode("utf-8")) > 1200:
@@ -132,9 +142,14 @@ class OpenAIAdapter:
         }
         raw = self._post("/chat/completions", json.dumps(body).encode(),
                          "application/json", 16000)
-        outer = json.loads(raw)
-        content = outer["choices"][0]["message"]["content"]
-        result = json.loads(content)
+        outer = provider_json(raw)
+        try:
+            content = outer["choices"][0]["message"]["content"]
+            if not isinstance(content, str):
+                raise ValueError("non-string content")
+            result = provider_json(content.encode("utf-8"))
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
+            raise BridgeError(502, "invalid semantic response") from exc
         if not isinstance(result, dict):
             raise BridgeError(502, "model JSON must be an object")
         action = result.get("action")
@@ -304,6 +319,25 @@ class AlaService:
         return pcm
 
 
+class BoundedServer(ThreadingHTTPServer):
+    # A compromised device must not spawn arbitrarily many request threads.
+    daemon_threads = True
+    request_queue_size = 8
+
+    def __init__(self, *args: Any, **kwargs: Any):
+        self._slots = threading.BoundedSemaphore(8)
+        super().__init__(*args, **kwargs)
+
+    def verify_request(self, request: Any, client_address: Any) -> bool:
+        return self._slots.acquire(blocking=False)
+
+    def process_request_thread(self, request: Any, client_address: Any) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
+
+
 def make_server(host: str, port: int, token: str, service: AlaService) -> ThreadingHTTPServer:
     if len(token) < 24:
         raise ValueError("ALA_BRIDGE_TOKEN must contain at least 24 characters")
@@ -399,7 +433,7 @@ def make_server(host: str, port: int, token: str, service: AlaService) -> Thread
             except Exception:
                 self.fail(BridgeError(503, "backend unavailable"))
 
-    return ThreadingHTTPServer((host, port), Handler)
+    return BoundedServer((host, port), Handler)
 
 
 def main() -> None:
