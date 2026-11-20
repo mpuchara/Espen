@@ -81,6 +81,35 @@ jobs:
           assert manifest["builds"][0]["parts"] == [{"path":"espen.bin","offset":0}]
           print("Verified Stage 9 full-flash image, SHA256, size and 0x0 installer")
           STAGE9_VERIFY
+      # Independent experimental full-image installer for Stage 10 games,
+      # pinned to CI-verified PR #50; root 0.2.17 and Stage 9 stay untouched.
+      - name: Download pinned Stage 10 games firmware
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/download-artifact@v4
+        with:
+          name: espen-guition-p4
+          run-id: 44832672714
+          github-token: ${{ github.token }}
+          path: dist/ala-stage10
+      - name: Verify Stage 10 game image, partition and immutable checksum
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          python3 - <<'STAGE10_VERIFY'
+          import hashlib
+          import json
+          from pathlib import Path
+          folder=Path('dist/ala-stage10')
+          image=(folder/'espen.bin').read_bytes()
+          expected='4b0fd282b60ea1cd7363bb534a58dd54587142a59caef7f744d889b9d9a6d7ad'
+          assert (folder/'espen.bin.sha256').read_text().strip().split() == [expected, 'espen.bin']
+          assert len(image)==10302462 and len(image)<=16*1024*1024
+          assert image[0x2000]==0xe9 and image[0x20000]==0xe9
+          assert hashlib.sha256(image).hexdigest()==expected
+          manifest=json.loads((folder/'manifest.json').read_text())
+          assert manifest['builds'][0]['parts']==[{'path':'espen.bin','offset':0}]
+          print('Ala Stage 10: full image, manifest, offsets, SHA256 OK')
+          STAGE10_VERIFY
       - name: Upload firmware
         uses: actions/upload-artifact@v4
         with:
