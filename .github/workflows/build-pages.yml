@@ -1,7 +1,7 @@
 name: Espen firmware and installer
 on:
   push:
-    branches: [main]
+    branches: [main, feature/ala-personal-memory-engine-stage6]
   pull_request:
     branches: [main, feature/ala-central-behavior-engine-stage2, feature/ala-living-robot-engine-stage3, feature/ala-conversation-intelligence-stage4, feature/ala-social-intelligence-stage5, feature/ala-native-xiaozhi-social-stage5-2]
   workflow_dispatch:
@@ -68,7 +68,7 @@ jobs:
             upstream/dependencies.lock
           if-no-files-found: error
       - name: Upload Pages
-        if: github.event_name != 'pull_request'
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3
         with:
           path: dist
