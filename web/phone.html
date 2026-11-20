@@ -230,9 +230,10 @@ async function refreshSocial(){
     const backendState=bridgeStates[state.backend_state]||'Nieznany';
     $('social-status').textContent=desc+' · Kontekst: '+state.context+' · Komentarze: '+state.comments+
       ' · Xiaozhi nasłuch: '+(state.listening?'tak':'nie')+
-      ' · Social Bridge: '+backendState+' · Auto-ocena STT: '+(state.auto_evaluation?'DOSTĘPNA':'niedostępna')+
+      ' · Social Bridge: '+backendState+' · PCM w kolejce zakończono: '+state.pcm_drained+
       ' · STT: '+state.analysed+' · Zaakceptowane: '+state.accepted+
-      ' · Pominięte: '+state.ignored+' · Anulowane: '+state.cancelled;
+      ' · Pominięte: '+state.ignored+' · Anulowane: '+state.cancelled+
+      ' · Odrzucone segmenty: '+state.rejected_segments;
     $('social-comment').disabled=!state.active||!state.context||state.listening;
     ['quiet','normal','talkative'].forEach((name,index)=>{
       $('social-'+name).style.outline=state.activity===index?'2px solid #79e3d4':'none';
