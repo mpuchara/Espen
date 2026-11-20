@@ -32,6 +32,12 @@ assert 'id="hearing-status"' in html
 assert '"/api/hearing"' in phone and "'/api/hearing'" in html
 assert "EspenHearingStatusJson()" in board
 assert "speaker_model_ready" in board
+assert 'id="identity-status"' in html and 'data.identity' in html
+assert 'AlaIdentityEngine fusion' in phone
+assert 'AlaIdentityStateName(identity.state)' in phone
+assert "snap.recognized_at_ms" in phone
+assert 'speaker_model_ready' in phone and '/api/hearing' in html
+
 assert 'add("/api/social", HTTP_GET, GetSocial)' in phone
 assert 'add("/api/social", HTTP_POST, SocialCommand)' in phone
 assert "EspenAskText(body, hello, self.Name())" in phone
