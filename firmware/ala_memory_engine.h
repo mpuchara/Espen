@@ -219,26 +219,41 @@ public:
             s.pop_back();
         }
         // Find the payload boundary in the original UTF-8, preserving its spelling.
-        for(const char* prefix:{"ala zapamietaj ze ","ala, zapamietaj, ze ",
-                                "hej ala zapamietaj ze ","hej ala, zapamietaj, ze "}) {
-            if(s.compare(0,std::strlen(prefix),prefix)==0) {
-                // Folded character lengths can differ in UTF-8, so extract by
-                // splitting on the original spoken 'że' delimiter.
-                const size_t pos=speech.find(" że ");
-                const size_t plain=speech.find(" ze ");
-                const size_t start=pos!=std::string::npos?pos+5:
-                                   plain!=std::string::npos?plain+4:std::string::npos;
-                if(start==std::string::npos)return false;
-                std::string value=speech.substr(start);
-                if(!value.empty()&&(value.back()=='.'||value.back()=='!'))value.pop_back();
-                if(SafeText(value)){candidate_=value;return true;}
-                return false;
+        const bool remember=s.compare(0,16,"ala zapamietaj ze ")==0 ||
+               s.compare(0,18,"ala, zapamietaj, ze ")==0 ||
+               s.compare(0,20,"hej ala zapamietaj ze ")==0 ||
+               s.compare(0,22,"hej ala, zapamietaj, ze ")==0;
+        const bool forget=s.compare(0,14,"ala zapomnij ze ")==0 ||
+               s.compare(0,16,"ala, zapomnij, ze ")==0;
+        if(!remember && !forget)return false;
+        // Folded character lengths can differ in UTF-8; extract after the
+        // original "że " delimiter, never from an arbitrary substring.
+        const size_t pos=speech.find(" że ");
+        const size_t plain=speech.find(" ze ");
+        const size_t start=pos!=std::string::npos?pos+5:
+                           plain!=std::string::npos?plain+4:std::string::npos;
+        if(start==std::string::npos)return false;
+        std::string value=speech.substr(start);
+        if(!value.empty()&&(value.back()=='.'||value.back()=='!'))value.pop_back();
+        if(!SafeText(value))return false;
+        if(remember){candidate_=value;return true;}
+        for(const auto& item:state_.items) {
+            if(Fold(item.text)==Fold(value)){
+                candidate_="Usuń: "+item.text;
+                pending_delete_=item.id;
+                return true;
             }
         }
         return false;
     }
     bool ConfirmCandidate() {
         if(candidate_.empty())return false;
+        if(pending_delete_){
+            const auto id=pending_delete_;
+            if(!Remove(id))return false;
+            candidate_.clear();pending_delete_=0;
+            return true;
+        }
         const std::string copy=candidate_;
         if(!Add(MemoryCategory::Fact,copy))return false;
         candidate_.clear();return true;
