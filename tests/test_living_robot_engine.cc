@@ -61,6 +61,30 @@ int main() {
         assert(moving>30 && jumps==0);
         assert(!e.AllowSpontaneousSpeech());
     }
+    // Calm blinks close more slowly, and eyelids ease shut over 1.2 s.
+    {
+        FaceEngine calm,active;
+        calm.Tick(0,Phase::Idle,0,MouthShape::Closed);
+        active.Tick(0,Phase::Idle,0,MouthShape::Closed);
+        calm.ManagedMood(Mood::Neutral,false,true,1000);
+        active.ManagedMood(Mood::Neutral,false,true,1000);
+        calm.ManagedLiving(LivingActivity::Calm,LivingCue::Blink,1,1000);
+        active.ManagedLiving(LivingActivity::Active,LivingCue::Blink,1,1000);
+        calm.Tick(1000,Phase::Idle,0,MouthShape::Closed);
+        active.Tick(1000,Phase::Idle,0,MouthShape::Closed);
+        auto slow=calm.Tick(1150,Phase::Idle,0,MouthShape::Closed);
+        auto quick=active.Tick(1150,Phase::Idle,0,MouthShape::Closed);
+        assert(slow.eye_left<quick.eye_left);
+        AlaBehaviorEngine e;FaceEngine f;
+        e.SetLivingTiming({1000,2500,2200,1800});
+        Render(e,f,0);
+        Render(e,f,1500);
+        const auto begin=Render(e,f,2500);
+        const auto midway=Render(e,f,3100);
+        const auto end=Render(e,f,3800);
+        assert(begin.asleep&&midway.asleep&&end.asleep);
+        assert(begin.eye_left>midway.eye_left && midway.eye_left>end.eye_left);
+    }
     // Same seed and virtual clock yield exactly the same cue schedule.
     {
         AlaBehaviorEngine a,b;
