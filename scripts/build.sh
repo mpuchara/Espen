@@ -117,6 +117,7 @@ test -s upstream/local_components/espressif__esp_hosted/common/protobuf-c/protob
 
 python3 scripts/prepare.py upstream
 python3 scripts/prepare_phone.py upstream
+python3 scripts/prepare_ha.py upstream
 # Verify both hardware-unmute and 75% defaults in the generated source.
 grep -Fq 'int output_volume_ = 75;' upstream/main/audio/audio_codec.h
 grep -Fq 'Espen speaker: PA GPIO%d level=%d DAC volume=%d%% output=%d gpio_err=%s' upstream/main/audio/codecs/es8311_audio_codec.cc

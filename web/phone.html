@@ -106,6 +106,23 @@ small{display:block;color:#96aabe;margin-top:9px;line-height:1.5}.status{color:#
 <small>Pre-roll 300 ms pozostaje domyślny do walidacji na prawdziwym urządzeniu. Profile mikrofonu można zmieniać w diagnostyce Ali.</small>
 <p><strong>Rozpoznawanie domowników po głosie:</strong> niedostępne w tym wydaniu. Brak podłączonego modelu, rejestracja głosów wyłączona.</p>
 </section>
+<section id="ha-section"><h2>🏠 Home Assistant</h2>
+<p>Eksperymentalne odczyty rzeczywistych urządzeń. Integracja jest domyślnie wyłączona. Ala pokazuje Xiaozhi <strong>wyłącznie wybrane encje</strong>; ich wartości mogą trafić do chmury Xiaozhi. Sterowanie urządzeniami jest niedostępne w tym etapie.</p>
+<div class="status" id="ha-status" role="status">Nie skonfigurowano.</div>
+<label>Adres lokalnego HA (host/IP, bez ścieżki)<input id="ha-url" placeholder="http://homeassistant.local:8123" autocomplete="off" spellcheck="false"></label>
+<div class="buttons"><button id="ha-set-url" class="secondary">Ustaw adres</button><button id="ha-check" class="secondary">Sprawdź połączenie</button></div>
+<label>Token HA (tylko RAM robota, znika po restarcie)<input id="ha-token" type="password" autocomplete="off" placeholder="Long-Lived Access Token"></label>
+<p style="color:#ffbe91"><strong>Uwaga: panel używa zwykłego HTTP!</strong> Token wysłany przez tę stronę może zostać przechwycony w sieci Wi-Fi. Używaj wyłącznie w zaufanej sieci, świadomie akceptując ryzyko. Zalecana jest osobna tożsamość HA z minimalnymi uprawnieniami. Nie używaj tego sposobu dla wrażliwej instalacji.</p>
+<label><input id="ha-risk" type="checkbox"> Rozumiem ryzyko przesłania tokena przez niezabezpieczony HTTP.</label>
+<div class="buttons"><button id="ha-set-token" class="secondary">Ustaw token tymczasowy</button><button id="ha-enable">Włącz odczyty</button><button id="ha-disable" class="danger">Wyłącz i wyczyść token</button></div>
+<h2 style="font-size:16px">Udostępnione encje (maks. 20)</h2>
+<label>Dokładne entity_id<input id="ha-entity" placeholder="sensor.salon_temperature" spellcheck="false" autocomplete="off"></label>
+<label>Polska nazwa<input id="ha-alias" placeholder="Temperatura w salonie" maxlength="60"></label>
+<div class="buttons"><button id="ha-add" class="secondary">Dodaj do odczytu</button><button id="ha-cancel" class="secondary">Anuluj zapytanie</button></div>
+<div id="ha-entities" class="status"></div>
+<div id="ha-result" class="status" role="status" aria-live="polite"></div>
+<small>Lista i token są przechowywane tylko w RAM. Po każdym restarcie trzeba ponownie skonfigurować integrację. Dostęp do HA nie oznacza, że publiczna chmura Xiaozhi wykryła narzędzia MCP; zweryfikuj to w sesji głosowej.</small>
+</section>
 <small>Panel działa lokalnie przez Wi-Fi. Nie udostępniaj kodu sterowania innym osobom. Połączenie ze sztuczną inteligencją Xiaozhi wymaga Internetu i działającego głośnika.</small>
 </main>
 <script>
@@ -485,6 +502,53 @@ async function refreshHearing(){
       ' · pre-roll '+d.pre_roll_ms+' ms · PCM '+d.pcm_rate+' Hz';
  }catch(e){$('hearing-status').textContent='Diagnostyka mikrofonu: '+e.message;}
 }
+async function haAction(command){
+ try{
+   const answer=await request('/api/ha','POST',command);
+   const data=JSON.parse(answer);
+   if(data.error){$('ha-result').textContent='HA: '+data.error;}
+   else {$('ha-result').textContent=data.ok===true?'Połączenie z HA działa.':'Polecenie przyjęte.';}
+   await refreshHa();
+   return data;
+ }catch(e){$('ha-result').textContent=e.message;return null;}
+}
+async function refreshHa(){
+ if(!pin)return;
+ try{
+  const d=JSON.parse(await request('/api/ha'));
+  $('ha-status').textContent=(d.enabled?'🟢 Odczyty włączone':'⚪ Odczyty wyłączone')+
+   ' · adres '+(d.configured?'ustawiony':'brak')+
+   ' · token '+(d.authorized?'w RAM':'brak')+
+   ' · zapytania '+d.queries+' · błędy '+d.errors+
+   ' · odmowy '+d.denied+' · czas '+d.last_latency_ms+' ms'+
+   (d.last_error?' · ostatni błąd '+d.last_error:'');
+  const list=$('ha-entities');list.replaceChildren();
+  for(const e of d.entities){
+   const row=document.createElement('div');row.className='buttons';
+   const label=document.createElement('span');label.textContent=e.name+' ('+e.entity_id+') · tylko odczyt';
+   const read=document.createElement('button');read.className='secondary';read.textContent='Odczytaj';
+   read.onclick=async()=>{const data=await haAction('read|'+e.entity_id);if(data)$('ha-result').textContent=JSON.stringify(data)};
+   const del=document.createElement('button');del.className='danger';del.textContent='Usuń';
+   del.onclick=()=>haAction('remove|'+e.entity_id);
+   row.append(label,read,del);list.append(row);
+  }
+ }catch(e){$('ha-status').textContent='HA: '+e.message;}
+}
+$('ha-set-url').onclick=()=>haAction('url|'+$('ha-url').value.trim());
+$('ha-check').onclick=async()=>{const d=await haAction('check');if(d)$('ha-result').textContent=JSON.stringify(d)};
+$('ha-set-token').onclick=async()=>{
+ if(!$('ha-risk').checked){$('ha-result').textContent='Zaznacz świadomą zgodę na ryzyko HTTP.';return;}
+ if(!confirm('Zwykłe HTTP nie szyfruje tokena w Wi-Fi. Kontynuować w zaufanej sieci?'))return;
+ const token=$('ha-token').value;
+ $('ha-token').value='';
+ await haAction('token|'+token);
+};
+$('ha-enable').onclick=()=>haAction('enable|1');
+$('ha-disable').onclick=()=>haAction('enable|0');
+$('ha-add').onclick=()=>haAction('add|'+$('ha-entity').value.trim()+'|'+$('ha-alias').value.trim());
+$('ha-cancel').onclick=()=>haAction('cancel');
+setInterval(refreshHa,10000);
+setTimeout(refreshHa,2000);
 setInterval(refreshHearing,2500);
 setTimeout(refreshHearing,1500);
 setInterval(refreshMemory,4000);
