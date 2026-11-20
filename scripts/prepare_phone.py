@@ -104,17 +104,9 @@ replace(source,
     'lv_label_set_text_fmt(settings_status_, "Połączono: %s\\nIP: %s | RSSI: %d dBm\\nPilot: http://%s/\\nKod: %s", '
     'name.c_str(), ip.c_str(), wifi.GetRssi(), ip.c_str(), espen::PhonePanel::Instance().Pin().c_str());')
 
-anchor = ('if(seq!=seen_mood_) {seen_mood_=seq;engine_.Emotion('
-          'pending_mood_.load(std::memory_order_relaxed),now);}')
-remote = '''if(seq!=seen_mood_) {
-            seen_mood_=seq;
-            const auto mood=pending_mood_.load(std::memory_order_relaxed);
-            engine_.Emotion(mood, now);
-            behavior_.CloudEmotion(mood, now);
-        }
-        // The LVGL tick is the only consumer of HTTP emotion commands.
-        // The arbiter handles the five-second delay and cancels pending X
-        // requests without FaceEngine::Preview(Neutral) masking Xiaozhi.
+anchor = '        // BEHAVIOR_PHONE_MAILBOX_ANCHOR'
+remote = '''        // The LVGL tick is the only consumer of HTTP emotion commands.
+        // Five-second delay and reset/X are entirely owned by the arbiter.
         static uint32_t phone_seq = 0;
         int incoming_mood = -1;
         bool incoming_sticky = false, incoming_voice = false;
@@ -127,7 +119,7 @@ remote = '''if(seq!=seen_mood_) {
         const int voice_mood = behavior_.PhoneSpeechDue(
             now, app.EspenIsStandby(), app.GetDeviceState() == kDeviceStateIdle);
         if (voice_mood >= 0) behavior_.PhoneSpeechResult(panel.TrySpeakMood(voice_mood));
-        '''
+'''
 replace(source, anchor, remote)
 replace(source, 'if (!role || !message || !button_added_) return;',
         'if(role && message && strcmp(role,"assistant")==0)\n'
