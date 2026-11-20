@@ -44,6 +44,15 @@ small{display:block;color:#96aabe;margin-top:9px;line-height:1.5}.status{color:#
 <label class="inline" style="margin:12px 0;display:flex"><input type="checkbox" id="voiceMood" checked> 🔊 Ala mówi pasujące słowa, np. gdy się zakocha</label>
 <div class="buttons"><button id="stop" class="danger">✕ Wyłącz emocję</button></div><div class="status" id="emotionStatus" role="status"></div>
 </section>
+<section id="social-section"><h2>💬 Inteligencja społeczna</h2>
+<p>Tryb Towarzyski działa maksymalnie 10 minut i po restarcie jest wyłączony. Głos w aktywnej sesji może trafić do chmury Xiaozhi.</p>
+<p><strong>Ograniczenie:</strong> obecny publiczny Xiaozhi nie zapewnia tutaj niezależnej analizy STT bez automatycznej odpowiedzi. Ala <strong>nie podsłuchuje w tle</strong> i nie wtrąca się sama. Przycisk „Skomentuj teraz” używa kontekstu z wcześniej aktywnej sesji Xiaozhi.</p>
+<div class="buttons"><button id="social-start">▶ Włącz (10 min)</button><button id="social-stop" class="danger">■ STOP</button></div>
+<div class="buttons"><button id="social-quiet" class="secondary">Cicha</button><button id="social-normal" class="secondary">Normalna</button><button id="social-talkative" class="secondary">Rozmowna</button></div>
+<div class="buttons"><button id="social-comment" class="secondary">💬 Skomentuj teraz</button></div>
+<div id="social-status" class="status" role="status" aria-live="polite">Tryb wyłączony.</div>
+<small id="social-limits">Wszystkie polecenia wymagają kodu PIN. Kontekst znika po STOP, upływie czasu lub wyłączeniu sieci.</small>
+</section>
 <small>Panel działa lokalnie przez Wi-Fi. Nie udostępniaj kodu sterowania innym osobom. Połączenie ze sztuczną inteligencją Xiaozhi wymaga Internetu i działającego głośnika.</small>
 </main>
 <script>
@@ -204,5 +213,41 @@ $('say').onclick=async()=>{
   }catch(e){$('speechStatus').textContent=e.message;$('answer').textContent='Nie udało się wysłać zdania.'}
   finally{$('say').disabled=false;$('chat-toggle').disabled=false;}
 };
+const socialButtons=['social-start','social-stop','social-quiet','social-normal','social-talkative','social-comment'];
+async function refreshSocial(){
+  if(!pin)return;
+  try{
+    const raw=await request('/api/social');
+    const state=JSON.parse(raw);
+    const seconds=Math.ceil(state.remaining_ms/1000);
+    const desc=state.active?'✅ Aktywny '+Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0'):'⚪ Wyłączony';
+    $('social-status').textContent=desc+' · Kontekst: '+state.context+' · Komentarze: '+state.comments+
+      ' · Słucha w aktywnej sesji: '+(state.listening?'tak':'nie')+' · Auto-ocena STT: niedostępna';
+    $('social-comment').disabled=!state.active||!state.context||state.listening;
+    ['quiet','normal','talkative'].forEach((name,index)=>{
+      $('social-'+name).style.outline=state.activity===index?'2px solid #79e3d4':'none';
+    });
+  }catch(e){$('social-status').textContent='Tryb Towarzyski: '+e.message;}
+}
+async function socialAction(command){
+  socialButtons.forEach(id=>$(id).disabled=true);
+  try{
+    const result=await request('/api/social','POST',command);
+    $('social-status').textContent=result;
+    if(command==='comment') {
+      $('answer').textContent='Czekam na komentarz Xiaozhi…';
+      startReplyPolling();
+    }
+  }catch(e){$('social-status').textContent='Nie udało się: '+e.message;}
+  finally{socialButtons.forEach(id=>$(id).disabled=false);refreshSocial();}
+}
+$('social-start').onclick=()=>socialAction('start');
+$('social-stop').onclick=()=>socialAction('stop');
+$('social-quiet').onclick=()=>socialAction('quiet');
+$('social-normal').onclick=()=>socialAction('normal');
+$('social-talkative').onclick=()=>socialAction('talkative');
+$('social-comment').onclick=()=>socialAction('comment');
+setInterval(refreshSocial,3000);
 verify();
+setTimeout(refreshSocial,1200);
 </script></body></html>
