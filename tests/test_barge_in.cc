@@ -40,6 +40,10 @@ int main(){
     for(int frame=160;frame<205;++frame)
         fired|=Frame(detector,frame,2800,650);
     assert(fired);
+    // One response can be interrupted at most once; the latch remains set
+    // even when the input task still processes a few frames before abort.
+    for(int frame=205;frame<220;++frame)
+        assert(!Frame(detector,frame,3000,650));
     detector.Reset();fired=false;
     // No actual speaker output = no interruption, no self-start from TV.
     for(int frame=0;frame<60;++frame){
@@ -59,6 +63,18 @@ int main(){
     for(int frame=130;frame<175;++frame)
         fired|=Frame(detector,frame,3000,0,110);
     assert(fired);
+    detector.Reset();fired=false;
+    // A last non-silent playback chunk may leave a strong echo estimate;
+    // once reference PCM stops arriving, repeated near-field-like noise
+    // must not be mistaken for a live interruption.
+    for(int frame=0;frame<125;++frame) assert(!Frame(detector,frame));
+    int16_t stale_voice[160]{};
+    for(int frame=0;frame<60;++frame) {
+        for(int i=0;i<160;++i)
+            stale_voice[i]=Voice(frame*160+i,340,3500);
+        fired|=detector.Microphone(stale_voice,160);
+    }
+    assert(!fired);
     detector.Reset();
     for(int frame=0;frame<60;++frame) {
         int16_t microphone[160]{};

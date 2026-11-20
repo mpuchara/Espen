@@ -1768,3 +1768,104 @@ replace("main/application.cc",
         '            return;\n'
         '        }\n'
         '    }')
+
+
+# Ala stage 4 conversation intelligence. The overlay is applied AFTER earlier
+# Xiaozhi adaptations so the existing one-owner voice/session architecture
+# remains unchanged. No new I2S, AFE instance or audio task.
+shutil.copyfile(root / "firmware/ala_conversation_manager.h", up / "main/ala_conversation_manager.h")
+replace("main/application.h",
+        '#include "conversation_timeout.h"',
+        '#include "conversation_timeout.h"\\n#include "ala_conversation_manager.h"'.replace('\\n', '\n'))
+replace("main/application.h",
+        '    espen::ConversationTimeout espen_timeout_;',
+        '    espen::AlaConversationManager espen_timeout_;')
+replace("main/application.cc",
+        'extern void EspenTurnWaiting(bool waiting);',
+        'extern void EspenTurnWaiting(bool waiting);\n'
+        'extern void EspenTurnUserPause(bool paused);\n'
+        'extern int EspenNoiseFloorRms();')
+replace("main/application.cc",
+        'espen_timeout_.Reset(); espen_finish_at_ = 0; EspenTurnWaiting(false);',
+        'espen_timeout_.Reset(); espen_finish_at_ = 0; EspenTurnWaiting(false); EspenTurnUserPause(false);')
+
+# Keep the same endpoint / uplink-drain / state-transition function; alter
+# only the policy decision and telemetry. This replaces the locally generated
+# function (never the pinned upstream code directly).
+p = up / "main/application.cc"
+src = p.read_text()
+a = src.index("void Application::EspenCheckSilence() {")
+b = src.index("void Application::HandleEspenBargeIn()", a)
+src = src[:a] + """void Application::EspenCheckSilence() {
+    if (GetDeviceState() != kDeviceStateListening) return;
+    const uint64_t now = esp_timer_get_time() / 1000;
+    // The real cloud channel and packet queues are still owned by Xiaozhi.
+    if (espen_finish_at_) {
+        const uint64_t elapsed = now - espen_finish_at_;
+        if (elapsed >= 250 && (audio_service_.IsEspenUplinkDrained() || elapsed >= 1200)) {
+            espen_finish_at_ = 0;
+            if (protocol_) protocol_->SendStopListening();
+            espen_timeout_.Request(now);
+            ESP_LOGI(TAG, "Ala turn: stop sent after uplink drain %llu ms",
+                     static_cast<unsigned long long>(elapsed));
+        }
+        return;
+    }
+    if (espen_timeout_.Waiting()) {
+        if (espen_timeout_.Expired(now)) {
+            espen_timeout_.CountTimeout(espen::AlaTurnEnd::ReplyTimeout);
+            ESP_LOGW(TAG, "Ala turn: reply timeout, returning to learned keyword");
+            espen_timeout_.Reset(); EspenTurnWaiting(false); EspenTurnUserPause(false);
+            EspenSleepNow();
+            if (protocol_ && protocol_->IsAudioChannelOpened()) protocol_->CloseAudioChannel();
+            SetDeviceState(kDeviceStateIdle);
+        }
+        return;
+    }
+    if (!audio_service_.IsAudioProcessorRunning()) return;
+    if (!audio_service_.IsPlaybackIdle()) {
+        espen_timeout_.Pause(now);
+        return;
+    }
+    // VADNet1 cannot identify who is speaking, and PCM energy cannot parse
+    // sentence grammar. Use bounded duration/noise/silence heuristics only.
+    if (audio_service_.IsVoiceDetected()) espen_timeout_.Voice(now);
+    espen_timeout_.SetNoiseRms(EspenNoiseFloorRms());
+    EspenTurnUserPause(espen_timeout_.Phase(now) == espen::AlaTurnPhase::UserPause);
+    if (listening_mode_ == kListeningModeAutoStop && espen_timeout_.EndOfSpeech(now)) {
+        ESP_LOGI(TAG, "Ala turn: endpoint voiced=%lu ms silence=%llu ms target=%lu ms noise=%d",
+                 static_cast<unsigned long>(espen_timeout_.VoicedMs()),
+                 static_cast<unsigned long long>(espen_timeout_.SilenceMs(now)),
+                 static_cast<unsigned long>(espen_timeout_.EndpointMs()), EspenNoiseFloorRms());
+        espen_timeout_.Request(now);
+        // A low-rate aggregate (once per 16 completed turns); no text/PCM.
+        const auto& stats = espen_timeout_.Counters();
+        if ((stats.endpoints & 15u) == 0u)
+            ESP_LOGI(TAG, "Ala turn stats: start=%lu endpoint=%lu pause=%lu empty=%lu max=%lu reply=%lu",
+                     static_cast<unsigned long>(stats.starts),
+                     static_cast<unsigned long>(stats.endpoints),
+                     static_cast<unsigned long>(stats.short_pauses),
+                     static_cast<unsigned long>(stats.empty_timeouts),
+                     static_cast<unsigned long>(stats.max_timeouts),
+                     static_cast<unsigned long>(stats.reply_timeouts));
+        espen_finish_at_ = now;
+        EspenTurnUserPause(false);
+        EspenTurnWaiting(true);
+        Board::GetInstance().GetDisplay()->SetStatus("Myślę...");
+        audio_service_.EnableVoiceProcessing(false);
+        return;
+    }
+    if (espen_timeout_.Expired(now)) {
+        const auto why = espen_timeout_.EndReason(now);
+        espen_timeout_.CountTimeout(why);
+        ESP_LOGW(TAG, "Ala turn: listen timeout reason=%u voiced=%lu ms",
+                 static_cast<unsigned>(why),
+                 static_cast<unsigned long>(espen_timeout_.VoicedMs()));
+        espen_timeout_.Reset();
+        EspenTurnUserPause(false);
+        EspenSleepNow();
+        HandleStopListeningEvent();
+    }
+}
+""" + src[b:]
+p.write_text(src)
