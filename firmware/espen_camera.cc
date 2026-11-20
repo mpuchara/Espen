@@ -48,6 +48,15 @@ void EspenCamera::SetCloudEnabled(bool value){
     if(!value)ClearChatPhoto();
     Settings cfg("espen_camera",true);cfg.SetBool("cloud_enabled",value);
 }
+bool EspenCamera::GrantOneTap(){
+    // The child touched "Aparat": a single, expiring permission, not streaming.
+    if(!CloudEnabled() || !EndpointReady())return false;
+    grant_.store(NowMs()+45000U,std::memory_order_release);
+    return true;
+}
+void EspenCamera::RevokeOneTap(){
+    grant_.store(0,std::memory_order_release);
+}
 void EspenCamera::NoteQuestion(const char* text){
     // Clear unused consent on every new recognized user turn.
     grant_.store(CloudEnabled()&&text&&espen::VisionQuestion(text)?NowMs()+45000U:0,
