@@ -17,7 +17,7 @@ assert "espen_pending_cue_ = -1;" in prepare
 assert "espen_pending_gain_ = 0;" in prepare
 assert "if (!defer_when_busy) return false;" in prepare
 assert "AudioService::MarkPlaybackDrainedLocked()" in prepare
-assert "espen_pending_cue_ >= 0 && IsPlaybackDrainedLocked()" in prepare
+assert "espen_pending_cue_ >= 0 && espen_tts_finished_ && IsPlaybackDrainedLocked()" in prepare
 assert "audio_playback_queue_.clear();\\n'" in prepare  # queue reset guard
 assert "bool defer_when_busy=false" in board
 assert "EspenPlayEmotionalCue(cue,false,true)" in board
