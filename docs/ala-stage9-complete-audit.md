@@ -8,6 +8,8 @@ Ala jest rodzinnym robotem dla dzieci ok. 6–12 lat, a nie kontrolerem intelige
 
 Punkt odniesienia to PR [#45](https://github.com/mpuchara/Espen/pull/45) HEAD `9b24d14c99dd0aa26dc8b9aca325b01702bcedcb`, oparty na PR #43 i scalający dorobek PR #44. Gałąź audytu: `audit/ala-stage9-stabilization`. Bazowy `main` w momencie przeglądu: `fed6d110a42950a00ab34dc7c2d99e2f5cca8a15`. Nie modyfikowano `main`, nie zamykano PR, nie publikowano firmware jako stable.
 
+**Status CI:** weryfikacja nowego audytowego HEAD jest osobną bramką; nawet zielony build nie potwierdza pracy na fizycznym ESP32-P4.
+
 **Rozróżnienie dowodów:** „Zaimplementowane” oznacza obecność odpowiednich ścieżek w źródłach; „CI PASS” oznacza wyniki automatyczne dla konkretnego SHA; „NOT TESTED” oznacza brak weryfikacji fizycznej. Połączenie tych dwóch pierwszych NIE jest dowodem działania robota w domu.
 
 ## 2. Ocena funkcjonalności
