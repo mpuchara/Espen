@@ -306,9 +306,13 @@ static bool EspenPlayEmotionalCue(espen::EmotionalCue cue, bool new_turn=false,
     return true;
 }
 void EspenListeningCue() {
+    // Listening must be silent: a start cue leaks into the microphone
+    // and masks the first syllables of the child's speech.
     espen_response_ready.store(false, std::memory_order_release);
     espen_fx_last_mood.store(espen::Mood::Neutral, std::memory_order_release);
-    EspenPlayEmotionalCue(espen::EmotionalCue::ListenStart, true);
+    // Preserve the per-turn cue budget for the subsequent spoken reply.
+    std::lock_guard<std::mutex> lock(espen_fx_mutex);
+    espen_fx_limiter.NewTurn();
 }
 static espen::EmotionalCue EspenCueForMood(espen::Mood mood) {
     using espen::Mood;
