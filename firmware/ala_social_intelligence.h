@@ -46,7 +46,7 @@ inline SocialVoiceCommand ClassifySocialVoiceCommand(const char* speech) {
 struct SocialCounters {
     uint32_t utterances = 0, candidates = 0, approved = 0;
     uint32_t skipped = 0, cooldown = 0, busy = 0, cancelled = 0;
-    uint32_t model_errors = 0, stopped = 0;
+    uint32_t model_errors = 0, stopped = 0, manual_requests = 0;
 };
 struct SocialSnapshot {
     bool active = false;
@@ -66,6 +66,9 @@ struct SocialVerdict {
 };
 class AlaSocialIntelligence {
 public:
+    // No verified public Xiaozhi semantic verdict before conditional TTS.
+    // Keep spontaneous audio fail-closed until actual server support is proven.
+    static constexpr bool kVerifiedNativeXiaozhiAutonomy = false;
     static constexpr uint32_t kDurationMs = 600000;
     static constexpr uint32_t kMinGapMs = 90000;
     static constexpr uint32_t kRequiredSilenceMs = 1300;
@@ -132,6 +135,8 @@ public:
     uint32_t Generation() const { return generation_; }
     uint32_t ContextRevision() const { return revision_; }
     bool HasContext() const { return active_ && count_ != 0; }
+    // Accepted manual requests, not confirmed audible playback.
+    void RecordManualRequest() { if (active_) ++counters_.manual_requests; }
     void ModelError() { ++counters_.model_errors; approved_ = false; }
     void CancelPending() { if (approved_) ++counters_.cancelled; approved_ = false; }
     void UserSpeaking(uint32_t now) {
