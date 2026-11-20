@@ -1933,6 +1933,9 @@ class EspenDisplay : public LcdDisplay {
                     static_cast<unsigned long>(seconds%60));
             }
         } else social_label_second_=UINT32_MAX;
+        // Stage 5 intentionally remains fail-closed until Xiaozhi offers
+        // a real STT -> semantic verdict -> conditional TTS interface.
+        behavior_.SetSocialSpeechPermission(espen::PhonePanel::Instance().SocialSpeechPermission());
         // Never gate autonomy on the previous Frame.asleep: that used to make
         // the five-second renderer sleep suppress every 27-second reaction.
         const auto decision=behavior_.Tick(now, phase, standby);
