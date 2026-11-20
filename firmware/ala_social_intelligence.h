@@ -22,7 +22,7 @@ inline SocialVoiceCommand ClassifySocialVoiceCommand(const char* speech) {
     bool space = true;
     for (size_t i=0; speech[i]; ++i) {
         const unsigned char c = static_cast<unsigned char>(speech[i]);
-        if (i >= 90 || c == 34 || c == 39 || c < 32 && c != 9)
+        if (i >= 90 || c == 34 || c == 39 || (c < 32 && c != 9))
             return SocialVoiceCommand::None;
         if (c == 32 || c == 9 || c == ',' || c == '.' || c == '!' || c == '?') {
             if (!space) { normalized.push_back(' '); space=true; }
