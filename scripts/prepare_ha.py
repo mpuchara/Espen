@@ -9,7 +9,7 @@ import sys
 root = Path(__file__).resolve().parents[1]
 up = Path(sys.argv[1]).resolve()
 board = up / "main/boards/guition/espen-guition-jc4880p443"
-for name in ("ala_home_assistant.h", "ala_home_assistant_mcp.h"):
+for name in ("ala_ha_policy.h", "ala_home_assistant.h", "ala_home_assistant_mcp.h"):
     shutil.copyfile(root / "firmware" / name, board / name)
 
 
