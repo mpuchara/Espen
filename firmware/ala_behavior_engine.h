@@ -295,9 +295,9 @@ public:
         previous_standby_ = standby;
         if (!initial_ || phase != previous_phase_) {
             const bool was_quiet = previous_phase_ == Phase::Idle ||
-                previous_phase_ == Phase::Offline;
+                previous_phase_ == Phase::Offline || previous_phase_ == Phase::Startup;
             const bool now_quiet = phase == Phase::Idle ||
-                phase == Phase::Offline;
+                phase == Phase::Offline || phase == Phase::Startup;
             // Wi-Fi flapping between Idle and Offline must NOT renew activity.
             if (!initial_ || (now_quiet && !was_quiet)) {
                 idle_at_ = now;
@@ -319,7 +319,8 @@ public:
             voice_attempted_ = false;
             // pending_voice_ remains set until successful playback, expiry or X.
         }
-        const bool quiet = phase == Phase::Idle || phase == Phase::Offline;
+        const bool quiet = phase == Phase::Idle || phase == Phase::Offline ||
+                           phase == Phase::Startup;
         const bool locked = phone_.Alive(now);
         const bool engaged = phase == Phase::Speaking || phase == Phase::Listening ||
                              phase == Phase::Thinking || phase == Phase::Wake;
@@ -331,7 +332,8 @@ public:
             (engaged || !quiet || quiet_age < living_timing_.active_ms) ?
             LivingActivity::Active : quiet_age < sleep_threshold ?
             LivingActivity::Calm : LivingActivity::Sleep;
-        const bool autonomous = quiet && !standby && !pending_phone_ &&
+        const bool autonomous = (phase == Phase::Idle || phase == Phase::Offline) &&
+            !standby && !pending_phone_ &&
             living_activity_ != LivingActivity::Sleep && awake;
         // Face-only cues can coexist with a phone-locked mood. They never
         // change that mood and cannot enqueue audio or start a conversation.
