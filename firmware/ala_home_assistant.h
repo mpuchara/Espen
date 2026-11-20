@@ -63,9 +63,15 @@ public:
         const auto dot = id.find('.');
         const auto domain = id.substr(0, dot);
         static constexpr const char* readonly[] = {
-            "sensor", "binary_sensor", "light", "climate", "switch", "cover", "fan",
-            "device_tracker", "sun", "weather", "input_boolean"
+            "sensor", "light", "climate", "sun", "weather"
         };
+        // Refuse common security and occupancy signals even when requested.
+        static constexpr const char* sensitive[] = {
+            "alarm", "lock", "security", "presence", "occupancy", "motion",
+            "door", "window", "gate", "camera", "person", "drzwi", "brama", "zamek"
+        };
+        for (const char* fragment : sensitive)
+            if (id.find(fragment) != std::string::npos) return false;
         bool supported = false;
         for (const auto* d : readonly) supported |= domain == d;
         if (!supported) return false;
