@@ -367,3 +367,38 @@ jeżeli na Twoim ustawieniu głośności TV nadal przebija się przez
 barge-in, należy przeanalizować nagranie RAW/Opus i zmniejszyć
 głośność tła albo dostroić próg na konkretnym sprzęcie.
 Testów fizycznych nie da się zastąpić samym zielonym CI.
+
+
+## Espen 0.2.18 — częstsze i głośniejsze emocje Ali
+
+Poprzednie odgłosy miały niewielką amplitudę cyfrową (do 7600/32767)
+oraz domyślny mnożnik 45%, dlatego ginęły na tle odpowiedzi. Teraz
+synteza ma limit do 15000/32767 bez przesterowania PCM, a **nowy
+domyślny FX gain to 70%**. Głośność mowy, wyciszenie ES8311 i
+wzmacniacz PA są wspólne i nie są samoczynnie podnoszone.
+Zapisane indywidualne ustawienia FX pozostają bez zmian; panel odgłosów
+pozwala wybrać 40/70/90%.
+
+Częste wypowiedzi („Cześć”, „cieszę się”, „bardzo cię lubię”, „to ciekawe”)
+wybierają charakterystyczne emocje. Dla neutralnych wypowiedzi jedna
+na trzy tury otrzymuje subtelny sygnał. Podczas pojedynczej odpowiedzi
+odtwarzany jest najwyżej jeden dźwięk. Lokalna reakcja na słowa
+użytkownika („kocham cię”, „brawo”, „dobranoc”) może zabrzmieć
+niezależnie; podobnie głaskanie, łaskotanie, potrójne stuknięcie i
+dotknięcie nosa (minimum 1,1 s odstępu między sygnałami dotyku).
+
+**Naprawa istotnej przyczyny ciszy:** wcześniej pierwsze pakiety TTS
+zajmowały kolejkę, a efekt był bezpowrotnie odrzucany. Znacznik próby
+blokował dalsze odtworzenie. Teraz jeden kontekstowy efekt może zaczekać
+na bezpieczne opróżnienie kolejki mowy. Nie przeplata pakietów PCM,
+nie przejmuje kodeka ani nie uruchamia drugiego zadania. Przerwanie
+mowy, nowa odpowiedź, standby i ResetDecoder odrzucają oczekujący
+efekt. Sygnały przejścia do nasłuchu/po nasłuchu **nie** są odtwarzane
+z opóźnieniem. Tryby wyciszenia oraz wyłączenie odgłosów pozostają
+respektowane.
+
+**Test na płytce:** po pełnej instalacji przetestować „Cześć”, „brawo”,
+„kocham cię”, neutralne odpowiedzi, łaskotanie, barge-in w trakcie TTS,
+wyciszenie i 10–15 odpowiedzi bez fałszywych sygnałów po przerwaniu.
+Testy hostowe sprawdzają klasyfikację, limit amplitudy i obecność
+bezpiecznej logiki kolejki, ale nie zastępują odsłuchu na ESP32-P4.
