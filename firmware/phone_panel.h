@@ -6,6 +6,7 @@
 #include "robot_name.h"
 #include "ala_social_intelligence.h"
 #include "ala_memory_engine.h"
+#include "ala_face_runtime.h"
 #include "settings.h"
 #include <esp_http_server.h>
 #include <esp_log.h>
@@ -321,6 +322,58 @@ class PhonePanel {
         }
         return out;
     }
+
+    // Stage 7 API returns only non-biometric profile names and health.
+    // A face match is NOT authorization; these endpoints always require PIN.
+    static esp_err_t FaceGet(httpd_req_t* req) {
+        if(!Instance().Authorized(req))return Respond(req,401,"Niepoprawny kod.");
+        const auto snap=AlaFaceRuntime::Instance().Snapshot();
+        std::string json="{\"enabled\":"+std::string(snap.enabled?"true":"false")+
+            ",\"enrolling\":"+(snap.enrolling?"true":"false")+
+            ",\"model_loaded\":"+(snap.model_loaded?"true":"false")+
+            ",\"model_error\":"+(snap.model_error?"true":"false")+
+            ",\"camera_running\":"+(snap.camera_running?"true":"false")+
+            ",\"samples\":"+std::to_string(snap.samples)+
+            ",\"count\":"+std::to_string(snap.count)+
+            ",\"limit\":5,\"storage\":\"RAM\",\"last\":"+JsonString(FaceDecisionName(snap.last))+
+            ",\"inference_ms\":"+std::to_string(snap.inference_ms)+
+            ",\"free_psram_kb\":"+std::to_string(snap.free_psram_kb)+
+            ",\"profiles\":[";
+        for(size_t i=0;i<snap.names.size();++i) {
+            if(i)json+=",";
+            json+="{\"id\":"+std::to_string(snap.names[i].first)+
+                ",\"name\":"+JsonString(snap.names[i].second)+"}";
+        }
+        json+="]}";
+        httpd_resp_set_type(req,"application/json; charset=utf-8");
+        httpd_resp_set_hdr(req,"Cache-Control","no-store");
+        httpd_resp_set_hdr(req,"X-Content-Type-Options","nosniff");
+        return httpd_resp_send(req,json.data(),json.size());
+    }
+    static esp_err_t FacePost(httpd_req_t* req) {
+        if(!Instance().Authorized(req))return Respond(req,401,"Niepoprawny kod.");
+        std::string body;
+        if(!ReadBody(req,body,90))return Respond(req,400,"Niepoprawne żądanie.");
+        auto& faces=AlaFaceRuntime::Instance();
+        bool ok=false;
+        if(body=="on")ok=faces.Enable(true);
+        else if(body=="off")ok=faces.Enable(false);
+        else if(body=="cancel"){faces.Cancel();ok=true;}
+        else if(body=="commit")ok=faces.Commit();
+        else if(body=="clear|POTWIERDZAM"){faces.Clear();ok=true;}
+        else if(body.rfind("begin|YES|",0)==0 && body.size()>10)
+            ok=faces.Begin(body.substr(10),true);
+        else if(body.rfind("delete|",0)==0) {
+            const auto id=body.substr(7);
+            unsigned n=0;ok=!id.empty() && id.size()<=5;
+            for(char c:id) {
+                if(c<'0'||c>'9'){ok=false;break;}
+                n=n*10+static_cast<unsigned>(c-'0');
+            }
+            if(ok)ok=n>0&&n<=65535 && faces.Remove(static_cast<uint16_t>(n));
+        }
+        return Respond(req,ok?200:409,ok?"OK":"Operacja odrzucona lub model niedostępny.");
+    }
     static esp_err_t MemoryGet(httpd_req_t* req) {
         auto& self=Instance();
         if(!self.Authorized(req))return Respond(req,401,"Niepoprawny kod.");
@@ -506,7 +559,7 @@ public:
         { std::lock_guard<std::mutex> guard(memory_lock_); EnsureMemory(); }
         httpd_config_t config = HTTPD_DEFAULT_CONFIG();
         config.server_port = 80;
-        config.max_uri_handlers = 12;
+        config.max_uri_handlers = 14;
         config.stack_size = 8192;
         if (httpd_start(&server_, &config) != ESP_OK) {
             server_ = nullptr;
@@ -534,6 +587,8 @@ public:
         add("/api/social", HTTP_POST, SocialCommand);
         add("/api/memory", HTTP_GET, MemoryGet);
         add("/api/memory", HTTP_POST, MemoryPost);
+        add("/api/face", HTTP_GET, FaceGet);
+        add("/api/face", HTTP_POST, FacePost);
         ESP_LOGI("AlaPhone", "Phone panel listening on port 80");
     }
     bool StartSocial(uint32_t now, bool standby, bool online) {
