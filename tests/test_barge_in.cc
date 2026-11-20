@@ -40,6 +40,10 @@ int main(){
     for(int frame=160;frame<205;++frame)
         fired|=Frame(detector,frame,2800,650);
     assert(fired);
+    // One response can be interrupted at most once; the latch remains set
+    // even when the input task still processes a few frames before abort.
+    for(int frame=205;frame<220;++frame)
+        assert(!Frame(detector,frame,3000,650));
     detector.Reset();fired=false;
     // No actual speaker output = no interruption, no self-start from TV.
     for(int frame=0;frame<60;++frame){
