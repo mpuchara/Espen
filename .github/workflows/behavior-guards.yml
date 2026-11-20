@@ -3,7 +3,7 @@ on:
   pull_request:
     branches: [main, feature/ala-central-behavior-engine-stage2, feature/ala-living-robot-engine-stage3, feature/ala-conversation-intelligence-stage4, feature/ala-social-intelligence-stage5, feature/ala-native-xiaozhi-social-stage5-2, feature/ala-personal-memory-engine-stage6, feature/ala-local-face-recognition-stage7, feature/ala-multimodal-perception-stage7c]
   push:
-    branches: [main, feature/ala-personal-memory-engine-stage6, feature/ala-play-games-stage10]
+    branches: [main, feature/ala-personal-memory-engine-stage6, feature/ala-play-games-stage10, feature/ala-stage11-tap-vision]
   workflow_dispatch:
 permissions:
   contents: read
@@ -22,6 +22,7 @@ jobs:
           python3 tests/test_audio_cue_integration.py
           python3 tests/test_stage9_regression_contracts.py
           python3 tests/test_ala_play_games_contracts.py
+          python3 tests/test_ala_stage11_vision_contracts.py
           c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_play_games.cc -o /tmp/ala-play-games-stage10-test
           /tmp/ala-play-games-stage10-test
           c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_emotional_audio.cc -o /tmp/ala-stage9-emotional-test
