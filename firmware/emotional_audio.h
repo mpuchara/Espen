@@ -121,7 +121,9 @@ inline int Triangle16(uint32_t phase) {
                            98304 - static_cast<int>(phase * 2);
 }
 
-// Bounded, mono PCM16. No sin()/floating-point processing in the real-time
+// Bounded, mono PCM16. Louder effects (peak <= 15000) leave substantial
+// digital headroom and still obey the codec's speech volume/mute controls.
+// No sin()/floating-point processing in the real-time
 // playback task; each cue is <= 0.4 seconds and softly faded at note edges.
 // The hardware codec applies the *same* mute/volume as spoken Xiaozhi audio.
 inline std::vector<int16_t> RenderEmotionalCue(EmotionalCue cue, int sample_rate, int gain_percent) {
@@ -144,10 +146,10 @@ inline std::vector<int16_t> RenderEmotionalCue(EmotionalCue cue, int sample_rate
             phase = (phase + static_cast<uint32_t>(freq * 65536 / sample_rate)) & 65535u;
             const int wave = (Triangle16(phase) * 4 + Triangle16(phase * 2)) / 5;
             const int envelope = 100 * std::min({i, count - i - 1, fade}) / fade;
-            const int64_t scaled = static_cast<int64_t>(wave) * 7600 *
+            const int64_t scaled = static_cast<int64_t>(wave) * 15000 *
                 note.intensity * gain_percent * envelope /
                 (32768LL * 100 * 100 * 100);
-            pcm.push_back(static_cast<int16_t>(std::clamp<int64_t>(scaled, -7600, 7600)));
+            pcm.push_back(static_cast<int16_t>(std::clamp<int64_t>(scaled, -15000, 15000)));
         }
     }
     return pcm;
