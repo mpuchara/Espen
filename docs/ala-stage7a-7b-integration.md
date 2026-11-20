@@ -1,4 +1,12 @@
 # Ala Stage 7A + 7B — merge contract (not merged)
+
+> **HISTORYCZNE / NIEAKTUALNE dla Stage 7C i Stage 9.** Ten dokument opisuje
+> pierwotny, niescalony plan 7A+7B. PR #45 zintegrował już obie gałęzie.
+> Limit aplikacji `0x3f0000` opisany niżej NIE obowiązuje dla obecnej
+> `firmware/partitions_face_16m.csv`: teraz partycja app ma `0x7e0000`,
+> assets zaczynają się pod `0x800000`; wymagany jest **pełny espen.bin**.
+> Aktualne dane buildu i release gate: [audyt Stage 9](ala-stage9-complete-audit.md).
+>
 Base: PR #42 HEAD `e9c3811686a40703dcd613e8ea01c5d7f12f275d`.
 
 Stage 7A owns camera, CSI, face model and facial profiles.
