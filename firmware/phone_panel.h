@@ -5,6 +5,7 @@
 #include "phone_panel_html.h"
 #include "robot_name.h"
 #include "ala_social_intelligence.h"
+#include "ala_memory_engine.h"
 #include "settings.h"
 #include <esp_http_server.h>
 #include <esp_log.h>
@@ -40,6 +41,10 @@ class PhonePanel {
     std::atomic<int64_t> last_say_us_{0};
     std::mutex social_lock_;
     AlaSocialIntelligence social_;
+    std::mutex memory_lock_;
+    MemoryNvsStore memory_store_;
+    AlaMemoryEngine memory_{memory_store_};
+    bool memory_loaded_=false;
 
 
     PhonePanel() = default;
@@ -51,6 +56,7 @@ class PhonePanel {
         else if (status == 401) httpd_resp_set_status(req, "401 Unauthorized");
         else if (status == 409) httpd_resp_set_status(req, "409 Conflict");
         else if (status == 429) httpd_resp_set_status(req, "429 Too Many Requests");
+        else if (status == 413) httpd_resp_set_status(req, "413 Payload Too Large");
         else if (status == 503) httpd_resp_set_status(req, "503 Service Unavailable");
         httpd_resp_set_type(req, "text/plain; charset=utf-8");
         httpd_resp_set_hdr(req, "Cache-Control", "no-store");
@@ -281,6 +287,159 @@ class PhonePanel {
         self.RecordSocialManualRequest();
         return Respond(req,200,"Poproszono Xiaozhi o krótki komentarz.");
     }
+
+    void EnsureMemory() {
+        if (!memory_loaded_) { memory_.Load(); memory_loaded_=true; }
+    }
+    static std::string JsonString(const std::string& value) {
+        std::string out="\"";
+        static const char hex[]="0123456789abcdef";
+        for(unsigned char c:value) {
+            if(c=='\"'||c=='\\'){out+='\\';out+=static_cast<char>(c);}
+            else if(c<32){out+="\\u00";out+=hex[c>>4];out+=hex[c&15];}
+            else out+=static_cast<char>(c);
+        }
+        out+="\"";return out;
+    }
+    static bool MemoryNumber(const std::string& value, uint8_t& number) {
+        if(value.empty()||value.size()>2)return false;
+        unsigned n=0;
+        for(char c:value){if(c<'0'||c>'9')return false;n=n*10+c-'0';}
+        if(n<1||n>20)return false;
+        number=static_cast<uint8_t>(n);return true;
+    }
+    static bool MemoryCategoryFrom(const std::string& value, MemoryCategory& out) {
+        if(value.size()!=1||value[0]<'1'||value[0]>'5')return false;
+        out=static_cast<MemoryCategory>(value[0]-'0');return true;
+    }
+    static std::string SafePrompt(const std::string& s) {
+        // The existing SendWakeWordDetected path does NOT JSON-escape payloads.
+        std::string out;
+        for(unsigned char c:s) {
+            if(c=='\"'||c=='\\'||c<32||c==127)out+=' ';
+            else out+=static_cast<char>(c);
+        }
+        return out;
+    }
+    static esp_err_t MemoryGet(httpd_req_t* req) {
+        auto& self=Instance();
+        if(!self.Authorized(req))return Respond(req,401,"Niepoprawny kod.");
+        std::string json;
+        {
+            std::lock_guard<std::mutex> guard(self.memory_lock_);
+            self.EnsureMemory();
+            const auto& state=self.memory_.State();
+            json="{\"enabled\":"+std::string(state.enabled?"true":"false")+
+                 ",\"error\":"+(self.memory_.Error()?"true":"false")+
+                 ",\"count\":"+std::to_string(state.items.size())+
+                 ",\"limit\":20,\"bytes\":"+std::to_string(self.memory_.EstimatedBytes())+
+                 ",\"candidate\":"+JsonString(self.memory_.Candidate())+
+                 ",\"pending_delete\":"+(self.memory_.PendingDelete()?"true":"false")+
+                 ",\"recall_pending\":"+(self.memory_.RecallPending()?"true":"false")+
+                 ",\"items\":[";
+            bool first=true;
+            for(const auto& item:state.items) {
+                if(!first)json+=",";
+                first=false;
+                json+="{\"id\":"+std::to_string(item.id)+",\"category\":"+
+                      std::to_string(static_cast<unsigned>(item.category))+
+                      ",\"text\":"+JsonString(item.text)+"}";
+            }
+            json+="]}";
+        }
+        httpd_resp_set_type(req,"application/json; charset=utf-8");
+        httpd_resp_set_hdr(req,"Cache-Control","no-store");
+        httpd_resp_set_hdr(req,"X-Content-Type-Options","nosniff");
+        return httpd_resp_send(req,json.data(),json.size());
+    }
+    static esp_err_t MemoryPost(httpd_req_t* req) {
+        auto& self=Instance();
+        if(!self.Authorized(req))return Respond(req,401,"Niepoprawny kod.");
+        std::string body;
+        if(!ReadBody(req,body,8300))return Respond(req,413,"Przekroczony limit danych.");
+        if(body=="ask" || body.compare(0,4,"ask|")==0) {
+            auto& app=Application::GetInstance();
+            if(!::EspenNetworkAvailable()||app.EspenIsStandby()||
+               app.GetDeviceState()!=kDeviceStateIdle)
+                return Respond(req,409,"Ala musi być wolna, aktywna i połączona.");
+            std::string prompt;
+            {
+                std::lock_guard<std::mutex> guard(self.memory_lock_);
+                self.EnsureMemory();
+                if(!self.memory_.State().enabled)return Respond(req,409,"Włącz najpierw pamięć.");
+                const auto records=self.memory_.SearchQuestion(body=="ask"?"":body.substr(4),3);
+                self.memory_.DismissCandidate();
+                if(records.empty())return Respond(req,409,"Brak pasujących wspomnień.");
+                prompt="Odpowiedz po polsku na pytanie o lokalnie zapisane informacje Ali. "
+                       "Tylko te zatwierdzone wspomnienia wolno wykorzystac, "
+                       "nie przypisuj ich konkretnej osobie. ";
+                for(const auto& record:records)
+                    prompt+=SafePrompt(record.text)+"; ";
+                prompt+="Pytanie: "+SafePrompt(body=="ask"?"Co pamietasz?":body.substr(4));
+                if(prompt.size()>750)return Respond(req,409,"Zbyt długi kontekst.");
+            }
+            const int64_t now=esp_timer_get_time();
+            const auto previous=self.last_say_us_.load(std::memory_order_acquire);
+            if(previous && now-previous<7000000)
+                return Respond(req,429,"Odczekaj 7 sekund przed pytaniem.");
+            self.last_say_us_.store(now,std::memory_order_release);
+            { std::lock_guard<std::mutex> guard(self.reply_lock_); self.last_reply_.clear(); }
+            app.EspenAskText(prompt,false,self.Name());
+            return Respond(req,200,"Przekazano maksymalnie 3 wpisy do Xiaozhi za zgodą użytkownika.");
+        }
+        std::string result;
+        {
+            std::lock_guard<std::mutex> guard(self.memory_lock_);
+            self.EnsureMemory();
+            auto& m=self.memory_;
+            bool ok=false;
+            if(body=="on") ok=m.Enable(true);
+            else if(body=="off") ok=m.Enable(false);
+            else if(body=="accept") ok=m.ConfirmCandidate();
+            else if(body=="dismiss"){m.DismissCandidate();ok=true;}
+            else if(body=="clear|POTWIERDZAM")ok=m.Clear();
+            else if(body.compare(0,4,"add|")==0){
+                const auto sep=body.find('|',4);
+                MemoryCategory category;
+                if(sep!=std::string::npos && MemoryCategoryFrom(body.substr(4,sep-4),category))
+                    ok=m.Add(category,body.substr(sep+1));
+            } else if(body.compare(0,5,"edit|")==0) {
+                const auto a=body.find('|',5);
+                const auto b=a==std::string::npos?a:body.find('|',a+1);
+                uint8_t id=0;MemoryCategory category;
+                if(a!=std::string::npos && b!=std::string::npos &&
+                   MemoryNumber(body.substr(5,a-5),id) &&
+                   MemoryCategoryFrom(body.substr(a+1,b-a-1),category))
+                    ok=m.Edit(id,category,body.substr(b+1));
+            } else if(body.compare(0,7,"remove|")==0){
+                uint8_t id=0;
+                if(MemoryNumber(body.substr(7),id))ok=m.Remove(id);
+            } else if(body.compare(0,9,"category|")==0){
+                // Category deletion is deliberate and requires an exact suffix.
+                const auto sep=body.find('|',9);
+                MemoryCategory category;
+                if(sep!=std::string::npos && body.substr(sep+1)=="POTWIERDZAM" &&
+                   MemoryCategoryFrom(body.substr(9,sep-9),category))
+                    ok=m.RemoveCategory(category);
+            } else if(body=="export"){
+                result=m.Export();
+                ok=true;
+            } else if(body.compare(0,7,"import|")==0) {
+                // Replaces the local list only after schema+checksum validation.
+                // Does not turn on memory when it was previously OFF.
+                ok=m.Import(body.substr(7));
+            }
+            if(!ok)return Respond(req,409,"Operacja odrzucona: sprawdź zgodę, limit, duplikaty, format lub pamięć NVS.");
+        }
+        if(!result.empty()){
+            httpd_resp_set_type(req,"text/plain; charset=utf-8");
+            httpd_resp_set_hdr(req,"Cache-Control","no-store");
+            httpd_resp_set_hdr(req,"Content-Disposition","attachment; filename=ala-memory.alamemory");
+            return httpd_resp_send(req,result.data(),result.size());
+        }
+        return Respond(req,200,"OK");
+    }
+
     static esp_err_t Say(httpd_req_t* req) { return SendText(req, false); }
     static esp_err_t Chat(httpd_req_t* req) { return SendText(req, true); }
     static esp_err_t Reply(httpd_req_t* req) {
@@ -344,9 +503,10 @@ public:
         if (server_) return;
         Pin();
         Name();
+        { std::lock_guard<std::mutex> guard(memory_lock_); EnsureMemory(); }
         httpd_config_t config = HTTPD_DEFAULT_CONFIG();
         config.server_port = 80;
-        config.max_uri_handlers = 10;
+        config.max_uri_handlers = 12;
         config.stack_size = 8192;
         if (httpd_start(&server_, &config) != ESP_OK) {
             server_ = nullptr;
@@ -372,6 +532,8 @@ public:
         add("/api/reply", HTTP_GET, Reply);
         add("/api/social", HTTP_GET, GetSocial);
         add("/api/social", HTTP_POST, SocialCommand);
+        add("/api/memory", HTTP_GET, MemoryGet);
+        add("/api/memory", HTTP_POST, MemoryPost);
         ESP_LOGI("AlaPhone", "Phone panel listening on port 80");
     }
     bool StartSocial(uint32_t now, bool standby, bool online) {
@@ -391,7 +553,14 @@ public:
         social_.Tick(now,standby,online);
         return social_.Snapshot(now);
     }
+    void ObserveMemoryStt(const char* text) {
+        if(!text || Application::GetInstance().EspenIsStandby())return;
+        std::lock_guard<std::mutex> guard(memory_lock_);
+        EnsureMemory();
+        memory_.OfferVoice(text);
+    }
     void ObserveSocialStt(const char* text, uint32_t now) {
+        ObserveMemoryStt(text);
         std::lock_guard<std::mutex> lock(social_lock_);
         const auto command = ClassifySocialVoiceCommand(text);
         if (command == SocialVoiceCommand::Start) {

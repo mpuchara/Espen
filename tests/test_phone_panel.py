@@ -26,7 +26,7 @@ assert "bool Started() const" in phone
 assert "std::all_of(pin_.begin(), pin_.end()" in phone, "The stored PIN must be 8 digits"
 assert "std::atomic<uint32_t> emotion_seq_" in phone
 assert "GetDeviceState() != kDeviceStateIdle" in phone
-assert "config.max_uri_handlers = 10;" in phone
+assert "config.max_uri_handlers = 12;" in phone
 assert 'add("/api/social", HTTP_GET, GetSocial)' in phone
 assert 'add("/api/social", HTTP_POST, SocialCommand)' in phone
 assert "EspenAskText(body, hello, self.Name())" in phone
@@ -73,6 +73,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert generated.count(')ALA_PHONE_HTML";') == 1
     assert 'const char kAlaPhoneHtml[]' in generated
     assert 'phone_panel.h' in b.read_text()
+    assert (b.parent / "ala_memory_engine.h").exists()
     generated_board = b.read_text()
     assert 'Pilot: http://%s/' in generated_board
     assert 'Pilot telefonu / kod' in generated_board

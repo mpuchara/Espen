@@ -35,6 +35,9 @@ c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_social_intelligence.cc -
 /tmp/ala-social-test
 python3 tests/test_ala_social_contracts.py
 python3 tests/test_ala_native_xiaozhi.py
+python3 tests/test_memory_contracts.py
+c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_memory_engine.cc -o /tmp/ala-memory-test
+/tmp/ala-memory-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_conversation_manager.cc -o /tmp/ala-turn-policy-test
 /tmp/ala-turn-policy-test
 /tmp/ala-behavior-engine-test

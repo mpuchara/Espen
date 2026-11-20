@@ -53,6 +53,35 @@ small{display:block;color:#96aabe;margin-top:9px;line-height:1.5}.status{color:#
 <div id="social-status" class="status" role="status" aria-live="polite">Tryb wyłączony.</div>
 <small id="social-limits">Wszystkie polecenia wymagają kodu PIN. Kontekst znika po STOP, upływie czasu lub wyłączeniu sieci.</small>
 </section>
+<section id="memory-section"><h2>🧠 Co Ala pamięta?</h2>
+<p>Pamięć jest lokalna w Ali, domyślnie wyłączona. Zapisujesz tylko wybrane informacje; rozmowy nie są archiwizowane. Nie podawaj haseł, informacji medycznych ani danych wrażliwych.</p>
+<div class="buttons"><button id="memory-on">Włącz pamięć</button><button id="memory-off" class="secondary">Wyłącz</button></div>
+<div id="memory-usage" class="status" role="status">Połącz z Alą, aby zobaczyć pamięć.</div>
+<div id="memory-candidate" hidden><p>🎤 Propozycja z rozpoznanej mowy — NIE zapisana. Potwierdź świadomie:</p>
+<div id="memory-candidate-text"></div><div class="buttons"><button id="memory-accept">Zapisz</button><button id="memory-dismiss" class="secondary">Odrzuć</button></div></div>
+<div id="memory-recall" hidden><p>🎤 Wykryłam prośbę „Co pamiętasz?”. Potwierdź, jeśli chcesz przesłać maksymalnie 3 wpisy do Xiaozhi.</p>
+<div class="buttons"><button id="memory-recall-ask" class="secondary">💬 Potwierdź i zapytaj</button><button id="memory-recall-dismiss" class="secondary">Anuluj</button></div></div>
+<div class="buttons"><input id="memory-filter" placeholder="🔎 Szukaj słów we wspomnieniach" maxlength="80"></div>
+<label for="memory-filter-category">Filtr kategorii</label>
+<select id="memory-filter-category" style="width:100%;padding:12px;margin:7px 0;color:#fff;background:#091726;border:1px solid #3b536d;border-radius:12px">
+<option value="0">Wszystkie kategorie</option><option value="1">Preferencje</option><option value="2">Zainteresowania</option>
+<option value="3">Robot</option><option value="4">Ustalenia</option><option value="5">Ważne informacje</option></select>
+<div id="memory-list" aria-live="polite"></div>
+<div class="buttons"><button id="memory-remove-category" class="danger">Usuń całą wybraną kategorię</button></div>
+<label for="memory-category">Kategoria</label>
+<select id="memory-category" style="width:100%;padding:12px;margin-top:6px;color:#fff;background:#091726;border:1px solid #3b536d;border-radius:12px">
+<option value="1">Preferencje</option><option value="2">Zainteresowania</option><option value="3">Informacje o robocie</option><option value="4">Ustalenia</option><option value="5">Ważne informacje</option></select>
+<textarea id="memory-text" maxlength="160" placeholder="np. Interesuję się astronomią."></textarea>
+<div class="buttons"><button id="memory-save">➕ Dodaj wpis</button><button id="memory-cancel-edit" class="secondary">Anuluj edycję</button></div>
+<div class="buttons"><button id="memory-export" class="secondary">⬇ Eksportuj kopię</button><label class="secondary" style="cursor:pointer;background:#283a52;padding:13px;border-radius:13px;color:#fff;flex:1;text-align:center">⬆ Importuj kopię<input id="memory-import" type="file" accept=".alamemory,text/plain" style="display:none"></label></div>
+<small>Przed pełną instalacją espen.bin eksportuj pamięć. Pełny flash może usunąć NVS. Plik z kopią przechowuj prywatnie; połączenie lokalnego panelu HTTP nie jest szyfrowane.</small>
+<div class="buttons"><button id="memory-clear" class="danger">🗑 Usuń wszystkie wspomnienia</button></div>
+<h2 style="font-size:16px;margin-top:18px">Porozmawiaj ze wspomnieniem</h2>
+<p>Kliknięcie przycisku prześle maksymalnie 3 pasujące wpisy do chmurowego Xiaozhi. Nie dzieje się to automatycznie podczas rozmowy.</p>
+<input id="memory-question" maxlength="120" placeholder="np. Co pamiętasz o astronomii?">
+<div class="buttons"><button id="memory-ask" class="secondary">💬 Zapytaj Xiaozhi — wyrażam zgodę</button></div>
+<div id="memory-message" class="status" role="status" aria-live="polite"></div>
+</section>
 <small>Panel działa lokalnie przez Wi-Fi. Nie udostępniaj kodu sterowania innym osobom. Połączenie ze sztuczną inteligencją Xiaozhi wymaga Internetu i działającego głośnika.</small>
 </main>
 <script>
@@ -251,6 +280,115 @@ $('social-quiet').onclick=()=>socialAction('quiet');
 $('social-normal').onclick=()=>socialAction('normal');
 $('social-talkative').onclick=()=>socialAction('talkative');
 $('social-comment').onclick=()=>socialAction('comment');
+
+const memoryCategories={'1':'Preferencje','2':'Zainteresowania','3':'Robot','4':'Ustalenia','5':'Ważne'};
+let memoryEditing=0, memoryEnabled=false, memoryBusy=false;
+async function refreshMemory(){
+  if(!pin||memoryBusy)return;
+  try{
+    const data=JSON.parse(await request('/api/memory'));
+    memoryEnabled=data.enabled;
+    $('memory-usage').textContent=(data.enabled?'🟢 Włączona':'⚪ Wyłączona')+
+       ' · Wspomnienia: '+data.count+'/'+data.limit+' · NVS: '+data.bytes+' bajtów'+
+       (data.error?' · ⚠ Błąd odczytu lub zapisu!':'');
+    const list=$('memory-list');list.replaceChildren();
+    const filter=$('memory-filter').value.toLocaleLowerCase('pl-PL');
+    const selectedCategory=$('memory-filter-category').value;
+    for(const item of data.items){
+      if(filter && !item.text.toLocaleLowerCase('pl-PL').includes(filter))continue;
+      if(selectedCategory!=='0' && String(item.category)!==selectedCategory)continue;
+      const row=document.createElement('div');row.className='buttons';
+      row.style.alignItems='center';
+      const label=document.createElement('div');label.style.flex='1';label.style.overflowWrap='anywhere';
+      label.textContent='#'+item.id+' · '+(memoryCategories[item.category]||'Inne')+' — '+item.text;
+      const edit=document.createElement('button');edit.className='secondary';edit.textContent='Edytuj';
+      edit.onclick=()=>{memoryEditing=item.id;$('memory-category').value=String(item.category);$('memory-text').value=item.text;
+        $('memory-save').textContent='💾 Zapisz zmiany';$('memory-text').focus();};
+      const remove=document.createElement('button');remove.className='danger';remove.textContent='✕';
+      remove.onclick=()=>{if(confirm('Usunąć wybrane wspomnienie?'))memoryAction('remove|'+item.id)};
+      row.append(label,edit,remove);list.append(row);
+    }
+    $('memory-candidate').hidden=!data.candidate;
+    $('memory-recall').hidden=!data.recall_pending;
+    $('memory-accept').textContent=data.pending_delete?'🗑 Potwierdź usunięcie':'✅ Zapisz wspomnienie';
+    $('memory-candidate-text').textContent=data.candidate||'';
+    $('memory-save').disabled=!data.enabled;
+    $('memory-ask').disabled=!data.enabled||!data.count;
+    $('memory-on').disabled=data.enabled;
+    $('memory-off').disabled=!data.enabled;
+  }catch(e){$('memory-usage').textContent='Pamięć Ali: '+e.message;}
+}
+async function memoryAction(command){
+  memoryBusy=true;
+  try{
+    const result=await request('/api/memory','POST',command);
+    $('memory-message').textContent=result==='OK'?'✅ Zapisano zmianę.':result;
+    return result;
+  }catch(e){$('memory-message').textContent='⚠ '+e.message;return null;}
+  finally{memoryBusy=false;refreshMemory();}
+}
+$('memory-recall-ask').onclick=async()=>{
+  if(!confirm('Wysłać do Xiaozhi maksymalnie 3 zapisane wspomnienia?'))return;
+  const r=await memoryAction('ask');
+  if(r){$('answer').textContent='Czekam na odpowiedź Xiaozhi…';startReplyPolling();}
+};
+$('memory-recall-dismiss').onclick=()=>memoryAction('dismiss');
+$('memory-filter').oninput=()=>refreshMemory();
+$('memory-filter-category').onchange=()=>refreshMemory();
+$('memory-remove-category').onclick=async()=>{
+  const cat=$('memory-filter-category').value;
+  if(cat==='0'){$('memory-message').textContent='Najpierw wybierz kategorię.';return;}
+  if(!confirm('Usunąć WSZYSTKIE wpisy z wybranej kategorii?'))return;
+  if(prompt('Wpisz USUŃ, aby potwierdzić:')!=='USUŃ')return;
+  await memoryAction('category|'+cat+'|POTWIERDZAM');
+};
+$('memory-on').onclick=()=>memoryAction('on');
+$('memory-off').onclick=()=>memoryAction('off');
+$('memory-accept').onclick=()=>memoryAction('accept');
+$('memory-dismiss').onclick=()=>memoryAction('dismiss');
+$('memory-cancel-edit').onclick=()=>{memoryEditing=0;$('memory-text').value='';
+  $('memory-save').textContent='➕ Dodaj wpis';};
+$('memory-save').onclick=async()=>{
+  const text=$('memory-text').value.trim(), category=$('memory-category').value;
+  if(!text||new TextEncoder().encode(text).length>160){$('memory-message').textContent='Maksymalnie 160 bajtów UTF-8.';return;}
+  const action=memoryEditing?'edit|'+memoryEditing+'|'+category+'|'+text:'add|'+category+'|'+text;
+  if(await memoryAction(action)){
+    memoryEditing=0;$('memory-text').value='';$('memory-save').textContent='➕ Dodaj wpis';
+  }
+};
+$('memory-clear').onclick=async()=>{
+  if(confirm('Na pewno USUNĄĆ WSZYSTKIE wspomnienia? Nie da się cofnąć bez kopii!') &&
+     prompt('Wpisz USUŃ aby potwierdzić skasowanie pamięci:')==='USUŃ')
+      await memoryAction('clear|POTWIERDZAM');
+};
+$('memory-export').onclick=async()=>{
+  try{
+    const content=await request('/api/memory','POST','export');
+    if(!content.startsWith('ALAM1:'))throw Error('Niepoprawny eksport');
+    const url=URL.createObjectURL(new Blob([content],{type:'text/plain'}));
+    const a=document.createElement('a');a.href=url;a.download='ala-memory.alamemory';
+    document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),2000);
+    $('memory-message').textContent='Kopia zapisana na telefonie. Zachowaj ją przed pełnym flashem.';
+  }catch(e){$('memory-message').textContent=e.message;}
+};
+$('memory-import').onchange=async e=>{
+  const file=e.target.files[0];e.target.value='';
+  if(!file)return;
+  if(file.size>8200){$('memory-message').textContent='Za duży plik kopii.';return;}
+  if(!confirm('Import ZASTĄPI całą obecną pamięć. Kontynuować?'))return;
+  const content=(await file.text()).trim();
+  if(!content.startsWith('ALAM1:')){$('memory-message').textContent='Nieznany format kopii.';return;}
+  await memoryAction('import|'+content);
+};
+$('memory-ask').onclick=async()=>{
+  if(!confirm('Przesłać do chmurowego Xiaozhi do 3 pasujących wspomnień?'))return;
+  const query=$('memory-question').value.trim();
+  const result=await memoryAction('ask|'+query);
+  if(result){$('answer').textContent='Czekam na odpowiedź Xiaozhi…';startReplyPolling();}
+};
+setInterval(refreshMemory,4000);
+setTimeout(refreshMemory,1400);
+
 setInterval(refreshSocial,3000);
 verify();
 setTimeout(refreshSocial,1200);
