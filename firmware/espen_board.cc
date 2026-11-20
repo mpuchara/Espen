@@ -1371,6 +1371,24 @@ class EspenDisplay : public LcdDisplay {
                 self->CloseSettings();
                 ConversationClick();
             }, this, 340);
+            MakeButton(settings_, "Towarzyski: włącz / STOP", [](lv_event_t* e) {
+                auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                auto& panel=espen::PhonePanel::Instance();
+                auto now=static_cast<uint32_t>(esp_timer_get_time()/1000);
+                auto snap=panel.TickSocial(now, Application::GetInstance().EspenIsStandby(),
+                                           EspenNetworkAvailable());
+                if(snap.active) panel.StopSocial();
+                else panel.StartSocial(now,Application::GetInstance().EspenIsStandby(),
+                                       EspenNetworkAvailable());
+                self->social_label_second_=UINT32_MAX;
+            },this,420);
+            auto* social_disclosure=lv_label_create(settings_);
+            lv_obj_set_width(social_disclosure,lv_pct(100));
+            lv_label_set_long_mode(social_disclosure,LV_LABEL_LONG_WRAP);
+            lv_label_set_text(social_disclosure,
+                "Tryb 10 min, domyślnie wyłączony. W aktywnej sesji głos może być "
+                "przesłany do chmury Xiaozhi. Automatyczne komentarze wymagają "
+                "zgodnej usługi STT bez TTS; obecnie dostępny komentarz na żądanie z telefonu.");
             MakeButton(settings_, "Wyczyść rozmowę", [](lv_event_t* e) {
                 auto* self = static_cast<EspenDisplay*>(lv_event_get_user_data(e));
                 self->CloseSettings();
@@ -1460,6 +1478,8 @@ class EspenDisplay : public LcdDisplay {
     bool wifi_offline_=false,wifi_online_=false,was_online_=false;
     uint32_t seen_local_wake_=0,seen_sleep_=0;
     lv_obj_t* wake_indicator_=nullptr;
+    lv_obj_t* social_indicator_=nullptr;
+    uint32_t social_label_second_=UINT32_MAX;
     lv_obj_t* speech_mode_label_=nullptr;
     lv_obj_t* waves_[5]={};
     int wave_h_[5]={-1,-1,-1,-1,-1};
@@ -1716,6 +1736,12 @@ class EspenDisplay : public LcdDisplay {
         lv_label_set_long_mode(wake_indicator_,LV_LABEL_LONG_DOT);
         lv_obj_set_pos(wake_indicator_,15,264);
         Passive(wake_indicator_);RefreshWake();
+        social_indicator_=lv_label_create(face_);
+        lv_obj_set_style_text_font(social_indicator_,EspenUiFont(),0);
+        lv_obj_set_style_text_color(social_indicator_,lv_color_hex(0x78E1CB),0);
+        lv_obj_set_pos(social_indicator_,15,39);
+        lv_obj_set_width(social_indicator_,355);
+        Passive(social_indicator_);Hide(social_indicator_,true);
         // Persistent local name, refreshed on the LVGL task after a phone edit.
         // Place it in the top-right corner without obscuring the face or mic bar.
         robot_name_label_=lv_label_create(face_);
@@ -1808,6 +1834,12 @@ class EspenDisplay : public LcdDisplay {
     void TickFace() {
         uint32_t now=lv_tick_get();
         RefreshCameraPanel(now);
+        // Consent expiry and standby STOP must run even while Settings/Chat
+        // overlays hide the face. No phone/browser polling is required.
+        const bool social_standby=Application::GetInstance().EspenIsStandby();
+        const auto social=espen::PhonePanel::Instance().TickSocial(
+            static_cast<uint32_t>(esp_timer_get_time()/1000),social_standby,
+            EspenNetworkAvailable());
         if(!face_||OverlayVisible())return;
         auto& phone=espen::PhonePanel::Instance();
         const uint32_t name_rev=phone.NameRevision();
@@ -1891,7 +1923,23 @@ class EspenDisplay : public LcdDisplay {
             behavior_.SetDayPart(part);
         }
         behavior_.SetPersona(engine_.GetPersona());
-        const bool standby=Application::GetInstance().EspenIsStandby();
+        const bool standby=social_standby;
+        // Existing LVGL tick updates only a compact consent status.
+        // Neither the indicator nor consent starts passive audio capture.
+        Hide(social_indicator_,!social.active);
+        if(social.active) {
+            const auto seconds=(social.remaining_ms+999u)/1000u;
+            if(seconds!=social_label_second_) {
+                social_label_second_=seconds;
+                lv_label_set_text_fmt(social_indicator_,
+                    "Towarzyski %02lu:%02lu / Xiaozhi",
+                    static_cast<unsigned long>(seconds/60),
+                    static_cast<unsigned long>(seconds%60));
+            }
+        } else social_label_second_=UINT32_MAX;
+        // Stage 5 intentionally remains fail-closed until Xiaozhi offers
+        // a real STT -> semantic verdict -> conditional TTS interface.
+        behavior_.SetSocialSpeechPermission(espen::PhonePanel::Instance().SocialSpeechPermission());
         // Never gate autonomy on the previous Frame.asleep: that used to make
         // the five-second renderer sleep suppress every 27-second reaction.
         const auto decision=behavior_.Tick(now, phase, standby);

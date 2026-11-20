@@ -66,7 +66,13 @@ assert "kPhonePreviewMs = 4200" in behavior
 assert "phone_.Set(pending_mood_" in behavior
 assert "pending_phone_ = false;" in behavior
 assert "pending_voice_ = false;" in behavior
-assert "AllowSpontaneousSpeech() const { return false; }" in behavior
+# Stage 5 must remain fail-closed outside explicitly consented model verdicts.
+assert "bool social_speech_permission_ = false;" in behavior
+assert "void SetSocialSpeechPermission(bool allowed)" in behavior
+assert "return social_speech_permission_ && !previous_standby_" in behavior
+assert "social_speech_permission_ && !pending_phone_" in behavior
+assert "social_speech_permission_ = false;" in behavior
+assert "SocialSpeechPermission()" in board
 assert "std::mutex emotion_lock_" in phone
 assert "std::lock_guard<std::mutex> command_lock(emotion_lock_)" in phone
 assert "engine_.ManagedMood(decision.mood" in board
