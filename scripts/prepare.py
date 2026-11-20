@@ -1463,7 +1463,12 @@ replace("main/audio/audio_service.cc",
 # ResetDecoder runs on barge-in, new response, standby and audio cancellation.
 # Deferred sounds from a previous turn MUST NOT survive it.
 replace("main/audio/audio_service.cc",
-        '        audio_playback_queue_.clear();\n        audio_testing_queue_.clear();',
+        '        timestamp_queue_.clear();\n'
+        '        audio_decode_queue_.clear();\n'
+        '        audio_playback_queue_.clear();\n'
+        '        audio_testing_queue_.clear();',
+        '        timestamp_queue_.clear();\n'
+        '        audio_decode_queue_.clear();\n'
         '        audio_playback_queue_.clear();\n'
         '        espen_pending_cue_ = -1;\n'
         '        espen_pending_gain_ = 0;\n'
