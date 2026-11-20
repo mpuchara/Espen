@@ -26,6 +26,7 @@ python3 tests/test_photo_chat_integration.py
 python3 tests/test_tv_safe_release.py
 python3 tests/test_phone_panel.py
 python3 tests/test_mood_voice.py
+python3 tests/test_audio_cue_integration.py
 # Cross-module contract + real host behavior tests, before the ESP-IDF build.
 python3 tests/test_behavior_contracts.py
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_behavior_engine.cc -o /tmp/ala-behavior-engine-test
