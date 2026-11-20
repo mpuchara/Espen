@@ -1361,17 +1361,32 @@ replace("main/audio/audio_service.h",
 replace("main/audio/audio_service.h",
         '    bool QueueEspenDiagnosticPcm(std::vector<int16_t>&& pcm);',
         '    bool QueueEspenDiagnosticPcm(std::vector<int16_t>&& pcm);\n'
-        '    bool QueueEspenEmotionalCue(int cue, int gain);')
+        '    bool QueueEspenEmotionalCue(int cue, int gain, bool defer_when_busy = false);')
+# Keep one response-specific cue pending while TTS is playing. Its generation
+# is invalidated by ResetDecoder so a barge-in cannot play stale sound.
+replace("main/audio/audio_service.h",
+        '    uint32_t playback_generation_ = 0;',
+        '    uint32_t playback_generation_ = 0;\n'
+        '    int espen_pending_cue_ = -1;\n'
+        '    int espen_pending_gain_ = 0;')
 replace("main/audio/audio_service.cc", '#include <esp_heap_caps.h>',
         '#include <esp_heap_caps.h>\n#include "emotional_audio.h"')
 replace("main/audio/audio_service.cc",
         'bool AudioService::QueueEspenDiagnosticPcm(std::vector<int16_t>&& pcm) {',
-        """bool AudioService::QueueEspenEmotionalCue(int cue, int gain) {
+        """bool AudioService::QueueEspenEmotionalCue(int cue, int gain, bool defer_when_busy) {
     if (!espen::ValidCue(cue) || gain <= 0) return false;
-    std::unique_lock<std::mutex> lock(audio_queue_mutex_, std::try_to_lock);
-    if (!lock.owns_lock() || service_stopped_.load() ||
-        !audio_decode_queue_.empty() || !audio_playback_queue_.empty() ||
-        output_in_flight_ || decode_in_flight_) return false;
+    // This mutex protects only bounded queue state. No codec operation runs
+    // under it. Don't discard meaningful effects on a transient try_lock miss.
+    std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+    if (service_stopped_.load() || espen_pending_cue_ >= 0) return false;
+    const bool busy = !audio_decode_queue_.empty() ||
+        !audio_playback_queue_.empty() || output_in_flight_ || decode_in_flight_;
+    if (busy) {
+        if (!defer_when_busy) return false; // UI transitions never play late.
+        espen_pending_cue_ = cue;
+        espen_pending_gain_ = std::clamp(gain, 0, 100);
+        return true;
+    }
     AudioTask task;
     task.type = kAudioTaskTypeDecodeToPlaybackQueue;
     task.espen_cue = cue;
@@ -1404,6 +1419,36 @@ replace("main/audio/audio_service.cc",
         '            EspenPlaybackLevel(task.pcm.data(), task.pcm.size());\n'
         '            codec_->OutputData(task.pcm);\n'
         '        }')
+# Insert a deferred effect ONLY once real TTS playback has fully drained;
+# neither the codec output task nor the decoder may be busy at that point.
+# Playback remains sequential on the existing single output task.
+replace("main/audio/audio_service.cc",
+        'bool AudioService::MarkPlaybackDrainedLocked() {\n'
+        '    if (!IsPlaybackDrainedLocked() || playback_drained_notified_) {',
+        '''bool AudioService::MarkPlaybackDrainedLocked() {
+    if (espen_pending_cue_ >= 0 && IsPlaybackDrainedLocked() &&
+        !service_stopped_.load()) {
+        AudioTask task;
+        task.type = kAudioTaskTypeDecodeToPlaybackQueue;
+        task.espen_cue = espen_pending_cue_;
+        task.espen_cue_gain = espen_pending_gain_;
+        espen_pending_cue_ = -1;
+        espen_pending_gain_ = 0;
+        audio_playback_queue_.push_back(std::move(task));
+        playback_drained_notified_ = false;
+        audio_queue_cv_.notify_all();
+        return false;
+    }
+    if (!IsPlaybackDrainedLocked() || playback_drained_notified_) {''')
+# ResetDecoder runs on barge-in, new response, standby and audio cancellation.
+# Deferred sounds from a previous turn MUST NOT survive it.
+replace("main/audio/audio_service.cc",
+        '        audio_playback_queue_.clear();\n        audio_testing_queue_.clear();',
+        '        audio_playback_queue_.clear();\n'
+        '        espen_pending_cue_ = -1;\n'
+        '        espen_pending_gain_ = 0;\n'
+        '        audio_testing_queue_.clear();')
+
 # The stock upstream OGG popup is replaced to avoid playing twice and
 # prevent its large decoder start from obscuring the new short listening cue.
 replace("main/application.cc",
