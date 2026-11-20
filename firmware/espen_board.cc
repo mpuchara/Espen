@@ -5,6 +5,7 @@
 #include "config.h"
 #include "face_engine.h"
 #include "ala_behavior_engine.h"
+#include "ala_play_games.h"
 #include "ala_face_runtime.h"
 #include "speech_quality.h"
 #include "standby_policy.h"
