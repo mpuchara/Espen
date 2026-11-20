@@ -26,7 +26,7 @@ assert 'Stop()' in policy and 'ClearContext()' in policy
 assert 'social_indicator_' in board and 'social_label_second_' in board
 assert 'Towarzyski: włącz / STOP' in board
 assert 'social-start' in html and 'social-stop' in html
-assert 'social-comment' in html and 'Auto-ocena STT: niedostępna' in html
+assert 'social-comment' in html and 'Autonomia: niedostępna' in html
 assert 'auto_evaluation' in panel
 assert 'xiaozhi_channel_open' in panel
 assert 'manual_requests' in panel
