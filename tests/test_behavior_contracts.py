@@ -161,6 +161,7 @@ assert f"Espen {version} boot:" in board
 assert version in build
 assert "test -s build/merged-binary.bin" in build
 assert "sha256sum espen.bin" in build
-assert "if: github.event_name != 'pull_request'" in workflow
+# Test branches may build artifacts, but must never deploy to stable Pages.
+assert "if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'" in workflow
 assert "sha256sum --check espen.bin.sha256" in workflow
 print(f"Ala behavior contracts: 16 moods, phone, standby, TV, full installer {version}: OK")

@@ -5,6 +5,7 @@
 #include "config.h"
 #include "face_engine.h"
 #include "ala_behavior_engine.h"
+#include "ala_play_games.h"
 #include "ala_face_runtime.h"
 #include "speech_quality.h"
 #include "standby_policy.h"
@@ -634,6 +635,22 @@ class EspenDisplay : public LcdDisplay {
     lv_obj_t* wake_keyboard_ = nullptr;
     lv_obj_t* wake_footer_ = nullptr;
     lv_obj_t* settings_ = nullptr;
+    // Touch-only child-friendly games run entirely on the LVGL thread.
+    espen::AlaPlayGames games_{};
+    lv_obj_t* game_panel_ = nullptr;
+    lv_obj_t* game_title_ = nullptr;
+    lv_obj_t* game_progress_ = nullptr;
+    lv_obj_t* game_prompt_ = nullptr;
+    lv_obj_t* game_feedback_ = nullptr;
+    lv_obj_t* game_choices_[3] = {};
+    lv_obj_t* game_next_ = nullptr;
+    lv_obj_t* game_again_ = nullptr;
+    lv_obj_t* game_home_ = nullptr;
+    lv_obj_t* game_repeat_ = nullptr;
+    lv_obj_t* game_voice_status_ = nullptr;
+    lv_obj_t* game_spacer_ = nullptr;
+    lv_obj_t* bottom_dock_ = nullptr;
+    std::string pending_story_voice_;
     lv_obj_t* speech_diag_=nullptr;
     lv_obj_t* speech_diag_status_=nullptr;
     lv_obj_t* speech_meter_bar_=nullptr;
@@ -697,6 +714,7 @@ class EspenDisplay : public LcdDisplay {
     void TickCloud() {
         // Called by LVGL timer; camera worker only publishes a PSRAM snapshot.
         AppendChatPhoto();
+        PumpStoryNarration();
         std::string state, code;
         CloudSnapshot(state, code);
         // Show a real, newly received code automatically, unless the user
@@ -873,6 +891,222 @@ class EspenDisplay : public LcdDisplay {
         lv_obj_add_event_cb(button, cb, LV_EVENT_CLICKED, data);
         return button;
     }
+
+    // Fixed bottom dock: independent of chat scrolling and face animations.
+    // Its three actions reuse existing game, camera and Xiaozhi controls.
+    void BuildBottomDock() {
+        if(bottom_dock_)return;
+        bottom_dock_=lv_obj_create(lv_layer_top());
+        lv_obj_set_size(bottom_dock_,DISPLAY_WIDTH,76);
+        lv_obj_align(bottom_dock_,LV_ALIGN_BOTTOM_MID,0,0);
+        lv_obj_set_style_radius(bottom_dock_,0,0);
+        lv_obj_set_style_bg_color(bottom_dock_,lv_color_hex(0x101F30),0);
+        lv_obj_set_style_bg_opa(bottom_dock_,LV_OPA_COVER,0);
+        lv_obj_set_style_border_width(bottom_dock_,0,0);
+        lv_obj_set_style_pad_all(bottom_dock_,8,0);
+        lv_obj_set_style_pad_column(bottom_dock_,10,0);
+        lv_obj_set_flex_flow(bottom_dock_,LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(bottom_dock_,LV_FLEX_ALIGN_SPACE_EVENLY,
+                              LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_CENTER);
+        auto* play=MakeButton(bottom_dock_,LV_SYMBOL_PLAY "  Gry",[](lv_event_t* e){
+            static_cast<EspenDisplay*>(lv_event_get_user_data(e))->OpenPlayGames();
+        },this,142);
+        auto* camera=MakeButton(bottom_dock_,LV_SYMBOL_IMAGE "  Aparat",[](lv_event_t* e){
+            auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+            self->pending_story_voice_.clear();
+            if(self->game_panel_)self->Hide(self->game_panel_,true);
+            self->OpenCameraPanel();
+        },this,142);
+        auto* mic=MakeButton(bottom_dock_,LV_SYMBOL_AUDIO "  Mikrofon",[](lv_event_t* e){
+            auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+            self->pending_story_voice_.clear();
+            if(self->game_panel_)self->Hide(self->game_panel_,true);
+            auto& app=Application::GetInstance();
+            if(app.EspenIsStandby())app.EspenWakeFromTouch();
+            else ConversationClick();
+        },this,142);
+        for(auto* button:{play,camera,mic}) {
+            lv_obj_set_height(button,55);
+            lv_obj_set_style_radius(button,14,0);
+            lv_obj_set_style_bg_color(button,lv_color_hex(0x224D70),0);
+            lv_obj_set_style_text_font(lv_obj_get_child(button,0),LV_FONT_DEFAULT,0);
+        }
+        lv_obj_set_style_bg_color(play,lv_color_hex(0x246F86),0);
+        lv_obj_set_style_bg_color(mic,lv_color_hex(0x405A95),0);
+        // The most recent chat bubble can be scrolled above the fixed dock.
+        lv_obj_set_style_pad_bottom(content_,88,0);
+    }
+    // Narration is requested only for a visible story scene. The existing
+    // Xiaozhi worker owns the sole microphone/speaker; LVGL never calls the
+    // protocol directly. A new scene replaces a pending (not yet sent) scene.
+    void QueueStoryNarration() {
+        const auto view=games_.View();
+        pending_story_voice_.clear();
+        if(view.mode!=espen::PlayMode::Story || view.phase==espen::PlayPhase::Feedback)return;
+        pending_story_voice_=view.prompt;
+        if(view.phase==espen::PlayPhase::Choice && view.option_count>0) {
+            static constexpr const char* labels[]={"Opcja pierwsza: ","Opcja druga: ","Opcja trzecia: "};
+            pending_story_voice_+=" Możesz wybrać. ";
+            for(int i=0;i<view.option_count && i<3;++i) {
+                pending_story_voice_+=labels[i];
+                pending_story_voice_+=view.options[i];
+                pending_story_voice_+=". ";
+            }
+        }
+        if(game_voice_status_)lv_label_set_text(game_voice_status_,"Ala przygotowuje opowieść... ");
+    }
+    void PumpStoryNarration() {
+        if(pending_story_voice_.empty() || !game_panel_ ||
+           lv_obj_has_flag(game_panel_,LV_OBJ_FLAG_HIDDEN))return;
+        if(!EspenNetworkAvailable()) {
+            if(game_voice_status_)lv_label_set_text(game_voice_status_,"Głos wymaga Xiaozhi i Wi-Fi. Opcje są widoczne.");
+            return;
+        }
+        auto& app=Application::GetInstance();
+        if(app.EspenIsStandby() || app.GetDeviceState()!=kDeviceStateIdle)return;
+        std::string sentence=std::move(pending_story_voice_);
+        pending_story_voice_.clear();
+        // Application::Schedule keeps network/audio ownership off LVGL.
+        app.EspenNarrateGameText(sentence);
+        if(game_voice_status_)lv_label_set_text(game_voice_status_,"Ala opowiada... Powtórz, aby usłyszeć ponownie.");
+    }
+    void RefreshPlayGames() {
+        if (!game_panel_) return;
+        const auto view=games_.View();
+        lv_label_set_text(game_title_,view.title);
+        if(view.mode==espen::PlayMode::Menu) {
+            lv_label_set_text(game_progress_,"Wybierz grę. Czekają na ciebie przygody!");
+        } else if(view.phase==espen::PlayPhase::Finished) {
+            lv_label_set_text_fmt(game_progress_,"Zdobyte gwiazdki: %d",view.score);
+        } else if(view.mode==espen::PlayMode::Story && view.round==0) {
+            lv_label_set_text(game_progress_,"Wybierz temat opowieści");
+        } else {
+            lv_label_set_text_fmt(game_progress_,"Runda %d/%d | Gwiazdki: %d",
+                                  view.round,view.total_rounds,view.score);
+        }
+        lv_label_set_text(game_prompt_,view.prompt);
+        lv_obj_set_height(game_prompt_,view.mode==espen::PlayMode::Story?
+            (view.round==0?104:152):126);
+        lv_label_set_text(game_feedback_,view.feedback);
+        const bool choices=view.phase==espen::PlayPhase::Choice;
+        for(int i=0;i<3;++i) {
+            const bool visible=choices && i<view.option_count && view.options[i]!=nullptr;
+            Hide(game_choices_[i],!visible);
+            if(visible)lv_label_set_text(lv_obj_get_child(game_choices_[i],0),view.options[i]);
+        }
+        Hide(game_repeat_,view.mode!=espen::PlayMode::Story || view.phase==espen::PlayPhase::Feedback);
+        Hide(game_voice_status_,view.mode!=espen::PlayMode::Story);
+        Hide(game_next_,view.phase!=espen::PlayPhase::Feedback);
+        Hide(game_again_,view.phase!=espen::PlayPhase::Finished);
+        Hide(game_home_,view.mode==espen::PlayMode::Menu);
+    }
+    void OpenPlayGames() {
+        if(!game_panel_) {
+            game_panel_=lv_obj_create(lv_layer_top());
+            // Dock remains available below this modal.
+            lv_obj_set_size(game_panel_,DISPLAY_WIDTH,DISPLAY_HEIGHT-76);
+            lv_obj_align(game_panel_,LV_ALIGN_TOP_MID,0,0);
+            lv_obj_set_style_radius(game_panel_,0,0);
+            lv_obj_set_style_bg_color(game_panel_,lv_color_hex(0x07182A),0);
+            lv_obj_set_style_bg_opa(game_panel_,LV_OPA_COVER,0);
+            lv_obj_set_style_text_color(game_panel_,lv_color_hex(0xEFF9FF),0);
+            lv_obj_set_style_text_font(game_panel_,EspenUiFont(),0);
+            lv_obj_set_style_pad_all(game_panel_,16,0);
+            lv_obj_set_style_pad_row(game_panel_,8,0);
+            lv_obj_set_flex_flow(game_panel_,LV_FLEX_FLOW_COLUMN);
+            lv_obj_set_scroll_dir(game_panel_,LV_DIR_VER);
+            auto* head=lv_obj_create(game_panel_);
+            lv_obj_set_size(head,lv_pct(100),55);
+            lv_obj_set_style_bg_opa(head,LV_OPA_TRANSP,0);
+            lv_obj_set_style_border_width(head,0,0);
+            lv_obj_set_style_pad_all(head,0,0);
+            lv_obj_set_style_pad_column(head,12,0);
+            lv_obj_set_flex_flow(head,LV_FLEX_FLOW_ROW);
+            game_title_=lv_label_create(head);
+            lv_obj_set_width(game_title_,330);
+            lv_obj_set_style_text_color(game_title_,lv_color_hex(0x7EE9D2),0);
+            MakeButton(head,"X",[](lv_event_t* e){
+                auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                self->games_.Reset();
+                self->pending_story_voice_.clear();
+                self->Hide(self->game_panel_,true);
+            },this,66);
+            game_progress_=lv_label_create(game_panel_);
+            lv_obj_set_width(game_progress_,lv_pct(100));
+            lv_obj_set_style_text_color(game_progress_,lv_color_hex(0xF5CE72),0);
+            game_prompt_=lv_label_create(game_panel_);
+            lv_obj_set_size(game_prompt_,lv_pct(100),126);
+            lv_label_set_long_mode(game_prompt_,LV_LABEL_LONG_WRAP);
+            lv_obj_set_style_text_align(game_prompt_,LV_TEXT_ALIGN_CENTER,0);
+            lv_obj_set_style_text_color(game_prompt_,lv_color_white(),0);
+            game_feedback_=lv_label_create(game_panel_);
+            lv_obj_set_size(game_feedback_,lv_pct(100),42);
+            lv_label_set_long_mode(game_feedback_,LV_LABEL_LONG_WRAP);
+            lv_obj_set_style_text_align(game_feedback_,LV_TEXT_ALIGN_CENTER,0);
+            lv_obj_set_style_text_color(game_feedback_,lv_color_hex(0xF7CE6E),0);
+            game_voice_status_=lv_label_create(game_panel_);
+            lv_obj_set_width(game_voice_status_,lv_pct(100));
+            lv_label_set_long_mode(game_voice_status_,LV_LABEL_LONG_WRAP);
+            lv_obj_set_style_text_align(game_voice_status_,LV_TEXT_ALIGN_CENTER,0);
+            lv_obj_set_style_text_color(game_voice_status_,lv_color_hex(0xA5C9DE),0);
+            game_spacer_=lv_obj_create(game_panel_);
+            lv_obj_remove_style_all(game_spacer_);
+            lv_obj_set_width(game_spacer_,lv_pct(100));
+            lv_obj_set_flex_grow(game_spacer_,1);
+            static constexpr uint32_t colors[3]={0x255AA0,0x187C76,0x8B4B88};
+            for(int i=0;i<3;++i) {
+                game_choices_[i]=MakeButton(game_panel_,"Wybór",[](lv_event_t* e){
+                    auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                    auto* target=static_cast<lv_obj_t*>(lv_event_get_current_target(e));
+                    for(int j=0;j<3;++j)if(self->game_choices_[j]==target) {
+                        const auto mode=self->games_.View().mode;
+                        if(mode==espen::PlayMode::Menu)
+                            self->games_.Start(static_cast<espen::PlayMode>(j+1),lv_tick_get()^static_cast<uint32_t>(esp_random()));
+                        else self->games_.Choose(j);
+                        self->RefreshPlayGames();
+                        self->QueueStoryNarration();
+                        lv_obj_scroll_to_y(self->game_panel_,0,LV_ANIM_OFF);
+                        return;
+                    }
+                },this,DISPLAY_WIDTH-38);
+                lv_obj_set_height(game_choices_[i],65);
+                lv_obj_set_style_radius(game_choices_[i],17,0);
+                lv_obj_set_style_bg_color(game_choices_[i],lv_color_hex(colors[i]),0);
+                lv_obj_set_style_border_color(game_choices_[i],lv_color_hex(0xB3E3EB),0);
+                lv_obj_set_style_border_width(game_choices_[i],2,0);
+                auto* label=lv_obj_get_child(game_choices_[i],0);
+                lv_obj_set_style_text_font(label,EspenUiFont(),0);
+                lv_obj_set_width(label,DISPLAY_WIDTH-76);
+                lv_label_set_long_mode(label,LV_LABEL_LONG_WRAP);
+                lv_obj_set_style_text_align(label,LV_TEXT_ALIGN_CENTER,0);
+            }
+            game_repeat_=MakeButton(game_panel_,"↻ Powtórz opcje",[](lv_event_t* e){
+                auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                self->QueueStoryNarration();
+            },this,DISPLAY_WIDTH-38);
+            lv_obj_set_style_bg_color(game_repeat_,lv_color_hex(0x30566A),0);
+            game_next_=MakeButton(game_panel_,"Dalej",[](lv_event_t* e){
+                auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                self->games_.Next();self->RefreshPlayGames();self->QueueStoryNarration();
+            },this,DISPLAY_WIDTH-38);
+            game_again_=MakeButton(game_panel_,"Zagraj ponownie",[](lv_event_t* e){
+                auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                self->games_.Start(self->games_.View().mode,lv_tick_get()^static_cast<uint32_t>(esp_random()));
+                self->RefreshPlayGames();self->QueueStoryNarration();
+            },this,DISPLAY_WIDTH-38);
+            game_home_=MakeButton(game_panel_,"Inna gra / Wróć",[](lv_event_t* e){
+                auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                self->games_.Reset();self->RefreshPlayGames();self->QueueStoryNarration();
+            },this,DISPLAY_WIDTH-38);
+        }
+        games_.Reset();
+        pending_story_voice_.clear();
+        RefreshPlayGames();
+        lv_obj_clear_flag(game_panel_,LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(game_panel_);
+        lv_obj_scroll_to_y(game_panel_,0,LV_ANIM_OFF);
+    }
+
     void CloseSettings() {
         if (!settings_ || saving_) return;
         lv_textarea_set_text(password_, "");
@@ -1269,7 +1503,9 @@ class EspenDisplay : public LcdDisplay {
             lv_obj_set_style_bg_opa(camera_panel_,LV_OPA_COVER,0);
             lv_obj_set_style_text_color(camera_panel_,lv_color_white(),0);
             lv_obj_set_style_text_font(camera_panel_,EspenUiFont(),0);
-            lv_obj_set_style_pad_all(camera_panel_,12,0);lv_obj_set_style_pad_row(camera_panel_,8,0);
+            lv_obj_set_style_pad_all(camera_panel_,12,0);
+            lv_obj_set_style_pad_bottom(camera_panel_,96,0);
+            lv_obj_set_style_pad_row(camera_panel_,8,0);
             lv_obj_set_flex_flow(camera_panel_,LV_FLEX_FLOW_COLUMN);
             auto* title=lv_label_create(camera_panel_);lv_label_set_text(title,"ESPEN / Kamera");
             camera_status_=lv_label_create(camera_panel_);lv_obj_set_width(camera_status_,lv_pct(100));
@@ -1337,10 +1573,15 @@ class EspenDisplay : public LcdDisplay {
             lv_obj_set_style_text_font(settings_, EspenUiFont(), 0);
             lv_obj_set_style_radius(settings_, 0, 0);
             lv_obj_set_style_pad_all(settings_, 14, 0);
+            lv_obj_set_style_pad_bottom(settings_,94,0);
             lv_obj_set_style_pad_row(settings_, 8, 0);
             lv_obj_set_flex_flow(settings_, LV_FLEX_FLOW_COLUMN);
             auto* title = lv_label_create(settings_);
             lv_label_set_text(title, "ESPEN / Ustawienia");
+            MakeButton(settings_,"Gry dla dzieci",[](lv_event_t* e){
+                auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                self->CloseSettings();self->OpenPlayGames();
+            },this,420);
             MakeButton(settings_,"Kamera / Espen Vision",[](lv_event_t* e){
                 auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
                 self->CloseSettings();self->OpenCameraPanel();
@@ -1627,7 +1868,7 @@ class EspenDisplay : public LcdDisplay {
         g={x,y,w,h,angle};
     }
     bool OverlayVisible() const {
-        for(auto* panel:{settings_,wake_panel_,cloud_,speech_diag_,speaker_panel_,camera_panel_})
+        for(auto* panel:{settings_,wake_panel_,cloud_,speech_diag_,speaker_panel_,camera_panel_,game_panel_})
             if(panel&&!lv_obj_has_flag(panel,LV_OBJ_FLAG_HIDDEN))return true;
         return false;
     }
@@ -1791,6 +2032,8 @@ class EspenDisplay : public LcdDisplay {
             lv_obj_set_style_line_rounded(icon,true,0);Hide(icon,true);
         }
         BuildVisualPanel();
+        // The game shortcut is now in the persistent bottom navigation, never
+        // on the animated face (touch gestures remain unobstructed).
         // Six reusable vector particles. No per-frame heap allocation or
         // full-screen animation layer; dirty rectangles remain local.
         static const lv_point_precise_t little_heart[]={{2,8},{3,4},{7,2},{11,6},{15,2},{19,4},{20,8},{17,13},{11,19},{5,13},{2,8}};
@@ -1918,6 +2161,27 @@ class EspenDisplay : public LcdDisplay {
     void TickFace() {
         uint32_t now=lv_tick_get();
         RefreshCameraPanel(now);
+        // Other top-layer panels are opened later; keep navigation accessible.
+        // Avoid redundant move_foreground() calls on every 50 ms face tick.
+        if(bottom_dock_) {
+            // Never cover the bottom row of on-screen Wi-Fi/wake keyboards.
+            const bool editing=(keyboard_ && settings_ &&
+                !lv_obj_has_flag(settings_,LV_OBJ_FLAG_HIDDEN) &&
+                !lv_obj_has_flag(keyboard_,LV_OBJ_FLAG_HIDDEN)) ||
+                (wake_keyboard_ && wake_panel_ &&
+                !lv_obj_has_flag(wake_panel_,LV_OBJ_FLAG_HIDDEN) &&
+                !lv_obj_has_flag(wake_keyboard_,LV_OBJ_FLAG_HIDDEN)) ||
+                (cloud_keyboard_ && cloud_ &&
+                !lv_obj_has_flag(cloud_,LV_OBJ_FLAG_HIDDEN) &&
+                !lv_obj_has_flag(cloud_keyboard_,LV_OBJ_FLAG_HIDDEN));
+            Hide(bottom_dock_,editing);
+            if(!editing) {
+                auto* layer=lv_layer_top();
+                const auto count=lv_obj_get_child_cnt(layer);
+                if(count && lv_obj_get_child(layer,static_cast<int32_t>(count)-1)!=bottom_dock_)
+                    lv_obj_move_foreground(bottom_dock_);
+            }
+        }
         // Consent expiry and standby STOP must run even while Settings/Chat
         // overlays hide the face. No phone/browser polling is required.
         const bool social_standby=Application::GetInstance().EspenIsStandby();
@@ -2456,6 +2720,7 @@ public:
         if (auto* screen = lv_screen_active()) {
             StyleHome();
             BuildFace();
+            BuildBottomDock();
             lv_obj_invalidate(screen);
             SettingsGesture(screen);
             SettingsGesture(top_bar_);

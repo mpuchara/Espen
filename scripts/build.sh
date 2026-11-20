@@ -29,6 +29,9 @@ python3 tests/test_mood_voice.py
 python3 tests/test_listening_start_silent.py
 python3 tests/test_audio_cue_integration.py
 python3 tests/test_stage9_regression_contracts.py
+python3 tests/test_ala_play_games_contracts.py
+c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_play_games.cc -o /tmp/ala-play-games-test
+/tmp/ala-play-games-test
 # Cross-module contract + real host behavior tests, before the ESP-IDF build.
 python3 tests/test_behavior_contracts.py
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_behavior_engine.cc -o /tmp/ala-behavior-engine-test
