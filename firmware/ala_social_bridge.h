@@ -29,6 +29,7 @@ enum class BridgeActivity : uint8_t {
 struct BridgeStats {
     BridgeActivity state = BridgeActivity::NoBackend;
     uint32_t analysed = 0, accepted = 0, ignored = 0, cancelled = 0;
+    uint32_t rejected_segments = 0, pcm_drained = 0;
     bool configured = false, available = false;
 };
 
@@ -63,7 +64,7 @@ class AlaSocialBridge {
     uint16_t voiced_blocks_ = 0, silent_blocks_ = 0;
     std::atomic<BridgeActivity> state_{BridgeActivity::NoBackend};
     std::atomic<uint32_t> analysed_{0}, accepted_{0}, ignored_{0}, cancelled_{0};
-    std::atomic<uint32_t> rejected_segments_{0};
+    std::atomic<uint32_t> rejected_segments_{0}, pcm_drained_{0};
     uint32_t last_turn_ms_ = 0;
 
     struct HttpBody {
@@ -325,6 +326,9 @@ class AlaSocialBridge {
         while(Still(epoch) && !audio.IsPlaybackIdle() && attempts++<250) {
             vTaskDelay(pdMS_TO_TICKS(20));
         }
+        if (fully_queued && audio.IsPlaybackIdle() && Still(epoch)) {
+            pcm_drained_.fetch_add(1);
+        }
         speaking_.store(false,std::memory_order_release);
         if(Application::GetInstance().GetDeviceState()==kDeviceStateIdle &&
            !Application::GetInstance().EspenIsStandby()) {
@@ -522,6 +526,8 @@ public:
         s.accepted=accepted_.load();
         s.ignored=ignored_.load();
         s.cancelled=cancelled_.load();
+        s.rejected_segments=rejected_segments_.load();
+        s.pcm_drained=pcm_drained_.load();
         return s;
     }
 };
