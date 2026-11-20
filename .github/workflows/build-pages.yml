@@ -1,7 +1,7 @@
 name: Espen firmware and installer
 on:
   push:
-    branches: [main, feature/ala-central-behavior-engine-stage2]
+    branches: [main]
   pull_request:
     branches: [main, feature/ala-central-behavior-engine-stage2]
   workflow_dispatch:
