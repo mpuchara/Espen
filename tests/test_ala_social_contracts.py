@@ -25,7 +25,8 @@ assert 'Stop()' in policy and 'ClearContext()' in policy
 assert 'social_indicator_' in board and 'social_label_second_' in board
 assert 'Towarzyski: włącz / STOP' in board
 assert 'social-start' in html and 'social-stop' in html
-assert 'social-comment' in html and 'auto_evaluation' in html
+assert 'social-comment' in html and 'Auto-ocena STT: niedostępna' in html
+assert 'auto_evaluation' in panel
 assert 'tests/test_ala_social_intelligence.cc' in build
 assert 'feature/ala-conversation-intelligence-stage4' in (
     root / ".github/workflows/build-pages.yml").read_text()
