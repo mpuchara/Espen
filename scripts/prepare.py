@@ -1838,6 +1838,16 @@ src = src[:a] + """void Application::EspenCheckSilence() {
                  static_cast<unsigned long long>(espen_timeout_.SilenceMs(now)),
                  static_cast<unsigned long>(espen_timeout_.EndpointMs()), EspenNoiseFloorRms());
         espen_timeout_.Request(now);
+        // A low-rate aggregate (once per 16 completed turns); no text/PCM.
+        const auto& stats = espen_timeout_.Counters();
+        if ((stats.endpoints & 15u) == 0u)
+            ESP_LOGI(TAG, "Ala turn stats: start=%lu endpoint=%lu pause=%lu empty=%lu max=%lu reply=%lu",
+                     static_cast<unsigned long>(stats.starts),
+                     static_cast<unsigned long>(stats.endpoints),
+                     static_cast<unsigned long>(stats.short_pauses),
+                     static_cast<unsigned long>(stats.empty_timeouts),
+                     static_cast<unsigned long>(stats.max_timeouts),
+                     static_cast<unsigned long>(stats.reply_timeouts));
         espen_finish_at_ = now;
         EspenTurnUserPause(false);
         EspenTurnWaiting(true);
