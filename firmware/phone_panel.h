@@ -8,6 +8,7 @@
 #include "ala_memory_engine.h"
 #include "ala_face_runtime.h"
 #include "ala_identity_engine.h"
+#include "ala_home_assistant.h"
 #include "settings.h"
 #include <esp_http_server.h>
 #include <esp_log.h>
@@ -142,6 +143,43 @@ class PhonePanel {
         httpd_resp_set_hdr(req, "Cache-Control", "no-store");
         httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
         return httpd_resp_send(req, json.data(), json.size());
+    }
+    static esp_err_t HaJson(httpd_req_t* req, const std::string& json) {
+        httpd_resp_set_type(req, "application/json; charset=utf-8");
+        httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+        httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
+        return httpd_resp_send(req, json.data(), json.size());
+    }
+    static esp_err_t HaGet(httpd_req_t* req) {
+        if (!Instance().Authorized(req)) return Respond(req, 401, "Niepoprawny kod.");
+        return HaJson(req, AlaHomeAssistant::Instance().Status());
+    }
+    static esp_err_t HaPost(httpd_req_t* req) {
+        if (!Instance().Authorized(req)) return Respond(req, 401, "Niepoprawny kod.");
+        std::string command;
+        if (!ReadBody(req, command, 720)) return Respond(req, 400, "Błędne polecenie.");
+        auto& ha=AlaHomeAssistant::Instance();
+        auto sep=command.find('|');
+        std::string verb=command.substr(0,sep);
+        std::string value=sep==std::string::npos?"":command.substr(sep+1);
+        if (verb=="status") return HaJson(req,ha.Status());
+        if (verb=="check" && value.empty()) return HaJson(req,ha.Check());
+        if (verb=="read") return HaJson(req,ha.Read(value));
+        if (verb=="url" && ha.SetUrl(value)) return HaJson(req,ha.Status());
+        if (verb=="token" && ha.SetToken(value)) return HaJson(req,ha.Status());
+        if (verb=="enable" && (value=="0" || value=="1") && ha.SetEnabled(value=="1"))
+            return HaJson(req,ha.Status());
+        if (verb=="add") {
+            auto div=value.find('|');
+            if(div!=std::string::npos && ha.Allow(value.substr(0,div),value.substr(div+1)))
+                return HaJson(req,ha.Status());
+        }
+        if (verb=="remove" && ha.Remove(value)) return HaJson(req,ha.Status());
+        if (verb=="cancel" && value.empty()) {
+            ha.Cancel();
+            return HaJson(req,ha.Status());
+        }
+        return Respond(req,400,"Nieprawidłowa konfiguracja lub polecenie.");
     }
     static esp_err_t GetName(httpd_req_t* req) {
         auto& self = Instance();
@@ -578,7 +616,7 @@ public:
         { std::lock_guard<std::mutex> guard(memory_lock_); EnsureMemory(); }
         httpd_config_t config = HTTPD_DEFAULT_CONFIG();
         config.server_port = 80;
-        config.max_uri_handlers = 15;
+        config.max_uri_handlers = 17;
         config.stack_size = 8192;
         if (httpd_start(&server_, &config) != ESP_OK) {
             server_ = nullptr;
@@ -609,6 +647,8 @@ public:
         add("/api/face", HTTP_GET, FaceGet);
         add("/api/face", HTTP_POST, FacePost);
         add("/api/hearing", HTTP_GET, HearingGet);
+        add("/api/ha", HTTP_GET, HaGet);
+        add("/api/ha", HTTP_POST, HaPost);
         ESP_LOGI("AlaPhone", "Phone panel listening on port 80");
     }
     bool StartSocial(uint32_t now, bool standby, bool online) {
@@ -624,6 +664,7 @@ public:
         social_.SetActivity(level);
     }
     SocialSnapshot TickSocial(uint32_t now, bool standby, bool online) {
+        if (standby || !online) AlaHomeAssistant::Instance().Cancel();
         std::lock_guard<std::mutex> lock(social_lock_);
         social_.Tick(now,standby,online);
         return social_.Snapshot(now);
@@ -635,6 +676,7 @@ public:
         memory_.OfferVoice(text);
     }
     void ObserveSocialStt(const char* text, uint32_t now) {
+        if(text && (std::strstr(text,"bez odbioru") || std::strstr(text,"STOP"))) AlaHomeAssistant::Instance().Cancel();
         ObserveMemoryStt(text);
         std::lock_guard<std::mutex> lock(social_lock_);
         const auto command = ClassifySocialVoiceCommand(text);
