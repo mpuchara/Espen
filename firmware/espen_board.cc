@@ -646,6 +646,11 @@ class EspenDisplay : public LcdDisplay {
     lv_obj_t* game_next_ = nullptr;
     lv_obj_t* game_again_ = nullptr;
     lv_obj_t* game_home_ = nullptr;
+    lv_obj_t* game_repeat_ = nullptr;
+    lv_obj_t* game_voice_status_ = nullptr;
+    lv_obj_t* game_spacer_ = nullptr;
+    lv_obj_t* bottom_dock_ = nullptr;
+    std::string pending_story_voice_;
     lv_obj_t* speech_diag_=nullptr;
     lv_obj_t* speech_diag_status_=nullptr;
     lv_obj_t* speech_meter_bar_=nullptr;
@@ -709,6 +714,7 @@ class EspenDisplay : public LcdDisplay {
     void TickCloud() {
         // Called by LVGL timer; camera worker only publishes a PSRAM snapshot.
         AppendChatPhoto();
+        PumpStoryNarration();
         std::string state, code;
         CloudSnapshot(state, code);
         // Show a real, newly received code automatically, unless the user
@@ -886,58 +892,99 @@ class EspenDisplay : public LcdDisplay {
         return button;
     }
 
+    // Narration is requested only for a visible story scene. The existing
+    // Xiaozhi worker owns the sole microphone/speaker; LVGL never calls the
+    // protocol directly. A new scene replaces a pending (not yet sent) scene.
+    void QueueStoryNarration() {
+        const auto view=games_.View();
+        pending_story_voice_.clear();
+        if(view.mode!=espen::PlayMode::Story || view.phase==espen::PlayPhase::Feedback)return;
+        pending_story_voice_=view.prompt;
+        if(view.phase==espen::PlayPhase::Choice && view.option_count>0) {
+            static constexpr const char* labels[]={"Opcja pierwsza: ","Opcja druga: ","Opcja trzecia: "};
+            pending_story_voice_+=" Możesz wybrać. ";
+            for(int i=0;i<view.option_count && i<3;++i) {
+                pending_story_voice_+=labels[i];
+                pending_story_voice_+=view.options[i];
+                pending_story_voice_+=". ";
+            }
+        }
+        if(game_voice_status_)lv_label_set_text(game_voice_status_,"Ala przygotowuje opowieść... ");
+    }
+    void PumpStoryNarration() {
+        if(pending_story_voice_.empty() || !game_panel_ ||
+           lv_obj_has_flag(game_panel_,LV_OBJ_FLAG_HIDDEN))return;
+        if(!EspenNetworkAvailable()) {
+            if(game_voice_status_)lv_label_set_text(game_voice_status_,"Głos wymaga Xiaozhi i Wi-Fi. Opcje są widoczne.");
+            return;
+        }
+        auto& app=Application::GetInstance();
+        if(app.EspenIsStandby() || app.GetDeviceState()!=kDeviceStateIdle)return;
+        std::string sentence=std::move(pending_story_voice_);
+        pending_story_voice_.clear();
+        // Application::Schedule keeps network/audio ownership off LVGL.
+        app.EspenNarrateGameText(sentence);
+        if(game_voice_status_)lv_label_set_text(game_voice_status_,"Ala opowiada... Powtórz, aby usłyszeć ponownie.");
+    }
     void RefreshPlayGames() {
         if (!game_panel_) return;
-        const auto view = games_.View();
-        lv_label_set_text(game_title_, view.title);
-        if (view.mode == espen::PlayMode::Menu) {
-            lv_label_set_text(game_progress_, "Wybierz przygodę i baw się dotykiem!");
-        } else if (view.phase == espen::PlayPhase::Finished) {
-            lv_label_set_text_fmt(game_progress_, "Zdobyte gwiazdki: %d", view.score);
+        const auto view=games_.View();
+        lv_label_set_text(game_title_,view.title);
+        if(view.mode==espen::PlayMode::Menu) {
+            lv_label_set_text(game_progress_,"Wybierz grę. Czekają na ciebie przygody!");
+        } else if(view.phase==espen::PlayPhase::Finished) {
+            lv_label_set_text_fmt(game_progress_,"Zdobyte gwiazdki: %d",view.score);
+        } else if(view.mode==espen::PlayMode::Story && view.round==0) {
+            lv_label_set_text(game_progress_,"Wybierz temat opowieści");
         } else {
-            lv_label_set_text_fmt(game_progress_, "Runda %d/%d | Gwiazdki: %d",
-                                  view.round, view.total_rounds, view.score);
+            lv_label_set_text_fmt(game_progress_,"Runda %d/%d | Gwiazdki: %d",
+                                  view.round,view.total_rounds,view.score);
         }
-        lv_label_set_text(game_prompt_, view.prompt);
-        lv_label_set_text(game_feedback_, view.feedback);
-        const bool choices = view.phase == espen::PlayPhase::Choice;
-        for (int i=0;i<3;++i) {
-            const bool visible = choices && i < view.option_count && view.options[i] != nullptr;
-            Hide(game_choices_[i], !visible);
-            if (visible)
-                lv_label_set_text(lv_obj_get_child(game_choices_[i],0),view.options[i]);
+        lv_label_set_text(game_prompt_,view.prompt);
+        lv_obj_set_height(game_prompt_,view.mode==espen::PlayMode::Story?
+            (view.round==0?104:152):126);
+        lv_label_set_text(game_feedback_,view.feedback);
+        const bool choices=view.phase==espen::PlayPhase::Choice;
+        for(int i=0;i<3;++i) {
+            const bool visible=choices && i<view.option_count && view.options[i]!=nullptr;
+            Hide(game_choices_[i],!visible);
+            if(visible)lv_label_set_text(lv_obj_get_child(game_choices_[i],0),view.options[i]);
         }
-        Hide(game_next_,view.phase != espen::PlayPhase::Feedback);
-        Hide(game_again_,view.phase != espen::PlayPhase::Finished);
-        Hide(game_home_,view.mode == espen::PlayMode::Menu);
+        Hide(game_repeat_,view.mode!=espen::PlayMode::Story || view.phase==espen::PlayPhase::Feedback);
+        Hide(game_voice_status_,view.mode!=espen::PlayMode::Story);
+        Hide(game_next_,view.phase!=espen::PlayPhase::Feedback);
+        Hide(game_again_,view.phase!=espen::PlayPhase::Finished);
+        Hide(game_home_,view.mode==espen::PlayMode::Menu);
     }
     void OpenPlayGames() {
-        if (!game_panel_) {
+        if(!game_panel_) {
             game_panel_=lv_obj_create(lv_layer_top());
-            lv_obj_set_size(game_panel_,DISPLAY_WIDTH,DISPLAY_HEIGHT);
-            lv_obj_center(game_panel_);
+            // Dock remains available below this modal.
+            lv_obj_set_size(game_panel_,DISPLAY_WIDTH,DISPLAY_HEIGHT-76);
+            lv_obj_align(game_panel_,LV_ALIGN_TOP_MID,0,0);
             lv_obj_set_style_radius(game_panel_,0,0);
             lv_obj_set_style_bg_color(game_panel_,lv_color_hex(0x07182A),0);
             lv_obj_set_style_bg_opa(game_panel_,LV_OPA_COVER,0);
             lv_obj_set_style_text_color(game_panel_,lv_color_hex(0xEFF9FF),0);
             lv_obj_set_style_text_font(game_panel_,EspenUiFont(),0);
             lv_obj_set_style_pad_all(game_panel_,16,0);
-            lv_obj_set_style_pad_row(game_panel_,9,0);
+            lv_obj_set_style_pad_row(game_panel_,8,0);
             lv_obj_set_flex_flow(game_panel_,LV_FLEX_FLOW_COLUMN);
             lv_obj_set_scroll_dir(game_panel_,LV_DIR_VER);
             auto* head=lv_obj_create(game_panel_);
-            lv_obj_set_size(head,lv_pct(100),60);
+            lv_obj_set_size(head,lv_pct(100),55);
             lv_obj_set_style_bg_opa(head,LV_OPA_TRANSP,0);
             lv_obj_set_style_border_width(head,0,0);
             lv_obj_set_style_pad_all(head,0,0);
             lv_obj_set_style_pad_column(head,12,0);
             lv_obj_set_flex_flow(head,LV_FLEX_FLOW_ROW);
             game_title_=lv_label_create(head);
-            lv_obj_set_width(game_title_,335);
+            lv_obj_set_width(game_title_,330);
             lv_obj_set_style_text_color(game_title_,lv_color_hex(0x7EE9D2),0);
             MakeButton(head,"X",[](lv_event_t* e){
                 auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
                 self->games_.Reset();
+                self->pending_story_voice_.clear();
                 self->Hide(self->game_panel_,true);
             },this,66);
             game_progress_=lv_label_create(game_panel_);
@@ -948,7 +995,21 @@ class EspenDisplay : public LcdDisplay {
             lv_label_set_long_mode(game_prompt_,LV_LABEL_LONG_WRAP);
             lv_obj_set_style_text_align(game_prompt_,LV_TEXT_ALIGN_CENTER,0);
             lv_obj_set_style_text_color(game_prompt_,lv_color_white(),0);
-            static constexpr uint32_t colors[3] = {0x215CA6,0x136C71,0x9A467B};
+            game_feedback_=lv_label_create(game_panel_);
+            lv_obj_set_size(game_feedback_,lv_pct(100),42);
+            lv_label_set_long_mode(game_feedback_,LV_LABEL_LONG_WRAP);
+            lv_obj_set_style_text_align(game_feedback_,LV_TEXT_ALIGN_CENTER,0);
+            lv_obj_set_style_text_color(game_feedback_,lv_color_hex(0xF7CE6E),0);
+            game_voice_status_=lv_label_create(game_panel_);
+            lv_obj_set_width(game_voice_status_,lv_pct(100));
+            lv_label_set_long_mode(game_voice_status_,LV_LABEL_LONG_WRAP);
+            lv_obj_set_style_text_align(game_voice_status_,LV_TEXT_ALIGN_CENTER,0);
+            lv_obj_set_style_text_color(game_voice_status_,lv_color_hex(0xA5C9DE),0);
+            game_spacer_=lv_obj_create(game_panel_);
+            lv_obj_remove_style_all(game_spacer_);
+            lv_obj_set_width(game_spacer_,lv_pct(100));
+            lv_obj_set_flex_grow(game_spacer_,1);
+            static constexpr uint32_t colors[3]={0x255AA0,0x187C76,0x8B4B88};
             for(int i=0;i<3;++i) {
                 game_choices_[i]=MakeButton(game_panel_,"Wybór",[](lv_event_t* e){
                     auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
@@ -956,40 +1017,46 @@ class EspenDisplay : public LcdDisplay {
                     for(int j=0;j<3;++j)if(self->game_choices_[j]==target) {
                         const auto mode=self->games_.View().mode;
                         if(mode==espen::PlayMode::Menu)
-                            self->games_.Start(static_cast<espen::PlayMode>(j+1),lv_tick_get() ^ static_cast<uint32_t>(esp_random()));
+                            self->games_.Start(static_cast<espen::PlayMode>(j+1),lv_tick_get()^static_cast<uint32_t>(esp_random()));
                         else self->games_.Choose(j);
                         self->RefreshPlayGames();
+                        self->QueueStoryNarration();
+                        lv_obj_scroll_to_y(self->game_panel_,0,LV_ANIM_OFF);
                         return;
                     }
-                },this,DISPLAY_WIDTH-40);
-                lv_obj_set_height(game_choices_[i],70);
+                },this,DISPLAY_WIDTH-38);
+                lv_obj_set_height(game_choices_[i],65);
+                lv_obj_set_style_radius(game_choices_[i],17,0);
                 lv_obj_set_style_bg_color(game_choices_[i],lv_color_hex(colors[i]),0);
+                lv_obj_set_style_border_color(game_choices_[i],lv_color_hex(0xB3E3EB),0);
+                lv_obj_set_style_border_width(game_choices_[i],2,0);
                 auto* label=lv_obj_get_child(game_choices_[i],0);
                 lv_obj_set_style_text_font(label,EspenUiFont(),0);
-                lv_obj_set_width(label,DISPLAY_WIDTH-74);
+                lv_obj_set_width(label,DISPLAY_WIDTH-76);
                 lv_label_set_long_mode(label,LV_LABEL_LONG_WRAP);
                 lv_obj_set_style_text_align(label,LV_TEXT_ALIGN_CENTER,0);
             }
-            game_feedback_=lv_label_create(game_panel_);
-            lv_obj_set_size(game_feedback_,lv_pct(100),50);
-            lv_label_set_long_mode(game_feedback_,LV_LABEL_LONG_WRAP);
-            lv_obj_set_style_text_align(game_feedback_,LV_TEXT_ALIGN_CENTER,0);
-            lv_obj_set_style_text_color(game_feedback_,lv_color_hex(0xF7CE6E),0);
+            game_repeat_=MakeButton(game_panel_,"↻ Powtórz opcje",[](lv_event_t* e){
+                auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                self->QueueStoryNarration();
+            },this,DISPLAY_WIDTH-38);
+            lv_obj_set_style_bg_color(game_repeat_,lv_color_hex(0x30566A),0);
             game_next_=MakeButton(game_panel_,"Dalej",[](lv_event_t* e){
                 auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
-                self->games_.Next();self->RefreshPlayGames();
-            },this,DISPLAY_WIDTH-40);
+                self->games_.Next();self->RefreshPlayGames();self->QueueStoryNarration();
+            },this,DISPLAY_WIDTH-38);
             game_again_=MakeButton(game_panel_,"Zagraj ponownie",[](lv_event_t* e){
                 auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
-                self->games_.Start(self->games_.View().mode,lv_tick_get() ^ static_cast<uint32_t>(esp_random()));
-                self->RefreshPlayGames();
-            },this,DISPLAY_WIDTH-40);
+                self->games_.Start(self->games_.View().mode,lv_tick_get()^static_cast<uint32_t>(esp_random()));
+                self->RefreshPlayGames();self->QueueStoryNarration();
+            },this,DISPLAY_WIDTH-38);
             game_home_=MakeButton(game_panel_,"Inna gra / Wróć",[](lv_event_t* e){
                 auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
-                self->games_.Reset();self->RefreshPlayGames();
-            },this,DISPLAY_WIDTH-40);
+                self->games_.Reset();self->RefreshPlayGames();self->QueueStoryNarration();
+            },this,DISPLAY_WIDTH-38);
         }
         games_.Reset();
+        pending_story_voice_.clear();
         RefreshPlayGames();
         lv_obj_clear_flag(game_panel_,LV_OBJ_FLAG_HIDDEN);
         lv_obj_move_foreground(game_panel_);
@@ -1918,13 +1985,8 @@ class EspenDisplay : public LcdDisplay {
             lv_obj_set_style_line_rounded(icon,true,0);Hide(icon,true);
         }
         BuildVisualPanel();
-        // Child-accessible arcade shortcut; intentionally separate from pet gestures.
-        auto* play=MakeButton(face_,"GRY",[](lv_event_t* e){
-            static_cast<EspenDisplay*>(lv_event_get_user_data(e))->OpenPlayGames();
-        },this,80);
-        lv_obj_set_size(play,80,42);
-        lv_obj_set_pos(play,14,208);
-        lv_obj_set_style_bg_color(play,lv_color_hex(0x2A6487),0);
+        // The game shortcut is now in the persistent bottom navigation, never
+        // on the animated face (touch gestures remain unobstructed).
         // Six reusable vector particles. No per-frame heap allocation or
         // full-screen animation layer; dirty rectangles remain local.
         static const lv_point_precise_t little_heart[]={{2,8},{3,4},{7,2},{11,6},{15,2},{19,4},{20,8},{17,13},{11,19},{5,13},{2,8}};
@@ -2590,6 +2652,7 @@ public:
         if (auto* screen = lv_screen_active()) {
             StyleHome();
             BuildFace();
+            BuildBottomDock();
             lv_obj_invalidate(screen);
             SettingsGesture(screen);
             SettingsGesture(top_bar_);
