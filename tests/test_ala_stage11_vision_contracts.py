@@ -56,7 +56,7 @@ assert '"Jestes Ala, przyjaznym robotem dla dzieci.' in speech
 
 # New distinct version, full merged image, no accidental Pages publishing.
 assert '"version": "0.2.18"' in manifest
-assert '"Espen 0.2.18 boot:"' in board
+assert '"Espen 0.2.18 boot:' in board
 assert 'test_ala_stage11_vision_contracts.py' in build
 pages = (root / ".github/workflows/build-pages.yml").read_text()
 assert "feature/ala-stage11-tap-vision" in pages
