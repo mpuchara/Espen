@@ -1386,7 +1386,10 @@ class EspenDisplay : public LcdDisplay {
             MakeButton(settings_,"Test kolejnej emocji",[](lv_event_t* e){
                 auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
                 self->preview_index_=(self->preview_index_+1)%static_cast<int>(espen::Mood::Count);
-                self->engine_.Preview(static_cast<espen::Mood>(self->preview_index_),lv_tick_get());
+                const auto preview=static_cast<espen::Mood>(self->preview_index_);
+                const uint32_t now=lv_tick_get();
+                self->engine_.Preview(preview,now);
+                self->behavior_.LocalPreview(preview,now);
                 self->CloseSettings();
             },this,420);
             auto* lcd=MakeButton(settings_,"Tryb LCD",[](lv_event_t* e){
@@ -1826,12 +1829,23 @@ class EspenDisplay : public LcdDisplay {
         auto state=Application::GetInstance().GetDeviceState();
         using espen::Phase;using espen::Accent;
         Phase phase=Phase::Idle;
-        if(wifi_online_&&!was_online_) engine_.Celebrate(now);
+        if(wifi_online_&&!was_online_) {
+            engine_.Celebrate(now);
+            behavior_.Celebrate(now);
+        }
         was_online_=wifi_online_;
         uint32_t local=espen_local_wake_seq.load(std::memory_order_relaxed);
-        if(local!=seen_local_wake_) {seen_local_wake_=local;engine_.LocalWake(now);}
+        if(local!=seen_local_wake_) {
+            seen_local_wake_=local;
+            engine_.LocalWake(now);
+            behavior_.Woke(now);
+        }
         uint32_t sleep=espen_sleep_seq.load(std::memory_order_relaxed);
-        if(sleep!=seen_sleep_) {seen_sleep_=sleep;engine_.SleepNow(now);}
+        if(sleep!=seen_sleep_) {
+            seen_sleep_=sleep;
+            engine_.SleepNow(now);
+            behavior_.SleepRequested();
+        }
         if(state==kDeviceStateSpeaking||state==kDeviceStateNotifying) {
             phase=Phase::Speaking;waiting_answer_=false;last_audio_=now;
         } else if(state==kDeviceStateConnecting) phase=Phase::Wake;
@@ -1865,6 +1879,10 @@ class EspenDisplay : public LcdDisplay {
                 static_cast<unsigned>(decision.priority),
                 static_cast<unsigned long>(decision.remaining_ms),
                 decision.phone_locked, static_cast<unsigned long>(behavior_.RejectedAutonomousCount()));
+            if(decision.preempted)
+                ESP_LOGI(TAG, "Ala behavior preempted: previous=%s new=%s",
+                    espen::BehaviorSourceName(decision.previous_source),
+                    espen::BehaviorSourceName(decision.source));
         }
         auto f=engine_.Tick(now,phase,speech.level,speech.shape,loud);
         last_face_asleep_=f.asleep;
