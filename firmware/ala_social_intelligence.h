@@ -12,6 +12,37 @@ enum class SocialAction : uint8_t {
     Ignore, VisualReaction, ShortComment, Joke, Support, Answer, Wait, Cancel
 };
 enum class SocialActivity : uint8_t { Quiet, Normal, Talkative };
+enum class SocialVoiceCommand : uint8_t { None, Start, Stop };
+// Recognize ONLY complete, explicitly addressed commands; never a quoted
+// instruction or an incidental fragment heard while the robot is listening.
+inline SocialVoiceCommand ClassifySocialVoiceCommand(const char* speech) {
+    if (!speech) return SocialVoiceCommand::None;
+    std::string normalized;
+    normalized.reserve(90);
+    bool space = true;
+    for (size_t i=0; speech[i]; ++i) {
+        const unsigned char c = static_cast<unsigned char>(speech[i]);
+        if (i >= 90 || c == 34 || c == 39 || c < 32 && c != 9)
+            return SocialVoiceCommand::None;
+        if (c == 32 || c == 9 || c == ',' || c == '.' || c == '!' || c == '?') {
+            if (!space) { normalized.push_back(' '); space=true; }
+        } else {
+            normalized.push_back(c >= 'A' && c <= 'Z' ?
+                                 static_cast<char>(c-'A'+'a') : static_cast<char>(c));
+            space=false;
+        }
+    }
+    while (!normalized.empty() && normalized.back()==' ') normalized.pop_back();
+    if (normalized == "ala dołącz do rozmowy" ||
+        normalized == "ala włącz tryb towarzyski")
+        return SocialVoiceCommand::Start;
+    if (normalized == "ala nie wtrącaj się" ||
+        normalized == "ala koniec rozmowy" ||
+        normalized == "ala wyłącz tryb towarzyski")
+        return SocialVoiceCommand::Stop;
+    return SocialVoiceCommand::None;
+}
+
 struct SocialCounters {
     uint32_t utterances = 0, candidates = 0, approved = 0;
     uint32_t skipped = 0, cooldown = 0, busy = 0, cancelled = 0;
