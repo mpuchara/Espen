@@ -1,0 +1,22 @@
+name: Ala behavior contracts
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  host-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify phone, TV, standby and full-flash contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tests/test_behavior_contracts.py
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_behavior_foundation.cc -o /tmp/ala-behavior-foundation-test
+          /tmp/ala-behavior-foundation-test
