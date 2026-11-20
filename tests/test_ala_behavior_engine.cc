@@ -150,7 +150,7 @@ int main() {
         e.Celebrate(6500);
         assert(Step(e, 6501).mood == Mood::Excited);
         e.SleepRequested();
-        assert(Step(e, 6502).mood == Mood::Neutral);
+        assert(Step(e, 6502).activity == LivingActivity::Sleep);
     }
     // A 50-second TTS still ends with fresh afterglow (not expired at onset).
     {
