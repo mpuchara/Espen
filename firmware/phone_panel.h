@@ -5,6 +5,7 @@
 #include "phone_panel_html.h"
 #include "robot_name.h"
 #include "ala_social_intelligence.h"
+#include "ala_social_bridge.h"
 #include "settings.h"
 #include <esp_http_server.h>
 #include <esp_log.h>
@@ -40,6 +41,24 @@ class PhonePanel {
     std::atomic<int64_t> last_say_us_{0};
     std::mutex social_lock_;
     AlaSocialIntelligence social_;
+    AlaSocialBridge bridge_;
+    std::once_flag bridge_load_once_;
+    void EnsureBridgeLoaded() {
+        std::call_once(bridge_load_once_, [this]() {
+            Settings s("ala_social", false);
+            const auto url=s.GetString("backend_url","");
+            const auto token=s.GetString("token","");
+            if (!url.empty()) bridge_.Configure(url,token);
+        });
+    }
+    void CancelBridgeAudio() {
+        if (!bridge_.Speaking()) return;
+        Application::GetInstance().Schedule([]() {
+            auto& app=Application::GetInstance();
+            if (app.GetDeviceState()==kDeviceStateIdle)
+                app.GetAudioService().ResetDecoder();
+        });
+    }
 
 
     PhonePanel() = default;
@@ -217,16 +236,26 @@ class PhonePanel {
             Application::GetInstance().EspenIsStandby(), ::EspenNetworkAvailable());
         const bool listening = snapshot.active &&
             Application::GetInstance().GetDeviceState() == kDeviceStateListening;
-        char json[410];
+        self.EnsureBridgeLoaded();
+        const auto bridge=self.bridge_.Snapshot();
+        char json[800];
         snprintf(json, sizeof(json),
             "{\"active\":%s,\"remaining_ms\":%lu,\"activity\":%u,"
-            "\"context\":%u,\"listening\":%s,\"auto_evaluation\":false,"
+            "\"context\":%u,\"listening\":%s,\"auto_evaluation\":%s,"
+            "\"backend_configured\":%s,\"backend_state\":%u,"
+            "\"analysed\":%lu,\"accepted\":%lu,\"ignored\":%lu,\"cancelled\":%lu,"
             "\"comments\":%lu,\"utterances\":%lu}",
             snapshot.active?"true":"false",
             static_cast<unsigned long>(snapshot.remaining_ms),
             static_cast<unsigned>(snapshot.activity),
             static_cast<unsigned>(snapshot.context_count),
             listening?"true":"false",
+            bridge.available?"true":"false", bridge.configured?"true":"false",
+            static_cast<unsigned>(bridge.state),
+            static_cast<unsigned long>(bridge.analysed),
+            static_cast<unsigned long>(bridge.accepted),
+            static_cast<unsigned long>(bridge.ignored),
+            static_cast<unsigned long>(bridge.cancelled),
             static_cast<unsigned long>(snapshot.counters.approved),
             static_cast<unsigned long>(snapshot.counters.utterances));
         httpd_resp_set_type(req, "application/json; charset=utf-8");
@@ -271,6 +300,34 @@ class PhonePanel {
         { std::lock_guard<std::mutex> lock(self.reply_lock_); self.last_reply_.clear(); }
         app.EspenAskText(prompt,false,self.Name());
         return Respond(req,200,"Poproszono Xiaozhi o krótki komentarz.");
+    }
+    static esp_err_t SetSocialBackend(httpd_req_t* req) {
+        auto& self=Instance();
+        if (!self.Authorized(req)) return Respond(req,401,"Niepoprawny kod.");
+        {
+            std::lock_guard<std::mutex> lock(self.social_lock_);
+            if (self.social_.Active()) return Respond(req,409,"Najpierw wyłącz Tryb Towarzyski.");
+        }
+        std::string body;
+        if (!ReadBody(req,body,230)) return Respond(req,400,"Za długa konfiguracja.");
+        const auto sep=body.find('|');
+        if(sep==std::string::npos || body.find('|',sep+1)!=std::string::npos)
+            return Respond(req,400,"Wymagany adres URL i token.");
+        const auto url=body.substr(0,sep), token=body.substr(sep+1);
+        if (!url.empty()) {
+            if (token.size()<24 || token.size()>96 ||
+                !std::all_of(token.begin(),token.end(),[](unsigned char c) {
+                    return (c>='a'&&c<='z')||(c>='A'&&c<='Z')||
+                           (c>='0'&&c<='9')||c=='_'||c=='-';
+                })) return Respond(req,400,"Token: 24-96 znaków A-Z, 0-9, _ i -.");
+        }
+        self.EnsureBridgeLoaded();
+        if(!self.bridge_.Configure(url,token))
+            return Respond(req,400,"Adres musi wskazywać prywatne IP i HTTP LAN.");
+        Settings cfg("ala_social",true);
+        cfg.SetString("backend_url",url);
+        cfg.SetString("token",token);
+        return Respond(req,200,url.empty()?"Backend usunięty.":"Backend zapisany. Aktywuj tryb.");
     }
     static esp_err_t Say(httpd_req_t* req) { return SendText(req, false); }
     static esp_err_t Chat(httpd_req_t* req) { return SendText(req, true); }
@@ -337,7 +394,7 @@ public:
         Name();
         httpd_config_t config = HTTPD_DEFAULT_CONFIG();
         config.server_port = 80;
-        config.max_uri_handlers = 10;
+        config.max_uri_handlers = 12;
         config.stack_size = 8192;
         if (httpd_start(&server_, &config) != ESP_OK) {
             server_ = nullptr;
@@ -363,15 +420,21 @@ public:
         add("/api/reply", HTTP_GET, Reply);
         add("/api/social", HTTP_GET, GetSocial);
         add("/api/social", HTTP_POST, SocialCommand);
+        add("/api/social/backend", HTTP_POST, SetSocialBackend);
         ESP_LOGI("AlaPhone", "Phone panel listening on port 80");
     }
     bool StartSocial(uint32_t now, bool standby, bool online) {
+        EnsureBridgeLoaded();
         std::lock_guard<std::mutex> lock(social_lock_);
-        return social_.Start(now,standby,online);
+        if (!social_.Start(now,standby,online)) return false;
+        bridge_.Start();
+        return true;
     }
     void StopSocial() {
         std::lock_guard<std::mutex> lock(social_lock_);
         social_.Stop();
+        CancelBridgeAudio();
+        bridge_.Stop();
     }
     void SetSocialLevel(SocialActivity level) {
         std::lock_guard<std::mutex> lock(social_lock_);
@@ -379,20 +442,69 @@ public:
     }
     SocialSnapshot TickSocial(uint32_t now, bool standby, bool online) {
         std::lock_guard<std::mutex> lock(social_lock_);
+        const bool previous=social_.Active();
         social_.Tick(now,standby,online);
-        return social_.Snapshot(now);
+        if (previous && !social_.Active()) { CancelBridgeAudio(); bridge_.Stop(); }
+        const auto snap=social_.Snapshot(now);
+        auto& app=Application::GetInstance();
+        bridge_.Arm(snap.active && !standby && online &&
+                    app.GetDeviceState()==kDeviceStateIdle &&
+                    app.GetAudioService().IsPlaybackIdle());
+        return snap;
     }
     void ObserveSocialStt(const char* text, uint32_t now) {
-        std::lock_guard<std::mutex> lock(social_lock_);
-        const auto command = ClassifySocialVoiceCommand(text);
-        if (command == SocialVoiceCommand::Start) {
-            social_.Start(now,Application::GetInstance().EspenIsStandby(),
-                         ::EspenNetworkAvailable());
-        } else if (command == SocialVoiceCommand::Stop) {
-            social_.Stop();
-        } else {
-            social_.ObserveStt(text,now);
+        const auto cmd=ClassifySocialVoiceCommand(text);
+        if(cmd==SocialVoiceCommand::Start) {
+            StartSocial(now,Application::GetInstance().EspenIsStandby(),::EspenNetworkAvailable());
+            return;
         }
+        if(cmd==SocialVoiceCommand::Stop) { StopSocial();return; }
+        std::lock_guard<std::mutex> lock(social_lock_);
+        social_.ObserveStt(text,now);
+    }
+    void CaptureSocialPcm(const int16_t* data,size_t count) {
+        bridge_.Capture(data,count);
+    }
+    bool AuthorizeBridgeCandidate(const char* transcript, const char* action,
+        int confidence, bool sensitive, uint32_t epoch, uint32_t silence,
+        uint32_t* approval_revision) {
+        if (!transcript || !action || !approval_revision) return false;
+        std::lock_guard<std::mutex> lock(social_lock_);
+        if (!social_.Active() || !bridge_.Enabled() || bridge_.Epoch()!=epoch)
+            return false;
+        const auto now=static_cast<uint32_t>(esp_timer_get_time()/1000);
+        if(ClassifySocialVoiceCommand(transcript)==SocialVoiceCommand::Stop) {
+            social_.Stop();bridge_.Stop();return false;
+        }
+        if (!social_.ObserveStt(transcript,now)) return false;
+        SocialAction choice=SocialAction::Ignore;
+        if (strcmp(action,"VISUAL_REACTION")==0) choice=SocialAction::VisualReaction;
+        if (strcmp(action,"SHORT_COMMENT")==0) choice=SocialAction::ShortComment;
+        if (strcmp(action,"JOKE")==0) choice=SocialAction::Joke;
+        if (strcmp(action,"SUPPORT")==0) choice=SocialAction::Support;
+        if (strcmp(action,"WAIT")==0) choice=SocialAction::Wait;
+        SocialVerdict verdict{};
+        verdict.action=choice;
+        verdict.confidence=static_cast<uint8_t>(std::max(0,std::min(100,confidence)));
+        verdict.sensitive=sensitive;
+        verdict.generation=social_.Generation();
+        verdict.context_revision=social_.ContextRevision();
+        auto& app=Application::GetInstance();
+        const bool busy=app.GetDeviceState()!=kDeviceStateIdle ||
+            !app.GetAudioService().IsPlaybackIdle();
+        const auto decision=social_.Evaluate(verdict,now,silence<1300,
+                                             busy,silence,app.EspenIsStandby());
+        if (decision!=SocialAction::Joke && decision!=SocialAction::ShortComment &&
+            decision!=SocialAction::Support) return false;
+        if (!social_.AllowSpontaneousSpeech()) return false;
+        *approval_revision=social_.ContextRevision();
+        social_.ConsumeSpeechPermission();
+        return true;
+    }
+    bool BridgeGenerationValid(uint32_t epoch,uint32_t revision) {
+        std::lock_guard<std::mutex> lock(social_lock_);
+        return social_.Active() && bridge_.Enabled() && bridge_.Epoch()==epoch &&
+               (revision==UINT32_MAX || revision==social_.ContextRevision());
     }
     bool SocialSpeechPermission() {
         std::lock_guard<std::mutex> lock(social_lock_);
@@ -417,7 +529,7 @@ public:
     // All Xiaozhi work is scheduled on the Application task, never LVGL.
     bool TrySpeakMood(int mood) {
         auto& app = Application::GetInstance();
-        if (app.GetDeviceState() != kDeviceStateIdle) return false;
+        if (app.GetDeviceState() != kDeviceStateIdle || bridge_.Speaking()) return false;
         const int64_t now = esp_timer_get_time();
         const int64_t previous = last_say_us_.load(std::memory_order_acquire);
         if (previous && now - previous < 7000000) return false;
@@ -438,4 +550,13 @@ public:
         last_reply_.assign(text, std::min<size_t>(std::strlen(text), 1000));
     }
 };
+inline bool EspenAuthorizeSocialCandidate(const char* transcript,const char* action,
+    int confidence,bool sensitive,uint32_t generation,uint32_t silence,
+    uint32_t* approval_revision) {
+    return PhonePanel::Instance().AuthorizeBridgeCandidate(transcript,action,
+        confidence,sensitive,generation,silence,approval_revision);
+}
+inline bool EspenSocialGenerationValid(uint32_t generation,uint32_t revision) {
+    return PhonePanel::Instance().BridgeGenerationValid(generation,revision);
+}
 }

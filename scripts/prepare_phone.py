@@ -24,12 +24,13 @@ assert ")ALA_PHONE_HTML\"" not in html
 (board / "phone_panel.h").write_bytes((root / "firmware/phone_panel.h").read_bytes())
 (board / "robot_name.h").write_bytes((root / "firmware/robot_name.h").read_bytes())
 (board / "ala_social_intelligence.h").write_bytes((root / "firmware/ala_social_intelligence.h").read_bytes())
+(board / "ala_social_bridge.h").write_bytes((root / "firmware/ala_social_bridge.h").read_bytes())
 
 # The HTTP listener is only enabled for our board; ESP-IDF 6 requires an
 # explicit component dependency rather than relying on transitive headers.
 cmake = up / "main/CMakeLists.txt"
 replace(cmake, '                    PRIV_REQUIRES\n',
-        '                    PRIV_REQUIRES\n                        esp_http_server\n')
+        '                    PRIV_REQUIRES\n                        esp_http_server\n                        esp_http_client\n')
 
 header = up / "main/application.h"
 replace(header, '    void WakeWordInvoke(const std::string& wake_word);',

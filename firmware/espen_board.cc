@@ -407,6 +407,10 @@ bool EspenNetworkAvailable() {
     auto& wifi=WifiManager::GetInstance();
     return wifi.IsInitialized()&&wifi.IsConnected();
 }
+void EspenSocialPcm(const int16_t* data,size_t count) {
+    // Called by the existing AudioService input task: bounded copy only.
+    espen::PhonePanel::Instance().CaptureSocialPcm(data,count);
+}
 void EspenAmbientPeak(int peak) {
     if (peak > 11000) espen_ambient_ms.store(
         static_cast<uint32_t>(esp_timer_get_time()/1000),std::memory_order_relaxed);
