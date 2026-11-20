@@ -138,5 +138,36 @@ int main() {
         assert(e.PhoneSpeechDue(start+5802u,false,true) == -1);
         assert(Step(e,start+9201u).source != BehaviorSource::Phone);
     }
+    // Legacy screen behaviors remain reachable through the central policy.
+    {
+        AlaBehaviorEngine e;
+        Step(e, 100);
+        e.LocalPreview(Mood::Love, 200);
+        assert(Step(e, 201).mood == Mood::Love);
+        assert(Step(e, 4401).mood != Mood::Love);
+        e.Woke(5000);
+        assert(Step(e, 5001).mood == Mood::Happy);
+        e.Celebrate(6500);
+        assert(Step(e, 6501).mood == Mood::Excited);
+        e.SleepRequested();
+        assert(Step(e, 6502).mood == Mood::Neutral);
+    }
+    // A 50-second TTS still ends with fresh afterglow (not expired at onset).
+    {
+        AlaBehaviorEngine e;
+        e.CloudEmotion(Mood::Love, 100);
+        Step(e, 101, Phase::Speaking);
+        assert(Step(e, 50000, Phase::Speaking).mood == Mood::Love);
+        assert(Step(e, 50001).mood == Mood::Love);
+        assert(Step(e, 64001).mood == Mood::Neutral);
+    }
+    // Standby invalidates social memory but does not persist it through wake.
+    {
+        AlaBehaviorEngine e;
+        e.SocialReaction(Social::Praise, 100);
+        assert(Step(e, 101).mood != Mood::Neutral);
+        assert(Step(e, 102, Phase::Idle, true).source == BehaviorSource::Safety);
+        assert(Step(e, 103).mood == Mood::Neutral);
+    }
     std::cout << "Ala behavior engine regression (12 scenarios + wraparound): OK\n";
 }
