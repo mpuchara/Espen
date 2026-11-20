@@ -34,8 +34,9 @@ public:
     bool Read(std::string& out) override {
         out.clear();
         nvs_handle_t h;
-        if (nvs_open("ala_memory",NVS_READONLY,&h)==ESP_ERR_NVS_NOT_FOUND) return true;
-        if (nvs_open("ala_memory",NVS_READONLY,&h)!=ESP_OK) return false;
+        const esp_err_t opened=nvs_open("ala_memory",NVS_READONLY,&h);
+        if(opened==ESP_ERR_NVS_NOT_FOUND)return true;
+        if(opened!=ESP_OK)return false;
         size_t len=0;
         const esp_err_t info=nvs_get_blob(h,"snapshot",nullptr,&len);
         if (info==ESP_ERR_NVS_NOT_FOUND) { nvs_close(h); return true; }
