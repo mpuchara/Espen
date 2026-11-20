@@ -1782,8 +1782,8 @@ replace("main/application.h",
         '    espen::AlaConversationManager espen_timeout_;')
 replace("main/application.cc",
         'extern void EspenTurnWaiting(bool waiting);',
-        'extern void EspenTurnWaiting(bool waiting);\\n'
-        'extern void EspenTurnUserPause(bool paused);\\n'
+        'extern void EspenTurnWaiting(bool waiting);\n'
+        'extern void EspenTurnUserPause(bool paused);\n'
         'extern int EspenNoiseFloorRms();')
 replace("main/application.cc",
         'espen_timeout_.Reset(); espen_finish_at_ = 0; EspenTurnWaiting(false);',
