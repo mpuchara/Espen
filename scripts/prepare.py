@@ -1478,8 +1478,8 @@ replace("main/audio/audio_service.cc",
         '        espen_tts_finished_ = false;\n'
         '        audio_testing_queue_.clear();')
 
-# The stock upstream OGG popup is replaced to avoid playing twice and
-# prevent its large decoder start from obscuring the new short listening cue.
+# No audible cue when listening begins: keep the per-turn state reset,
+# but suppress both our PCM start beep and the stock upstream OGG popup.
 replace("main/application.cc",
         '    // Play popup sound after ResetDecoder (in EnableVoiceProcessing) has been called',
         '    extern void EspenListeningCue(); EspenListeningCue();\n\n'
@@ -1493,7 +1493,7 @@ replace("main/application.cc",
         '    }',
         '    if (play_popup_on_listening_) {\n'
         '        play_popup_on_listening_ = false;\n'
-        '        // Espen already played its own short PCM listening cue.\n'
+        '        // Listening begins silently; do not mask microphone capture.\n'
         '    }')
 
 # Emotion sometimes arrives before TTS start. Queue the corresponding cue
