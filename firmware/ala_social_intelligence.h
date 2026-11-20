@@ -46,6 +46,7 @@ private:
     uint8_t first_ = 0, count_ = 0;
     bool active_ = false, last_valid_ = false, approved_ = false;
     uint32_t started_ = 0, generation_ = 0, revision_ = 0;
+    uint32_t commented_revision_ = UINT32_MAX;
     uint32_t last_speech_ = 0, last_spontaneous_ = 0, window_start_ = 0;
     uint8_t window_comments_ = 0;
     SocialActivity activity_ = SocialActivity::Normal;
@@ -68,6 +69,7 @@ public:
         if (standby || !network_ready) return false;
         ClearContext();
         ++generation_;
+        commented_revision_ = UINT32_MAX;
         started_ = window_start_ = now;
         window_comments_ = 0;
         last_spontaneous_ = 0;
@@ -179,6 +181,9 @@ public:
         if (human_speaking || tts_active || silence_ms < kRequiredSilenceMs) {
             ++counters_.busy; return SocialAction::Wait;
         }
+        if (commented_revision_ == revision_) {
+            ++counters_.skipped; return SocialAction::Ignore;
+        }
         if (last_valid_ && !Elapsed(now,last_spontaneous_,Gap())) {
             ++counters_.cooldown; return SocialAction::Ignore;
         }
@@ -194,6 +199,7 @@ public:
             ++counters_.skipped; return SocialAction::Ignore;
         }
         approved_ = true;
+        commented_revision_ = revision_;
         last_spontaneous_ = now;
         last_valid_ = true;
         ++window_comments_;
