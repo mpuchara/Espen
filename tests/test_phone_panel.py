@@ -30,7 +30,7 @@ assert "config.max_uri_handlers = 13;" in phone
 assert 'add("/api/hearing", HTTP_GET, HearingGet)' in phone
 assert 'if (!Instance().Authorized(req)) return Respond(req, 401, "Niepoprawny kod.");' in phone
 assert 'id="hearing-status"' in html
-assert '"/api/hearing"' in phone && "'/api/hearing'" in html
+assert '"/api/hearing"' in phone and "'/api/hearing'" in html
 assert "EspenHearingStatusJson()" in board
 assert "\\\"speaker_model_ready\\\":false" in board, "No model means fail-closed status"
 assert 'add("/api/social", HTTP_GET, GetSocial)' in phone
