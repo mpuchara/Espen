@@ -104,7 +104,9 @@ public:
     // Reset/X is immediate: removes both active and delayed commands, including
     // pending speech. No previous request can mature after cancellation.
     void PhoneCommand(int mood, bool sticky, bool speak, uint32_t sequence, uint32_t now) {
-        if (sequence == pending_sequence_ || sequence == active_sequence_) return;
+        // Reject out-of-order HTTP/rollover snapshots, including a command
+        // received before X. Equality alone would allow old seq to revive it.
+        if (static_cast<int32_t>(sequence - pending_sequence_) <= 0) return;
         pending_sequence_ = sequence;
         pending_phone_ = false;
         pending_voice_ = false;
