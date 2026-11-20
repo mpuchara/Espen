@@ -57,6 +57,12 @@ c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_face_engine.cc -o /tmp/espen
 /tmp/espen-face-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_speech_onset.cc -o /tmp/espen-speech-test
 /tmp/espen-speech-test
+c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_speech_preroll.cc -o /tmp/ala-preroll-test
+/tmp/ala-preroll-test
+c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_speaker_recognition.cc -o /tmp/ala-speaker-test
+/tmp/ala-speaker-test
+c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_identity_engine.cc -o /tmp/ala-identity-test
+/tmp/ala-identity-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_social_reactions.cc -o /tmp/espen-social-test
 /tmp/espen-social-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_speech_quality.cc -o /tmp/espen-quality-test

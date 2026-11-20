@@ -7,6 +7,7 @@
 #include "ala_social_intelligence.h"
 #include "ala_memory_engine.h"
 #include "ala_face_runtime.h"
+#include "ala_identity_engine.h"
 #include "settings.h"
 #include <esp_http_server.h>
 #include <esp_log.h>
@@ -21,6 +22,7 @@
 
 // Implemented by the existing Espen board; this does not own networking.
 bool EspenNetworkAvailable();
+std::string EspenHearingStatusJson(); // scalar diagnostics only
 
 namespace espen {
 
@@ -132,6 +134,14 @@ class PhonePanel {
     static esp_err_t Status(httpd_req_t* req) {
         if (!Instance().Authorized(req)) return Respond(req, 401, "Niepoprawny kod.");
         return Respond(req, 200, "OK");
+    }
+    static esp_err_t HearingGet(httpd_req_t* req) {
+        if (!Instance().Authorized(req)) return Respond(req, 401, "Niepoprawny kod.");
+        const std::string json = ::EspenHearingStatusJson();
+        httpd_resp_set_type(req, "application/json; charset=utf-8");
+        httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+        httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
+        return httpd_resp_send(req, json.data(), json.size());
     }
     static esp_err_t GetName(httpd_req_t* req) {
         auto& self = Instance();
@@ -328,6 +338,12 @@ class PhonePanel {
     static esp_err_t FaceGet(httpd_req_t* req) {
         if(!Instance().Authorized(req))return Respond(req,401,"Niepoprawny kod.");
         const auto snap=AlaFaceRuntime::Instance().Snapshot();
+        AlaIdentityEngine fusion;
+        if(snap.enabled && snap.recognized_id && !snap.recognized_name.empty())
+            fusion.ObserveFace(snap.recognized_id,snap.recognized_name,snap.recognized_at_ms);
+        // The real speaker embedding model is not available yet.
+        // Never infer a voice identity from a face, name or microphone level.
+        const auto identity=fusion.Evaluate(static_cast<uint32_t>(esp_timer_get_time()/1000));
         std::string json="{\"enabled\":"+std::string(snap.enabled?"true":"false")+
             ",\"enrolling\":"+(snap.enrolling?"true":"false")+
             ",\"model_loaded\":"+(snap.model_loaded?"true":"false")+
@@ -338,6 +354,9 @@ class PhonePanel {
             ",\"limit\":5,\"storage\":\"RAM\",\"last\":"+JsonString(FaceDecisionName(snap.last))+
             ",\"inference_ms\":"+std::to_string(snap.inference_ms)+
             ",\"free_psram_kb\":"+std::to_string(snap.free_psram_kb)+
+            ",\"identity\":{\"state\":"+JsonString(AlaIdentityStateName(identity.state))+
+            ",\"face\":"+JsonString(identity.face_name)+
+            ",\"voice\":null,\"speaker_model_ready\":false}"+
             ",\"profiles\":[";
         for(size_t i=0;i<snap.names.size();++i) {
             if(i)json+=",";
@@ -559,7 +578,7 @@ public:
         { std::lock_guard<std::mutex> guard(memory_lock_); EnsureMemory(); }
         httpd_config_t config = HTTPD_DEFAULT_CONFIG();
         config.server_port = 80;
-        config.max_uri_handlers = 14;
+        config.max_uri_handlers = 15;
         config.stack_size = 8192;
         if (httpd_start(&server_, &config) != ESP_OK) {
             server_ = nullptr;
@@ -589,6 +608,7 @@ public:
         add("/api/memory", HTTP_POST, MemoryPost);
         add("/api/face", HTTP_GET, FaceGet);
         add("/api/face", HTTP_POST, FacePost);
+        add("/api/hearing", HTTP_GET, HearingGet);
         ESP_LOGI("AlaPhone", "Phone panel listening on port 80");
     }
     bool StartSocial(uint32_t now, bool standby, bool online) {

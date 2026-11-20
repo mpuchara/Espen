@@ -12,6 +12,9 @@ struct FaceSnapshot {
     bool camera_running=false;
     unsigned samples=0, count=0, inference_ms=0, free_psram_kb=0;
     FaceDecision last=FaceDecision::NO_FACE;
+    uint16_t recognized_id=0;
+    uint32_t recognized_at_ms=0;
+    std::string recognized_name;
     std::vector<std::pair<uint16_t,std::string>> names;
 };
 class AlaFaceRuntime {
@@ -20,6 +23,9 @@ class AlaFaceRuntime {
     std::atomic<bool> worker_started_{false}, model_loaded_{false}, model_error_{false};
     std::atomic<bool> enabled_{false};
     FaceDecision last_=FaceDecision::NO_FACE;
+    uint16_t recognized_id_=0;
+    uint32_t recognized_at_ms_=0;
+    std::string recognized_name_;
     std::string greeting_;
     uint32_t greeting_revision_=0;
     unsigned inference_ms_=0;

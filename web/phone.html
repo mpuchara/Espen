@@ -67,6 +67,10 @@ small{display:block;color:#96aabe;margin-top:9px;line-height:1.5}.status{color:#
 <div id="face-message" class="status" role="status" aria-live="polite"></div>
 <small>Rejestracja wymaga czterech różnych, wyraźnych klatek z jedną twarzą. Nie traktuj wyniku rozpoznania jako gwarancji tożsamości. Funkcja eksperymentalna — wymaga testów fizycznych.</small>
 </section>
+<section id="identity-section"><h2>🧠 Kogo Ala rozpoznaje?</h2>
+<div id="identity-status" class="status" role="status" aria-live="polite">Połącz z Alą, aby sprawdzić aktualną identyfikację.</div>
+<small>Wyniki wygasają po 5 sekundach. Głos pozostaje niedostępny do czasu rzeczywistego modelu i świadomego przypisania profili — identyczne imiona nie są dowodem tożsamości.</small>
+</section>
 <section id="memory-section"><h2>🧠 Co Ala pamięta?</h2>
 <p>Pamięć jest lokalna w Ali, domyślnie wyłączona. Zapisujesz tylko wybrane informacje; rozmowy nie są archiwizowane. Nie podawaj haseł, informacji medycznych ani danych wrażliwych.</p>
 <div class="buttons"><button id="memory-on">Włącz pamięć</button><button id="memory-off" class="secondary">Wyłącz</button></div>
@@ -95,6 +99,12 @@ small{display:block;color:#96aabe;margin-top:9px;line-height:1.5}.status{color:#
 <input id="memory-question" maxlength="120" placeholder="np. Co pamiętasz o astronomii?">
 <div class="buttons"><button id="memory-ask" class="secondary">💬 Zapytaj Xiaozhi — wyrażam zgodę</button></div>
 <div id="memory-message" class="status" role="status" aria-live="polite"></div>
+</section>
+<section id="hearing-section"><h2>🎤 Jakość słyszenia i głosy</h2>
+<p>Bieżące, anonimowe poziomy mikrofonu z Ali. Żadne nagrania nie są wysyłane do panelu.</p>
+<div id="hearing-status" class="status" role="status">Połącz z Alą, aby sprawdzić mikrofon.</div>
+<small>Pre-roll 300 ms pozostaje domyślny do walidacji na prawdziwym urządzeniu. Profile mikrofonu można zmieniać w diagnostyce Ali.</small>
+<p><strong>Rozpoznawanie domowników po głosie:</strong> niedostępne w tym wydaniu. Brak podłączonego modelu, rejestracja głosów wyłączona.</p>
 </section>
 <small>Panel działa lokalnie przez Wi-Fi. Nie udostępniaj kodu sterowania innym osobom. Połączenie ze sztuczną inteligencją Xiaozhi wymaga Internetu i działającego głośnika.</small>
 </main>
@@ -307,6 +317,12 @@ async function refreshFace(){
       ' · Wynik: '+data.last+' · Osoby: '+data.count+'/'+data.limit+
       ' · Próbki: '+data.samples+'/4'+
       ' · Inferencja: '+data.inference_ms+' ms · Wolna PSRAM: '+data.free_psram_kb+' KB';
+    const identity=data.identity||{state:'UNKNOWN',face:'',voice:null,speaker_model_ready:false};
+    $('identity-status').textContent=
+      'Twarz: '+(identity.face||'nie rozpoznano')+
+      ' · Głos: '+(identity.speaker_model_ready?(identity.voice||'nie rozpoznano'):'niedostępny — brak modelu')+
+      ' · Wynik: '+(identity.state==='FACE_ONLY'?'rozpoznano twarz':
+                     identity.state==='UNKNOWN'?'brak aktualnej identyfikacji':identity.state);
     $('face-on').disabled=data.enabled;
     $('face-off').disabled=!data.enabled;
     $('face-commit').disabled=!data.enrolling||data.samples<4;
@@ -456,6 +472,21 @@ $('memory-ask').onclick=async()=>{
   const result=await memoryAction('ask|'+query);
   if(result){$('answer').textContent='Czekam na odpowiedź Xiaozhi…';startReplyPolling();}
 };
+async function refreshHearing(){
+ if(!pin)return;
+ try{
+   const d=JSON.parse(await request('/api/hearing'));
+   const modes=['Automatyczny','Standardowy','Czuły','Bardzo czuły','Poprzedni'];
+   $('hearing-status').textContent='🎙️ '+(modes[d.microphone_profile]||'Nieznany')+
+      ' · RMS '+d.rms+' · szum ~'+d.noise+' · peak '+d.peak+
+      ' · clipping '+d.clip_per_mille+'/1000 (ostatni blok)'+
+      ' · VAD '+(d.vad?'mowa':'cisza')+
+      ' · wake '+(d.wake_running?'aktywne':'nieaktywne')+
+      ' · pre-roll '+d.pre_roll_ms+' ms · PCM '+d.pcm_rate+' Hz';
+ }catch(e){$('hearing-status').textContent='Diagnostyka mikrofonu: '+e.message;}
+}
+setInterval(refreshHearing,2500);
+setTimeout(refreshHearing,1500);
 setInterval(refreshMemory,4000);
 setTimeout(refreshMemory,1400);
 
