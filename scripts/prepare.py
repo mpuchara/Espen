@@ -1869,3 +1869,42 @@ src = src[:a] + """void Application::EspenCheckSilence() {
 }
 """ + src[b:]
 p.write_text(src)
+
+# Stage 7B: fix the existing pre-roll handoff (no second audio path).
+# The previous 10-ms push/10-ms pop held the ring backlog constant forever.
+# Drain 20 ms in order on each 10-ms live read until PCM catches up.
+shutil.copyfile(root / "firmware/ala_speech_preroll.h",
+                up / "main/audio/ala_speech_preroll.h")
+replace("main/audio/audio_service.cc",
+        '#include "espen_wake.h"',
+        '#include "espen_wake.h"\n#include "ala_speech_preroll.h"')
+replace("main/audio/audio_service.cc",
+        '                bool feed_voice = false;\n                {',
+        '                bool feed_voice = false;\n'
+        '                std::vector<int16_t> espen_replay_extra;\n                {')
+replace("main/audio/audio_service.cc",
+        '                    } else if (espen_replaying_ && (current & AS_EVENT_AUDIO_PROCESSOR_RUNNING)) {\n'
+        '                        espen_pcm_.Push(data.data(), data.size());\n'
+        '                        espen_pcm_.Pop(data.data(), data.size());\n'
+        '                    }',
+        '                    } else if (espen_replaying_ && (current & AS_EVENT_AUDIO_PROCESSOR_RUNNING)) {\n'
+        '                        const bool replayed = espen::AlaSpeechPreroll::ReplayStep(\n'
+        '                            espen_pcm_, data.data(), data.size(), espen_replay_extra);\n'
+        '                        espen_replaying_ = replayed && espen_pcm_.Size() > 0;\n'
+        '                        if (!replayed) espen_pcm_.Clear();\n'
+        '                    }')
+replace("main/audio/audio_service.cc",
+        '                        espen_pcm_.Keep(4800); // 300 ms pre-roll',
+        '                        espen_pcm_.Keep(espen::AlaSpeechPreroll::Samples(\n'
+        '                            espen::AlaSpeechPreroll::kDefaultMs)); // 300 ms pre-roll')
+replace("main/audio/audio_service.cc",
+        '                    EspenDiagRaw(data.data(), data.size());\n'
+        '                    audio_engine_->Feed(std::move(data));',
+        '                    if (!espen_replay_extra.empty()) {\n'
+        '                        // The existing AFE accepts contiguous PCM and\n'
+        '                        // processes its own fixed-size feed chunks.\n'
+        '                        data.insert(data.end(), espen_replay_extra.begin(),\n'
+        '                                    espen_replay_extra.end());\n'
+        '                    }\n'
+        '                    EspenDiagRaw(data.data(), data.size());\n'
+        '                    audio_engine_->Feed(std::move(data));')
