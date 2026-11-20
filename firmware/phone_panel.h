@@ -334,6 +334,7 @@ class PhonePanel {
                  ",\"count\":"+std::to_string(state.items.size())+
                  ",\"limit\":20,\"bytes\":"+std::to_string(self.memory_.EstimatedBytes())+
                  ",\"candidate\":"+JsonString(self.memory_.Candidate())+
+                 ",\"pending_delete\":"+(self.memory_.PendingDelete()?"true":"false")+
                  ",\"items\":[";
             bool first=true;
             for(const auto& item:state.items) {
