@@ -613,12 +613,14 @@ public:
             }
         }
         f.bob=Approach(f.bob,bob,std::max(1,speed));f.mood=mood;f.asleep=asleep;
-        const bool reply_hearts=reply_active&&reply_==ReplyBeat::Warmth;
-        f.hearts=mood==Mood::Love||social_==Social::Affection||
-            (social_==Social::Comfort&&now-social_at_>=650)||reply_hearts;
+        const bool reply_hearts=!behavior_phone_ && reply_active&&reply_==ReplyBeat::Warmth;
+        f.hearts=mood==Mood::Love||(!behavior_phone_ &&
+            (social_==Social::Affection||
+            (social_==Social::Comfort&&now-social_at_>=650)||reply_hearts));
         f.heart_age=f.hearts?(reply_hearts?now-reply_at_:
             mood==Mood::Love?now-animated_since_:now-social_at_)%1950:0;
-        f.effect=affinity_.Effect(now);f.effect_age=affinity_.Age(now);
+        f.effect=behavior_phone_?PetEffect::None:affinity_.Effect(now);
+        f.effect_age=affinity_.Age(now);
         f.tear=FallingTear(mood,now-animated_since_,p.accent==Accent::Tear&&!asleep);
         return f;
     }
