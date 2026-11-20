@@ -197,11 +197,13 @@ public:
         if(!Save(next))return false;
         candidate_.clear();pending_delete_=0;return true;
     }
-    std::vector<MemoryItem> Search(const std::string& query, size_t max=3) const {
+    std::vector<MemoryItem> Search(const std::string& query, size_t max=3,
+                                   MemoryCategory category=static_cast<MemoryCategory>(0)) const {
         std::vector<MemoryItem> found;
         if(!state_.enabled||max==0)return found;
         const auto q=Fold(query);
         for(const auto& item:state_.items){
+            if(static_cast<uint8_t>(category)!=0 && item.category!=category)continue;
             if(q.empty()||Fold(item.text).find(q)!=std::string::npos){
                 found.push_back(item);if(found.size()>=max)break;
             }
