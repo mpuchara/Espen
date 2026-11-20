@@ -1,0 +1,39 @@
+name: Build Ala Phone Panel APK
+on:
+  push:
+    paths:
+      - 'android/ala-controller/**'
+      - '.github/workflows/build-ala-phone.yml'
+  pull_request:
+    paths:
+      - 'android/ala-controller/**'
+      - '.github/workflows/build-ala-phone.yml'
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: android/ala-controller
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK components
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+      - name: Build debug APK
+        run: gradle --no-daemon :app:assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Ala-Panel-Telefon-0.1.0-APK
+          path: android/ala-controller/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
