@@ -32,6 +32,10 @@ int main() {
     assert(prompt.find("Ale teraz ich nie ma") != std::string::npos);
     assert(prompt.find("NIEZAUFANYMI") != std::string::npos);
     assert(!social.AllowSpontaneousSpeech()); // manual prompt alone NEVER unlocks auto TTS
+    static_assert(!AlaSocialIntelligence::kVerifiedNativeXiaozhiAutonomy,
+                  "No verified server semantic verdict or conditional TTS");
+    social.RecordManualRequest();
+    assert(social.Snapshot(3500).counters.manual_requests == 1);
 
     // Explicit model verdict required; fail closed on stale generation/revision.
     auto generation=social.Generation(), revision=social.ContextRevision();
