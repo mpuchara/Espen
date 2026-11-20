@@ -21,6 +21,7 @@
 
 // Implemented by the existing Espen board; this does not own networking.
 bool EspenNetworkAvailable();
+std::string EspenHearingStatusJson(); // scalar diagnostics only
 
 namespace espen {
 
@@ -132,6 +133,14 @@ class PhonePanel {
     static esp_err_t Status(httpd_req_t* req) {
         if (!Instance().Authorized(req)) return Respond(req, 401, "Niepoprawny kod.");
         return Respond(req, 200, "OK");
+    }
+    static esp_err_t HearingGet(httpd_req_t* req) {
+        if (!Instance().Authorized(req)) return Respond(req, 401, "Niepoprawny kod.");
+        const std::string json = ::EspenHearingStatusJson();
+        httpd_resp_set_type(req, "application/json; charset=utf-8");
+        httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+        httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
+        return httpd_resp_send(req, json.data(), json.size());
     }
     static esp_err_t GetName(httpd_req_t* req) {
         auto& self = Instance();
@@ -559,7 +568,7 @@ public:
         { std::lock_guard<std::mutex> guard(memory_lock_); EnsureMemory(); }
         httpd_config_t config = HTTPD_DEFAULT_CONFIG();
         config.server_port = 80;
-        config.max_uri_handlers = 14;
+        config.max_uri_handlers = 15;
         config.stack_size = 8192;
         if (httpd_start(&server_, &config) != ESP_OK) {
             server_ = nullptr;
@@ -589,6 +598,7 @@ public:
         add("/api/memory", HTTP_POST, MemoryPost);
         add("/api/face", HTTP_GET, FaceGet);
         add("/api/face", HTTP_POST, FacePost);
+        add("/api/hearing", HTTP_GET, HearingGet);
         ESP_LOGI("AlaPhone", "Phone panel listening on port 80");
     }
     bool StartSocial(uint32_t now, bool standby, bool online) {
