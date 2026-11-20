@@ -59,6 +59,11 @@ int main(){
     assert(memory.Candidate().empty());
     assert(store.writes==writes_before_stt+1);
     assert(memory.State().items.size()==2);
+    assert(memory.OfferVoice("Ala zapomnij że lubię Minecrafta."));
+    assert(memory.PendingDelete()!=0);
+    assert(memory.State().items.size()==2); // no deletion until consent
+    memory.DismissCandidate();
+    assert(memory.State().items.size()==2);
     assert(memory.OfferVoice("Ala zapamiętaj że interesują mnie planety"));
     memory.DismissCandidate();
     assert(!memory.ConfirmCandidate());
