@@ -29,6 +29,7 @@ enum class BridgeActivity : uint8_t {
 struct BridgeStats {
     BridgeActivity state = BridgeActivity::NoBackend;
     uint32_t analysed = 0, accepted = 0, ignored = 0, cancelled = 0;
+    uint32_t rejected_segments = 0, pcm_drained = 0;
     bool configured = false, available = false;
 };
 
@@ -42,6 +43,9 @@ class AlaSocialBridge {
     static constexpr size_t kMaxSamples = 16000 * 8;
     static constexpr size_t kMaxResponse = 320000;
     static constexpr uint32_t kVoiceThreshold = 420;
+    // Square-energy smoothing. This is a noise gate, NOT speaker/source ID.
+    std::atomic<uint32_t> noise_energy_{220u * 220u};
+    std::atomic_flag pcm_gate_ = ATOMIC_FLAG_INIT;
     std::mutex cfg_lock_;
     std::string base_, token_;
     std::string session_; // task-owned, never logged
@@ -60,6 +64,7 @@ class AlaSocialBridge {
     uint16_t voiced_blocks_ = 0, silent_blocks_ = 0;
     std::atomic<BridgeActivity> state_{BridgeActivity::NoBackend};
     std::atomic<uint32_t> analysed_{0}, accepted_{0}, ignored_{0}, cancelled_{0};
+    std::atomic<uint32_t> rejected_segments_{0}, pcm_drained_{0};
     uint32_t last_turn_ms_ = 0;
 
     struct HttpBody {
@@ -219,14 +224,20 @@ class AlaSocialBridge {
         if (capture_.exchange(3) != 2 || !Still(epoch)) {
             capture_.store(0); return;
         }
+        // Only the input callback or this worker touches the recording.
+        while (pcm_gate_.test_and_set(std::memory_order_acquire)) {
+            vTaskDelay(pdMS_TO_TICKS(1));
+        }
         const size_t count = std::min(samples_,kMaxSamples);
-        if (count < 6400 || count > kMaxSamples) {
+        if (count < 6400 || count > kMaxSamples || !Still(epoch)) {
+            pcm_gate_.clear(std::memory_order_release);
             capture_.store(0); return;
         }
         state_.store(BridgeActivity::Analysing);
         WavHeader(wav_,count);
         memcpy(wav_+44,pcm_,count*2);
         memset(pcm_,0,count*2); // erase source as soon as copied
+        pcm_gate_.clear(std::memory_order_release);
         const uint32_t voice_end = last_voice_ms_.load();
         size_t size=0;
         ++turn_;
@@ -291,19 +302,32 @@ class AlaSocialBridge {
         audio.EnableWakeWordDetection(false);
         // 40 ms PCM chunks: existing AudioService owns playback and buffering.
         // Every chunk rechecks consent/generation and a possible new voice.
+        bool fully_queued = true;
         for(size_t off=0;off<audio_bytes;) {
             if(!Still(epoch) || last_voice_ms_.load()!=previous_voice ||
-               !EspenSocialGenerationValid(generation_,policy_revision)) break;
+               !EspenSocialGenerationValid(generation_,policy_revision)) {
+                fully_queued = false; break;
+            }
             const size_t len=std::min<size_t>(1920,audio_bytes-off);
             std::vector<int16_t> chunk(len/2);
             memcpy(chunk.data(),response_+off,len);
-            if(!audio.QueueEspenDiagnosticPcm(std::move(chunk))) break;
+            if(!audio.QueueEspenSocialPcm(std::move(chunk))) {
+                fully_queued = false; break;
+            }
             off+=len;
+        }
+        if (!fully_queued) {
+            // Remove all unplayed Social packets, never Xiaozhi packets.
+            audio.CancelEspenSocialPcm();
+            cancelled_.fetch_add(1);
         }
         // Don't re-arm wake while our own audio remains in the playback queue.
         uint32_t attempts=0;
         while(Still(epoch) && !audio.IsPlaybackIdle() && attempts++<250) {
             vTaskDelay(pdMS_TO_TICKS(20));
+        }
+        if (fully_queued && audio.IsPlaybackIdle() && Still(epoch)) {
+            pcm_drained_.fetch_add(1);
         }
         speaking_.store(false,std::memory_order_release);
         if(Application::GetInstance().GetDeviceState()==kDeviceStateIdle &&
@@ -330,7 +354,11 @@ class AlaSocialBridge {
                 if (!enabled_.load()) {
                     if(erased_epoch!=epoch_.load()) {
                         // Clear ephemeral PCM/transcript/model output from PSRAM.
+                        while(pcm_gate_.test_and_set(std::memory_order_acquire)) {
+                            vTaskDelay(pdMS_TO_TICKS(1));
+                        }
                         if(pcm_) memset(pcm_,0,kMaxSamples*2);
+                        pcm_gate_.clear(std::memory_order_release);
                         if(wav_) memset(wav_,0,kMaxSamples*2+44);
                         if(response_) memset(response_,0,kMaxResponse);
                         erased_epoch=epoch_.load();
@@ -390,7 +418,8 @@ public:
         while(!url.empty() && url.back()=='/')url.pop_back();
         base_=std::move(url);token_=std::move(token);
         configured_.store(!base_.empty());
-        state_.store(base_.empty()?BridgeActivity::NoBackend:BridgeActivity::Ready);
+        // Only a successful /v1/session/start establishes readiness.
+        state_.store(BridgeActivity::NoBackend);
         return true;
     }
     bool Start() {
@@ -416,8 +445,11 @@ public:
         armed_.store(false);
         epoch_.fetch_add(1);
         capture_.store(0);
+        // Targeted queue cancellation also invalidates already-popped Social
+        // chunks before codec OutputData; an in-flight 40 ms DMA is the bound.
+        Application::GetInstance().GetAudioService().CancelEspenSocialPcm();
         if(state_.load()!=BridgeActivity::Error)
-            state_.store(configured_.load()?BridgeActivity::Ready:BridgeActivity::NoBackend);
+            state_.store(BridgeActivity::NoBackend);
     }
     void Arm(bool value) {
         const bool permitted = value && ready_.load() && enabled_.load() && !speaking_.load();
@@ -427,26 +459,47 @@ public:
     // Called from the EXISTING AudioService input task. Bounded memcpy only,
     // no allocations, no locks, no network, no model and no display calls.
     void Capture(const int16_t* data,size_t count) {
-        if(!armed_.load(std::memory_order_acquire) || !pcm_ || !data || count==0 || count>320)
-            return;
+        if(!armed_.load(std::memory_order_acquire) || !pcm_ || !data ||
+           count==0 || count>320) return;
         uint64_t energy=0;
         for(size_t i=0;i<count;++i) {
             const int32_t v=data[i];
             energy+=static_cast<uint64_t>(v*v);
         }
-        const bool voice=energy / count > kVoiceThreshold*kVoiceThreshold;
-        const auto now=static_cast<uint32_t>(esp_timer_get_time()/1000);
+        const auto mean=energy/count;
+        if(pcm_gate_.test_and_set(std::memory_order_acquire)) return;
+        if(!armed_.load(std::memory_order_acquire) || !enabled_.load() ||
+           !ready_.load()) {
+            pcm_gate_.clear(std::memory_order_release); return;
+        }
         const int state=capture_.load(std::memory_order_acquire);
+        if(state==3 || state==2) {
+            pcm_gate_.clear(std::memory_order_release); return;
+        }
+        // Adaptive background estimation is updated only between segments,
+        // avoiding voice-driven drift while recording. No claim of TV rejection.
+        const uint32_t floor=noise_energy_.load(std::memory_order_relaxed);
+        const uint64_t threshold=std::max<uint64_t>(
+            kVoiceThreshold*kVoiceThreshold,static_cast<uint64_t>(floor)*4u);
+        const bool voice=mean>threshold;
+        if(state==0 && !voice) {
+            noise_energy_.store(static_cast<uint32_t>(
+                std::min<uint64_t>(2000u*2000u,(static_cast<uint64_t>(floor)*31u+mean)/32u)),
+                std::memory_order_relaxed);
+        }
+        const auto now=static_cast<uint32_t>(esp_timer_get_time()/1000);
         if(voice) last_voice_ms_.store(now,std::memory_order_release);
-        if(state==3 || state==2) return;
         if(state==0) {
-            if(!voice) return;
+            if(!voice) {
+                pcm_gate_.clear(std::memory_order_release); return;
+            }
             samples_=0;voiced_blocks_=0;silent_blocks_=0;
             capture_.store(1,std::memory_order_release);
         }
         if(samples_+count>kMaxSamples) {
             capture_.store(voiced_blocks_>=30 ? 2 : 0,std::memory_order_release);
-            return;
+            if(voiced_blocks_<30) rejected_segments_.fetch_add(1);
+            pcm_gate_.clear(std::memory_order_release); return;
         }
         memcpy(pcm_+samples_,data,count*2);
         samples_+=count;
@@ -455,9 +508,12 @@ public:
         } else {
             ++silent_blocks_;
         }
-        if (silent_blocks_>=130 || samples_==kMaxSamples) {
-            capture_.store(voiced_blocks_>=30 ? 2 : 0,std::memory_order_release);
+        if(silent_blocks_>=45 || samples_==kMaxSamples) {
+            const bool credible=voiced_blocks_>=30 && samples_>=6400;
+            capture_.store(credible ? 2 : 0,std::memory_order_release);
+            if(!credible) rejected_segments_.fetch_add(1);
         }
+        pcm_gate_.clear(std::memory_order_release);
     }
     uint32_t Epoch() const { return epoch_.load(); }
     bool Speaking() const { return speaking_.load(); }
@@ -471,6 +527,8 @@ public:
         s.accepted=accepted_.load();
         s.ignored=ignored_.load();
         s.cancelled=cancelled_.load();
+        s.rejected_segments=rejected_segments_.load();
+        s.pcm_drained=pcm_drained_.load();
         return s;
     }
 };

@@ -1,7 +1,7 @@
 name: Ala behavior contracts
 on:
   pull_request:
-    branches: [main, feature/ala-central-behavior-engine-stage2, feature/ala-living-robot-engine-stage3, feature/ala-conversation-intelligence-stage4, feature/ala-social-intelligence-stage5]
+    branches: [main, feature/ala-central-behavior-engine-stage2, feature/ala-living-robot-engine-stage3, feature/ala-conversation-intelligence-stage4, feature/ala-social-intelligence-stage5, feature/ala-social-autonomy-bridge-stage5-1]
   push:
     branches: [main]
   workflow_dispatch:
@@ -20,6 +20,7 @@ jobs:
           python3 tests/test_behavior_contracts.py
           python3 tests/test_ala_social_contracts.py
           python3 services/ala_social_bridge/test_server.py -v
+          python3 services/ala_social_bridge/test_evaluation.py
           c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_social_intelligence.cc -o /tmp/ala-social-test
           /tmp/ala-social-test
           c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_behavior_engine.cc -o /tmp/ala-behavior-engine-test

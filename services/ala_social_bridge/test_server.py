@@ -36,6 +36,9 @@ class FakeModel:
         self.block = None
         self.released = None
         self.bad = False
+        self.reply_text = "Sprawdź rękę!"
+        self.tts_entered = None
+        self.tts_release = None
 
     def transcribe(self, data):
         if self.block:
@@ -47,10 +50,13 @@ class FakeModel:
         if self.bad:
             return {"action": "EXECUTE", "confidence": 99, "sensitive": False, "reason": "", "text": "unsafe"}
         return {"action": self.action, "confidence": 95, "sensitive": False,
-                "reason": "ok", "text": "Sprawdź rękę!" if self.action == "JOKE" else ""}
+                "reason": "ok", "text": self.reply_text if self.action == "JOKE" else ""}
 
     def speak(self, text):
         self.tts_calls += 1
+        if self.tts_entered:
+            self.tts_entered.set()
+            self.tts_release.wait(timeout=2)
         return b"\x00\x00" * 2400
 
 
@@ -166,6 +172,73 @@ class ServiceTests(unittest.TestCase):
         with self.service.lock:
             self.service.sessions[SID].expires = time.monotonic() - 1
         self.assertEqual(self.turn()[0], 409)
+
+    def test_wav_rejects_underrun_and_appended_data(self):
+        self.start()
+        headers = {"X-Ala-Session": SID, "X-Ala-Generation": "7",
+                   "X-Ala-Turn": "1", "X-Ala-Revision": "0"}
+        valid = wav()
+        self.assertEqual(self.request("/v1/turn", pcm=valid[:-4], headers=headers)[0], 400)
+        self.assertEqual(self.request("/v1/turn", pcm=valid+b"padding", headers=headers)[0], 400)
+        self.assertEqual(self.model.tts_calls, 0)
+
+    def test_oversized_comment_fails_closed(self):
+        self.start()
+        self.model.reply_text = "ż" * 91
+        self.assertEqual(self.turn()[0], 502)
+        self.assertEqual(self.model.tts_calls, 0)
+
+    def test_stop_during_tts_discards_pcm(self):
+        self.start()
+        _, result = self.turn()
+        grant = {"session_id": SID, "generation": 7, "turn_id": 1,
+                 "context_revision": 1, "ticket": result["ticket"]}
+        self.model.tts_entered = threading.Event()
+        self.model.tts_release = threading.Event()
+        responses = []
+        t = threading.Thread(target=lambda: responses.append(self.request("/v1/tts", grant)))
+        t.start()
+        self.assertTrue(self.model.tts_entered.wait(timeout=2))
+        self.request("/v1/session/stop", {"session_id": SID, "generation": 7})
+        self.model.tts_release.set()
+        t.join(timeout=2)
+        self.assertEqual(responses[0][0], 409)
+
+    def test_empty_stt_advances_revision_without_llm_or_tts(self):
+        self.start()
+        self.model.transcript = ""
+        code, result = self.turn()
+        self.assertEqual(code, 200)
+        self.assertEqual(result["action"], "IGNORE")
+        self.assertEqual(result["context_revision"], 1)
+        self.assertEqual(result["ticket"], "")
+        self.assertEqual(self.model.tts_calls, 0)
+        # No stale revision error on next legitimate utterance.
+        self.model.transcript = "Zgubiłem telefon"
+        code, result = self.turn(rev=1, turn=2)
+        self.assertEqual(code, 200)
+        self.assertEqual(result["context_revision"], 2)
+
+    def test_100_sequential_ignored_turns_bounded_state(self):
+        self.start()
+        self.model.action = "IGNORE"
+        for turn in range(1, 101):
+            code, result = self.turn(rev=turn-1, turn=turn)
+            self.assertEqual(code, 200)
+            self.assertEqual(result["action"], "IGNORE")
+            self.assertEqual(result["context_revision"], turn)
+        with self.service.lock:
+            session = self.service.sessions[SID]
+            self.assertLessEqual(len(session.context), 5)
+            self.assertEqual(session.tickets, {})
+            self.assertFalse(session.busy)
+        self.assertEqual(self.model.tts_calls, 0)
+
+    def test_health_never_implies_live_end_to_end(self):
+        code, result = self.request("/v1/health")
+        self.assertEqual(code, 200)
+        self.assertFalse(result["end_to_end_verified"])
+        self.assertEqual(result["transport"], "http_unencrypted")
 
     def test_real_openai_http_adapter_against_deterministic_provider(self):
         # Exercise production multipart STT, JSON verdict and raw-PCM TTS
