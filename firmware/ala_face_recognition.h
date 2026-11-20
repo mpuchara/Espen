@@ -78,7 +78,10 @@ public:
     const std::vector<FaceProfile>& Profiles()const{return profiles_;}
     bool Begin(const std::string& name,bool consent) {
         if(!consent || enrollment_ || profiles_.size()>=kMaxProfiles ||
-           name.empty() || name.size()>48 || name.find_first_of("\r\n|\0",0)!=std::string::npos) return false;
+           name.empty() || name.size()>48 ||
+           std::any_of(name.begin(),name.end(),[](unsigned char c){
+               return c<32 || c==127 || c=='|';
+           })) return false;
         // This is not authentication: parent/guardian consent is a separate UI checkbox.
         for(const auto& p:profiles_)if(p.name==name)return false;
         Cancel();pending_name_=name;enrollment_=true;return true;
