@@ -217,17 +217,25 @@ class PhonePanel {
             Application::GetInstance().EspenIsStandby(), ::EspenNetworkAvailable());
         const bool listening = snapshot.active &&
             Application::GetInstance().GetDeviceState() == kDeviceStateListening;
-        char json[410];
+        // This reflects a real Xiaozhi channel, not just a Wi-Fi connection.
+        const bool xiaozhi_open = Application::GetInstance().EspenXiaozhiChannelOpen();
+        char json[640];
         snprintf(json, sizeof(json),
             "{\"active\":%s,\"remaining_ms\":%lu,\"activity\":%u,"
             "\"context\":%u,\"listening\":%s,\"auto_evaluation\":false,"
-            "\"comments\":%lu,\"utterances\":%lu}",
+            "\"native_autonomy\":false,\"conditional_tts\":false,"
+            "\"xiaozhi_channel_open\":%s,\"manual_requests\":%lu,"
+            "\"comments\":%lu,\"skipped\":%lu,\"cancelled\":%lu,\"utterances\":%lu}",
             snapshot.active?"true":"false",
             static_cast<unsigned long>(snapshot.remaining_ms),
             static_cast<unsigned>(snapshot.activity),
             static_cast<unsigned>(snapshot.context_count),
             listening?"true":"false",
+            xiaozhi_open?"true":"false",
+            static_cast<unsigned long>(snapshot.counters.manual_requests),
             static_cast<unsigned long>(snapshot.counters.approved),
+            static_cast<unsigned long>(snapshot.counters.skipped),
+            static_cast<unsigned long>(snapshot.counters.cancelled),
             static_cast<unsigned long>(snapshot.counters.utterances));
         httpd_resp_set_type(req, "application/json; charset=utf-8");
         httpd_resp_set_hdr(req, "Cache-Control", "no-store");
@@ -270,6 +278,7 @@ class PhonePanel {
         self.last_say_us_.store(us,std::memory_order_release);
         { std::lock_guard<std::mutex> lock(self.reply_lock_); self.last_reply_.clear(); }
         app.EspenAskText(prompt,false,self.Name());
+        self.RecordSocialManualRequest();
         return Respond(req,200,"Poproszono Xiaozhi o krótki komentarz.");
     }
     static esp_err_t Say(httpd_req_t* req) { return SendText(req, false); }
@@ -396,7 +405,13 @@ public:
     }
     bool SocialSpeechPermission() {
         std::lock_guard<std::mutex> lock(social_lock_);
-        return social_.AllowSpontaneousSpeech();
+        // Even a simulated model verdict must not enable unverified native TTS.
+        return social_.AllowSpontaneousSpeech() &&
+               AlaSocialIntelligence::kVerifiedNativeXiaozhiAutonomy;
+    }
+    void RecordSocialManualRequest() {
+        std::lock_guard<std::mutex> lock(social_lock_);
+        social_.RecordManualRequest();
     }
     bool SocialPrompt(std::string& out,uint32_t now,bool busy) {
         std::lock_guard<std::mutex> lock(social_lock_);
