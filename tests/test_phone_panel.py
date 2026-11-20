@@ -26,7 +26,7 @@ assert "bool Started() const" in phone
 assert "std::all_of(pin_.begin(), pin_.end()" in phone, "The stored PIN must be 8 digits"
 assert "std::atomic<uint32_t> emotion_seq_" in phone
 assert "GetDeviceState() != kDeviceStateIdle" in phone
-assert "config.max_uri_handlers = 12;" in phone
+assert "config.max_uri_handlers = 14;" in phone  # Twelve existing routes plus Stage 7 GET/POST face routes
 assert 'add("/api/social", HTTP_GET, GetSocial)' in phone
 assert 'add("/api/social", HTTP_POST, SocialCommand)' in phone
 assert "EspenAskText(body, hello, self.Name())" in phone
