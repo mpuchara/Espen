@@ -1881,6 +1881,7 @@ assert "espressif/human_face_recognition:" not in original_manifest
 manifest.write_text(original_manifest + "\n  espressif/human_face_recognition:\n    version: ==0.3.3\n    rules:\n      - if: target in [esp32p4]\n")
 cmake = up / "main/CMakeLists.txt"
 cmake_text = cmake.read_text()
-needle = 'set(MAIN_PRIV_REQUIRES_EXTRA "")'
+# prepare.py earlier replaces the empty list with espen_camera. Preserve it.
+needle = 'set(MAIN_PRIV_REQUIRES_EXTRA "espen_camera")'
 assert cmake_text.count(needle) == 1
 cmake.write_text(cmake_text.replace(needle, needle + '\nif(CONFIG_BOARD_TYPE_ESPEN_GUITION_P4)\n    list(APPEND MAIN_PRIV_REQUIRES_EXTRA espressif__human_face_recognition)\nendif()\n', 1))
