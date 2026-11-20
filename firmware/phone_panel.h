@@ -7,6 +7,7 @@
 #include "ala_social_intelligence.h"
 #include "ala_memory_engine.h"
 #include "ala_face_runtime.h"
+#include "ala_identity_engine.h"
 #include "settings.h"
 #include <esp_http_server.h>
 #include <esp_log.h>
@@ -337,6 +338,12 @@ class PhonePanel {
     static esp_err_t FaceGet(httpd_req_t* req) {
         if(!Instance().Authorized(req))return Respond(req,401,"Niepoprawny kod.");
         const auto snap=AlaFaceRuntime::Instance().Snapshot();
+        AlaIdentityEngine fusion;
+        if(snap.enabled && snap.recognized_id && !snap.recognized_name.empty())
+            fusion.ObserveFace(snap.recognized_id,snap.recognized_name,snap.recognized_at_ms);
+        // The real speaker embedding model is not available yet.
+        // Never infer a voice identity from a face, name or microphone level.
+        const auto identity=fusion.Evaluate(static_cast<uint32_t>(esp_timer_get_time()/1000));
         std::string json="{\"enabled\":"+std::string(snap.enabled?"true":"false")+
             ",\"enrolling\":"+(snap.enrolling?"true":"false")+
             ",\"model_loaded\":"+(snap.model_loaded?"true":"false")+
@@ -347,6 +354,9 @@ class PhonePanel {
             ",\"limit\":5,\"storage\":\"RAM\",\"last\":"+JsonString(FaceDecisionName(snap.last))+
             ",\"inference_ms\":"+std::to_string(snap.inference_ms)+
             ",\"free_psram_kb\":"+std::to_string(snap.free_psram_kb)+
+            ",\"identity\":{\"state\":"+JsonString(AlaIdentityStateName(identity.state))+
+            ",\"face\":"+JsonString(identity.face_name)+
+            ",\"voice\":null,\"speaker_model_ready\":false}"+
             ",\"profiles\":[";
         for(size_t i=0;i<snap.names.size();++i) {
             if(i)json+=",";
