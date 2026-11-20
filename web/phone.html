@@ -61,7 +61,13 @@ small{display:block;color:#96aabe;margin-top:9px;line-height:1.5}.status{color:#
 <div id="memory-candidate-text"></div><div class="buttons"><button id="memory-accept">Zapisz</button><button id="memory-dismiss" class="secondary">Odrzuć</button></div></div>
 <div id="memory-recall" hidden><p>🎤 Wykryłam prośbę „Co pamiętasz?”. Potwierdź, jeśli chcesz przesłać maksymalnie 3 wpisy do Xiaozhi.</p>
 <div class="buttons"><button id="memory-recall-ask" class="secondary">💬 Potwierdź i zapytaj</button><button id="memory-recall-dismiss" class="secondary">Anuluj</button></div></div>
+<div class="buttons"><input id="memory-filter" placeholder="🔎 Szukaj słów we wspomnieniach" maxlength="80"></div>
+<label for="memory-filter-category">Filtr kategorii</label>
+<select id="memory-filter-category" style="width:100%;padding:12px;margin:7px 0;color:#fff;background:#091726;border:1px solid #3b536d;border-radius:12px">
+<option value="0">Wszystkie kategorie</option><option value="1">Preferencje</option><option value="2">Zainteresowania</option>
+<option value="3">Robot</option><option value="4">Ustalenia</option><option value="5">Ważne informacje</option></select>
 <div id="memory-list" aria-live="polite"></div>
+<div class="buttons"><button id="memory-remove-category" class="danger">Usuń całą wybraną kategorię</button></div>
 <label for="memory-category">Kategoria</label>
 <select id="memory-category" style="width:100%;padding:12px;margin-top:6px;color:#fff;background:#091726;border:1px solid #3b536d;border-radius:12px">
 <option value="1">Preferencje</option><option value="2">Zainteresowania</option><option value="3">Informacje o robocie</option><option value="4">Ustalenia</option><option value="5">Ważne informacje</option></select>
@@ -286,7 +292,11 @@ async function refreshMemory(){
        ' · Wspomnienia: '+data.count+'/'+data.limit+' · NVS: '+data.bytes+' bajtów'+
        (data.error?' · ⚠ Błąd odczytu lub zapisu!':'');
     const list=$('memory-list');list.replaceChildren();
+    const filter=$('memory-filter').value.toLocaleLowerCase('pl-PL');
+    const selectedCategory=$('memory-filter-category').value;
     for(const item of data.items){
+      if(filter && !item.text.toLocaleLowerCase('pl-PL').includes(filter))continue;
+      if(selectedCategory!=='0' && String(item.category)!==selectedCategory)continue;
       const row=document.createElement('div');row.className='buttons';
       row.style.alignItems='center';
       const label=document.createElement('div');label.style.flex='1';label.style.overflowWrap='anywhere';
@@ -323,6 +333,15 @@ $('memory-recall-ask').onclick=async()=>{
   if(r){$('answer').textContent='Czekam na odpowiedź Xiaozhi…';startReplyPolling();}
 };
 $('memory-recall-dismiss').onclick=()=>memoryAction('dismiss');
+$('memory-filter').oninput=()=>refreshMemory();
+$('memory-filter-category').onchange=()=>refreshMemory();
+$('memory-remove-category').onclick=async()=>{
+  const cat=$('memory-filter-category').value;
+  if(cat==='0'){$('memory-message').textContent='Najpierw wybierz kategorię.';return;}
+  if(!confirm('Usunąć WSZYSTKIE wpisy z wybranej kategorii?'))return;
+  if(prompt('Wpisz USUŃ, aby potwierdzić:')!=='USUŃ')return;
+  await memoryAction('category|'+cat+'|POTWIERDZAM');
+};
 $('memory-on').onclick=()=>memoryAction('on');
 $('memory-off').onclick=()=>memoryAction('off');
 $('memory-accept').onclick=()=>memoryAction('accept');
