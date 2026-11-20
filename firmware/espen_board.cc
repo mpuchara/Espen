@@ -386,7 +386,10 @@ static bool EspenDiagPlay(bool raw,bool tone=false){
     if(ok!=pdPASS){std::lock_guard<std::mutex> l(diag.mutex);diag.note="Brak pamięci na odtwarzanie.";speaker_test_running.store(false,std::memory_order_release);diag.busy.store(false,std::memory_order_release);return false;}
     return true;
 }
-static std::atomic<bool> espen_network_error{false},espen_turn_waiting{false};
+static std::atomic<bool> espen_network_error{false},espen_turn_waiting{false},espen_turn_user_pause{false};
+// Published only by Application, consumed by the existing 50 ms face tick.
+void EspenTurnUserPause(bool paused) { espen_turn_user_pause.store(paused, std::memory_order_release); }
+int EspenNoiseFloorRms() { return mic_noise.load(std::memory_order_relaxed); }
 void EspenTurnWaiting(bool waiting) {
     bool previous = espen_turn_waiting.exchange(waiting, std::memory_order_acq_rel);
     if (waiting && !previous) EspenPlayEmotionalCue(espen::EmotionalCue::ListenEnd);
@@ -1927,7 +1930,10 @@ class EspenDisplay : public LcdDisplay {
             DrawVisualPanel(visual_cue_,now-visual_started_);visual_last_draw_=now;
         }
         const bool listening=(phase==Phase::Listening||phase==Phase::Wake)&&!scene_on;
-        listening_layout_.Tick(listening,EspenMicMeter(),now);
+        // A natural user pause keeps the attentive listening expression: no
+        // neutral mood flash, no autonomous animation, no synthetic mouth PCM.
+        const bool user_pause=espen_turn_user_pause.load(std::memory_order_acquire);
+        listening_layout_.Tick(listening,user_pause ? 0 : EspenMicMeter(),now);
         const int shift=listening_layout_.shift;
         int gaze_x=shift?std::clamp(f.gaze_x,-12,12):f.gaze_x;
         if(scene_on&&!touch_active_&&((now-visual_started_)%2600)<1500)gaze_x=std::clamp(gaze_x+15,-12,22);
