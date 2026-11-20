@@ -55,9 +55,17 @@ with tempfile.TemporaryDirectory() as tmp:
     b = up / "main/boards/guition/espen-guition-jc4880p443/espen_board.cc"
     b.write_text(board)
     (up / "main/CMakeLists.txt").write_text('idf_component_register(SRCS a.cc\n                    PRIV_REQUIRES\n                        esp_pm)\n')
+    # Real upstream anchors needed by the native Xiaozhi observer.
+    # This fixture tests patch integrity, not live server behavior.
     (up / "main/application.h").write_text(
+        '#include <cstdint>\n'
+        '    std::mutex mutex_;\n'
         '    void WakeWordInvoke(const std::string& wake_word);\n')
     (up / "main/application.cc").write_text(
+        'protocol_->OnAudioChannelOpened([this, codec, &board]() {\n}\n'
+        'protocol_->OnAudioChannelClosed([this, &board]() {\n}\n'
+        'void Application::ResetProtocol() {\n}\n'
+        'void Application::Reboot() {\n}\n'
         'void Application::WakeWordInvoke(const std::string& wake_word) {\n}\n')
     subprocess.run([sys.executable, str(root / "scripts/prepare_phone.py"), str(up)], check=True)
     generated = (b.parent / "phone_panel_html.h").read_text(encoding="utf-8")
@@ -81,6 +89,9 @@ with tempfile.TemporaryDirectory() as tmp:
     assert 'EspenAskText' in (up / "main/application.cc").read_text()
     assert 'Masz imie ' in (up / "main/application.cc").read_text()
     assert 'void EspenAskText(const std::string& text, bool only_hello, const std::string& robot_name);' in (up / "main/application.h").read_text()
+    assert 'bool EspenXiaozhiChannelOpen() const' in (up / "main/application.h").read_text()
+    assert 'espen_xiaozhi_channel_open_.store(true' in (up / "main/application.cc").read_text()
+    assert (up / "main/application.cc").read_text().count('espen_xiaozhi_channel_open_.store(false') == 3
     assert 'Powiedz wylacznie jedno slowo: Czesc' in (up / "main/application.cc").read_text()
     assert 'esp_http_server' in (up / "main/CMakeLists.txt").read_text()
 print("Ala phone panel integration: OK")

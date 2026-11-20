@@ -221,8 +221,12 @@ async function refreshSocial(){
     const state=JSON.parse(raw);
     const seconds=Math.ceil(state.remaining_ms/1000);
     const desc=state.active?'✅ Aktywny '+Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0'):'⚪ Wyłączony';
-    $('social-status').textContent=desc+' · Kontekst: '+state.context+' · Komentarze: '+state.comments+
-      ' · Słucha w aktywnej sesji: '+(state.listening?'tak':'nie')+' · Auto-ocena STT: niedostępna';
+    $('social-status').textContent=desc+' · Kontekst: '+state.context+
+      ' · Prośby ręczne: '+state.manual_requests+' · Zaakceptowane automatyczne: '+state.comments+
+      ' · Pominięte: '+state.skipped+' · Anulowane: '+state.cancelled+
+      ' · Kanał Xiaozhi: '+(state.xiaozhi_channel_open?'otwarty':'zamknięty (idle lub offline)')+
+      ' · Słucha w aktywnej sesji: '+(state.listening?'tak':'nie')+
+      ' · Autonomia: niedostępna · Warunkowy TTS: niedostępny';
     $('social-comment').disabled=!state.active||!state.context||state.listening;
     ['quiet','normal','talkative'].forEach((name,index)=>{
       $('social-'+name).style.outline=state.activity===index?'2px solid #79e3d4':'none';
