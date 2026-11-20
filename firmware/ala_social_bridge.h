@@ -206,6 +206,15 @@ class AlaSocialBridge {
                c.transcript.size()<=160 && c.action.size()<=24 &&
                c.ticket.size()<=128;
     }
+    void AbortBackend() {
+        // A missing/invalid backend never leaves social capture silently active.
+        armed_.store(false);
+        ready_.store(false);
+        enabled_.store(false);
+        capture_.store(0);
+        epoch_.fetch_add(1);
+        state_.store(BridgeActivity::Error);
+    }
     void ProcessTurn(const std::string& base,const std::string& token,uint32_t epoch) {
         if (capture_.exchange(3) != 2 || !Still(epoch)) {
             capture_.store(0); return;
@@ -228,12 +237,12 @@ class AlaSocialBridge {
         memset(wav_,0,count*2+44);
         capture_.store(0);
         if (!Still(epoch)) { cancelled_.fetch_add(1); return; }
-        if (!ok) { state_.store(BridgeActivity::Error); return; }
+        if (!ok) { AbortBackend(); return; }
         Candidate candidate;
         if (!DecodeCandidate(size,candidate) || candidate.session_id!=session_ ||
             candidate.generation!=generation_ ||
             candidate.turn!=current_turn || candidate.revision != remote_revision_+1) {
-            state_.store(BridgeActivity::Error); return;
+            AbortBackend(); return;
         }
         remote_revision_ = candidate.revision;
         analysed_.fetch_add(1);
@@ -269,7 +278,7 @@ class AlaSocialBridge {
         if (!Post(base,token,"/v1/tts",json,static_cast<size_t>(n),
                  "application/json",nullptr,0,0,0,kMaxResponse,audio_bytes) ||
             audio_bytes<960 || audio_bytes%2) {
-            state_.store(BridgeActivity::Error); return;
+            AbortBackend(); return;
         }
         if (!Still(epoch) || last_voice_ms_.load()!=previous_voice ||
             !EspenSocialGenerationValid(generation_,policy_revision)) {
@@ -309,6 +318,7 @@ class AlaSocialBridge {
         std::string base,token;
         std::string prev_session;
         uint32_t prev_gen=0;
+        uint32_t erased_epoch=UINT32_MAX;
         for(;;) {
             if (!enabled_.load() || epoch_.load()!=serving) {
                 ready_.store(false);
@@ -318,6 +328,13 @@ class AlaSocialBridge {
                     prev_session.clear();
                 }
                 if (!enabled_.load()) {
+                    if(erased_epoch!=epoch_.load()) {
+                        // Clear ephemeral PCM/transcript/model output from PSRAM.
+                        if(pcm_) memset(pcm_,0,kMaxSamples*2);
+                        if(wav_) memset(wav_,0,kMaxSamples*2+44);
+                        if(response_) memset(response_,0,kMaxResponse);
+                        erased_epoch=epoch_.load();
+                    }
                     vTaskDelay(pdMS_TO_TICKS(100));
                     continue;
                 }
@@ -399,7 +416,8 @@ public:
         armed_.store(false);
         epoch_.fetch_add(1);
         capture_.store(0);
-        state_.store(configured_.load()?BridgeActivity::Ready:BridgeActivity::NoBackend);
+        if(state_.load()!=BridgeActivity::Error)
+            state_.store(configured_.load()?BridgeActivity::Ready:BridgeActivity::NoBackend);
     }
     void Arm(bool value) {
         const bool permitted = value && ready_.load() && enabled_.load() && !speaking_.load();

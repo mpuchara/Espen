@@ -444,6 +444,9 @@ public:
         std::lock_guard<std::mutex> lock(social_lock_);
         const bool previous=social_.Active();
         social_.Tick(now,standby,online);
+        // Backend failure must not leave a nominally active listening session.
+        if (social_.Active() && bridge_.Snapshot().state==BridgeActivity::Error)
+            social_.Stop();
         if (previous && !social_.Active()) { CancelBridgeAudio(); bridge_.Stop(); }
         const auto snap=social_.Snapshot(now);
         auto& app=Application::GetInstance();

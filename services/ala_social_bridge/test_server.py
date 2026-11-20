@@ -167,6 +167,70 @@ class ServiceTests(unittest.TestCase):
             self.service.sessions[SID].expires = time.monotonic() - 1
         self.assertEqual(self.turn()[0], 409)
 
+    def test_real_openai_http_adapter_against_deterministic_provider(self):
+        # Exercise production multipart STT, JSON verdict and raw-PCM TTS
+        # clients, while replacing the *external* OpenAI endpoint (no keys).
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        calls = []
+        class Provider(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.0"
+            def log_message(self, *_args):
+                pass
+
+            def do_POST(self):
+                content_type = self.headers.get("Content-Type", "")
+                count = int(self.headers.get("Content-Length", "0"))
+                body = self.rfile.read(count)
+                calls.append((self.path, content_type, body))
+                if self.path == "/audio/transcriptions":
+                    assert "multipart/form-data" in content_type
+                    assert b"speech.wav" in body and b"WAVEfmt " in body
+                    output = json.dumps({"text": "Znowu zgubiłem telefon"}).encode()
+                elif self.path == "/chat/completions":
+                    message = json.loads(body)
+                    assert message["response_format"]["type"] == "json_object"
+                    assert "untrusted_transcript_context" in message["messages"][1]["content"]
+                    verdict = {"action": "JOKE", "confidence": 96, "sensitive": False,
+                               "reason": "harmless", "text": "Sprawdź rękę!"}
+                    output = json.dumps({"choices": [{"message": {
+                        "content": json.dumps(verdict, ensure_ascii=False)}}]}).encode()
+                elif self.path == "/audio/speech":
+                    request = json.loads(body)
+                    assert request["response_format"] == "pcm"
+                    output = b"\x00\x00" * 2400
+                else:
+                    self.send_error(404)
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json" if self.path != "/audio/speech" else "audio/L16")
+                self.send_header("Content-Length", str(len(output)))
+                self.end_headers()
+                self.wfile.write(output)
+
+        provider = ThreadingHTTPServer(("127.0.0.1", 0), Provider)
+        thread = threading.Thread(target=provider.serve_forever, daemon=True)
+        thread.start()
+        try:
+            self.service.adapter = OpenAIAdapter("placeholder-test-only",
+                base_url="http://127.0.0.1:" + str(provider.server_port))
+            self.start()
+            status, decision = self.turn()
+            self.assertEqual(status, 200)
+            self.assertEqual(decision["action"], "JOKE")
+            self.assertTrue(decision["ticket"])
+            self.assertEqual([call[0] for call in calls],
+                             ["/audio/transcriptions", "/chat/completions"])
+            grant = {"session_id": SID, "generation": 7, "turn_id": 1,
+                     "context_revision": 1, "ticket": decision["ticket"]}
+            self.assertEqual(self.request("/v1/tts", grant)[0], 200)
+            self.assertEqual([call[0] for call in calls],
+                             ["/audio/transcriptions", "/chat/completions", "/audio/speech"])
+        finally:
+            provider.shutdown()
+            provider.server_close()
+            thread.join(timeout=2)
+
     def test_bad_token_before_audio(self):
         self.start()
         self.assertEqual(self.request("/v1/turn", pcm=wav(), headers={
