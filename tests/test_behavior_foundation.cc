@@ -32,8 +32,11 @@ int main() {
     // Explicit X clears the phone override, not the cloud mood or speech.
     face.Preview(Mood::Neutral, 14100);
     assert(face.Tick(14101, Phase::Speaking, 0, MouthShape::Closed).mood == Mood::Neutral);
+    // Today Preview(Neutral) masks a new cloud emotion until its 4.2s
+    // window expires; record this current priority rule for the arbiter.
     face.Emotion(Mood::Sad, 14200);
-    assert(face.Tick(14201, Phase::Speaking, 0, MouthShape::Closed).mood == Mood::Sad);
+    assert(face.Tick(14201, Phase::Speaking, 0, MouthShape::Closed).mood == Mood::Neutral);
+    assert(face.Tick(18301, Phase::Speaking, 0, MouthShape::Closed).mood == Mood::Sad);
 
     // A quoted/transcribed expression does NOT put Ala into standby.
     assert(IsVoiceStandbyCommand("Ala, bez odbioru!"));
