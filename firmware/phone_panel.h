@@ -426,10 +426,10 @@ public:
         EnsureBridgeLoaded();
         std::lock_guard<std::mutex> lock(social_lock_);
         if (!social_.Start(now,standby,online)) return false;
-        if (!bridge_.Start()) {
-            social_.Stop();
-            return false;
-        }
+        // Manual "Skomentuj teraz" via Xiaozhi remains available even when
+        // the optional Social Bridge backend has not been configured.
+        // Without a successful bridge start, autonomous PCM capture stays OFF.
+        bridge_.Start();
         return true;
     }
     void StopSocial() {
