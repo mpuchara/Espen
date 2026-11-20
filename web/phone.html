@@ -59,6 +59,8 @@ small{display:block;color:#96aabe;margin-top:9px;line-height:1.5}.status{color:#
 <div id="memory-usage" class="status" role="status">Połącz z Alą, aby zobaczyć pamięć.</div>
 <div id="memory-candidate" hidden><p>🎤 Propozycja z rozpoznanej mowy — NIE zapisana. Potwierdź świadomie:</p>
 <div id="memory-candidate-text"></div><div class="buttons"><button id="memory-accept">Zapisz</button><button id="memory-dismiss" class="secondary">Odrzuć</button></div></div>
+<div id="memory-recall" hidden><p>🎤 Wykryłam prośbę „Co pamiętasz?”. Potwierdź, jeśli chcesz przesłać maksymalnie 3 wpisy do Xiaozhi.</p>
+<div class="buttons"><button id="memory-recall-ask" class="secondary">💬 Potwierdź i zapytaj</button><button id="memory-recall-dismiss" class="secondary">Anuluj</button></div></div>
 <div id="memory-list" aria-live="polite"></div>
 <label for="memory-category">Kategoria</label>
 <select id="memory-category" style="width:100%;padding:12px;margin-top:6px;color:#fff;background:#091726;border:1px solid #3b536d;border-radius:12px">
@@ -297,6 +299,7 @@ async function refreshMemory(){
       row.append(label,edit,remove);list.append(row);
     }
     $('memory-candidate').hidden=!data.candidate;
+    $('memory-recall').hidden=!data.recall_pending;
     $('memory-accept').textContent=data.pending_delete?'🗑 Potwierdź usunięcie':'✅ Zapisz wspomnienie';
     $('memory-candidate-text').textContent=data.candidate||'';
     $('memory-save').disabled=!data.enabled;
@@ -314,6 +317,12 @@ async function memoryAction(command){
   }catch(e){$('memory-message').textContent='⚠ '+e.message;return null;}
   finally{memoryBusy=false;refreshMemory();}
 }
+$('memory-recall-ask').onclick=async()=>{
+  if(!confirm('Wysłać do Xiaozhi maksymalnie 3 zapisane wspomnienia?'))return;
+  const r=await memoryAction('ask');
+  if(r){$('answer').textContent='Czekam na odpowiedź Xiaozhi…';startReplyPolling();}
+};
+$('memory-recall-dismiss').onclick=()=>memoryAction('dismiss');
 $('memory-on').onclick=()=>memoryAction('on');
 $('memory-off').onclick=()=>memoryAction('off');
 $('memory-accept').onclick=()=>memoryAction('accept');
