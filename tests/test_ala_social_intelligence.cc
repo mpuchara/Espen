@@ -40,11 +40,21 @@ int main() {
     assert(social.AllowSpontaneousSpeech());
     social.UserSpeaking(5100);
     assert(!social.AllowSpontaneousSpeech());
-    assert(social.Evaluate(funny,6000,false,false,2000,false)==SocialAction::Ignore); // cooldown
+    assert(social.Evaluate(funny,6000,false,false,2000,false)==SocialAction::Ignore); // same revision
+    assert(social.ObserveStt("Nowy temat",6500));
+    revision=social.ContextRevision();
+    funny.context_revision=revision;
+    assert(social.Evaluate(funny,6501,false,false,2000,false)==SocialAction::Ignore); // cooldown
     assert(social.Evaluate(funny,95000,false,false,2000,false)==SocialAction::Joke);
     social.ConsumeSpeechPermission();
     assert(!social.AllowSpontaneousSpeech());
+    assert(social.ObserveStt("Jeszcze inny temat",100000));
+    revision=social.ContextRevision();
+    funny.context_revision=revision;
     assert(social.Evaluate(funny,185000,false,false,2000,false)==SocialAction::Joke);
+    assert(social.ObserveStt("Czwarty temat",190000));
+    revision=social.ContextRevision();
+    funny.context_revision=revision;
     assert(social.Evaluate(funny,275000,false,false,2000,false)==SocialAction::Ignore); // 3 in window
     social.SetActivity(SocialActivity::Talkative);
     assert(social.Activity()==SocialActivity::Talkative);
