@@ -17,7 +17,8 @@ if (-not $env:OPENAI_API_KEY) {
 }
 if (-not $env:ALA_BRIDGE_TOKEN) {
     $bytes = New-Object byte[] 32
-    [Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+    $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
     $env:ALA_BRIDGE_TOKEN = [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+','-').Replace('/','_')
     Write-Host "Skopiuj TOKEN do panelu Ali (nie udostepniaj go): $env:ALA_BRIDGE_TOKEN"
 }
