@@ -172,7 +172,7 @@ class AlaSocialBridge {
         return item->valuedouble == static_cast<double>(out);
     }
     struct Candidate {
-        std::string transcript, action, ticket;
+        std::string session_id, transcript, action, ticket;
         uint32_t generation=0, revision=0, turn=0;
         int confidence=0;
         bool sensitive=true;
@@ -182,25 +182,28 @@ class AlaSocialBridge {
         response_[length] = 0;
         auto* root=cJSON_ParseWithLength(reinterpret_cast<char*>(response_),length);
         if (!root) return false;
+        auto* sid=cJSON_GetObjectItemCaseSensitive(root,"session_id");
         auto* tr=cJSON_GetObjectItemCaseSensitive(root,"transcript");
         auto* action=cJSON_GetObjectItemCaseSensitive(root,"action");
         auto* ticket=cJSON_GetObjectItemCaseSensitive(root,"ticket");
         auto* sensitive=cJSON_GetObjectItemCaseSensitive(root,"sensitive");
         uint32_t conf=0;
-        const bool valid = cJSON_IsString(tr) && cJSON_IsString(action) &&
+        const bool valid = cJSON_IsString(sid) && cJSON_IsString(tr) && cJSON_IsString(action) &&
             cJSON_IsString(ticket) && cJSON_IsBool(sensitive) &&
             JsonNum(root,"confidence",conf) && conf<=100 &&
             JsonNum(root,"generation",c.generation) &&
             JsonNum(root,"context_revision",c.revision) &&
             JsonNum(root,"turn_id",c.turn);
-        if (valid && strlen(tr->valuestring) <= 160 &&
+        if (valid && strlen(sid->valuestring) <= 64 && strlen(tr->valuestring) <= 160 &&
             strlen(action->valuestring) <= 24 && strlen(ticket->valuestring) <= 128) {
+            c.session_id=sid->valuestring;
             c.transcript=tr->valuestring; c.action=action->valuestring;
             c.ticket=ticket->valuestring; c.sensitive=cJSON_IsTrue(sensitive);
             c.confidence=static_cast<int>(conf);
         }
         cJSON_Delete(root);
-        return valid && c.transcript.size()<=160 && c.action.size()<=24 &&
+        return valid && c.session_id.size()>=16 && c.session_id.size()<=64 &&
+               c.transcript.size()<=160 && c.action.size()<=24 &&
                c.ticket.size()<=128;
     }
     void ProcessTurn(const std::string& base,const std::string& token,uint32_t epoch) {
@@ -227,7 +230,8 @@ class AlaSocialBridge {
         if (!Still(epoch)) { cancelled_.fetch_add(1); return; }
         if (!ok) { state_.store(BridgeActivity::Error); return; }
         Candidate candidate;
-        if (!DecodeCandidate(size,candidate) || candidate.generation!=generation_ ||
+        if (!DecodeCandidate(size,candidate) || candidate.session_id!=session_ ||
+            candidate.generation!=generation_ ||
             candidate.turn!=current_turn || candidate.revision != remote_revision_+1) {
             state_.store(BridgeActivity::Error); return;
         }

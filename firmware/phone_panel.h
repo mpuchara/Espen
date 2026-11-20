@@ -250,7 +250,7 @@ class PhonePanel {
             static_cast<unsigned>(snapshot.activity),
             static_cast<unsigned>(snapshot.context_count),
             listening?"true":"false",
-            bridge.available?"true":"false", bridge.configured?"true":"false",
+            (bridge.available && bridge.analysed>0)?"true":"false", bridge.configured?"true":"false",
             static_cast<unsigned>(bridge.state),
             static_cast<unsigned long>(bridge.analysed),
             static_cast<unsigned long>(bridge.accepted),
@@ -274,7 +274,7 @@ class PhonePanel {
         }
         if (body == "start") {
             return self.StartSocial(now,app.EspenIsStandby(),::EspenNetworkAvailable())
-                ? Respond(req,200,"Włączono na 10 min. Dźwięk w aktywnej sesji może trafiać do Xiaozhi.")
+                ? Respond(req,200,"Włączono na 10 min. Po konfiguracji backendu dźwięk trafi też do Social Bridge i OpenAI.")
                 : Respond(req,409,"Wymagane Wi-Fi i wyłączony tryb bez odbioru.");
         }
         if (body == "quiet" || body == "normal" || body == "talkative") {

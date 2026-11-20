@@ -196,7 +196,8 @@ class AlaService:
             if sid in self.sessions or len(self.sessions) >= 4:
                 raise BridgeError(409, "session exists or capacity exceeded")
             self.sessions[sid] = Session(sid, gen, time.monotonic() + ttl/1000)
-        return {"ready": True, "session_id": sid, "generation": gen}
+        return {"ready": True, "session_id": sid, "generation": gen,
+                "expires_in_ms": ttl}
 
     def stop(self, obj: dict[str, Any]) -> dict[str, Any]:
         sid = obj.get("session_id")
@@ -227,7 +228,9 @@ class AlaService:
                             "context_revision": revision, "transcript": "",
                             "action": "IGNORE", "confidence": 0, "sensitive": False,
                             "reason": "empty", "text": "", "ticket": ""}
-                s.context.append(transcript[:160])
+                # Firmware context is 160 *bytes*, not 160 Unicode codepoints.
+                bounded = transcript.encode("utf-8")[:160].decode("utf-8", errors="ignore")
+                s.context.append(bounded)
                 s.context[:] = s.context[-5:]
                 s.revision += 1
                 new_rev = s.revision
@@ -260,7 +263,7 @@ class AlaService:
                     ticket = secrets.token_urlsafe(24)
                     s.tickets[ticket] = (turn_id, new_rev, text)
             return {"session_id": sid, "generation": gen, "turn_id": turn_id,
-                    "context_revision": new_rev, "transcript": transcript[:160],
+                    "context_revision": new_rev, "transcript": bounded,
                     "action": action, "confidence": verdict["confidence"],
                     "sensitive": verdict["sensitive"], "reason": verdict["reason"][:64],
                     "text": text, "ticket": ticket}

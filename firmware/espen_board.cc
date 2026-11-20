@@ -1392,7 +1392,7 @@ class EspenDisplay : public LcdDisplay {
             lv_label_set_text(social_disclosure,
                 "Tryb 10 min, domyślnie wyłączony. W aktywnej sesji głos może być "
                 "przesłany do chmury Xiaozhi. Automatyczne komentarze wymagają "
-                "zgodnej usługi STT bez TTS; obecnie dostępny komentarz na żądanie z telefonu.");
+                "zewnętrznego Social Bridge (STT/LLM/TTS). Przy braku backendu dostępny jest komentarz ręczny. Zgoda wszystkich osób obecnych jest wymagana.");
             MakeButton(settings_, "Wyczyść rozmowę", [](lv_event_t* e) {
                 auto* self = static_cast<EspenDisplay*>(lv_event_get_user_data(e));
                 self->CloseSettings();
