@@ -1886,7 +1886,8 @@ class EspenDisplay : public LcdDisplay {
             engine_.SleepNow(now);
             behavior_.SleepRequested();
         }
-        if(state==kDeviceStateSpeaking||state==kDeviceStateNotifying) {
+        if(state==kDeviceStateSpeaking||state==kDeviceStateNotifying||
+           phone.BridgeSpeaking()) {
             phase=Phase::Speaking;waiting_answer_=false;last_audio_=now;
         } else if(state==kDeviceStateConnecting) phase=Phase::Wake;
         else if(state==kDeviceStateListening) phase=espen_turn_waiting.load(std::memory_order_relaxed)?Phase::Thinking:Phase::Listening;
@@ -1936,13 +1937,13 @@ class EspenDisplay : public LcdDisplay {
             if(seconds!=social_label_second_) {
                 social_label_second_=seconds;
                 lv_label_set_text_fmt(social_indicator_,
-                    "Towarzyski %02lu:%02lu / Xiaozhi",
+                    "Towarzyski %02lu:%02lu",
                     static_cast<unsigned long>(seconds/60),
                     static_cast<unsigned long>(seconds%60));
             }
         } else social_label_second_=UINT32_MAX;
-        // Stage 5 intentionally remains fail-closed until Xiaozhi offers
-        // a real STT -> semantic verdict -> conditional TTS interface.
+        // Stage 5.1 model verdict is mediated by AlaSocialBridge and
+        // permitted by AlaSocialIntelligence; never let the LLM own playback.
         behavior_.SetSocialSpeechPermission(espen::PhonePanel::Instance().SocialSpeechPermission());
         // Never gate autonomy on the previous Frame.asleep: that used to make
         // the five-second renderer sleep suppress every 27-second reaction.

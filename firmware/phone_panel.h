@@ -509,6 +509,7 @@ public:
         return social_.Active() && bridge_.Enabled() && bridge_.Epoch()==epoch &&
                (revision==UINT32_MAX || revision==social_.ContextRevision());
     }
+    bool BridgeSpeaking() const { return bridge_.Speaking(); }
     bool SocialSpeechPermission() {
         std::lock_guard<std::mutex> lock(social_lock_);
         return social_.AllowSpontaneousSpeech();
