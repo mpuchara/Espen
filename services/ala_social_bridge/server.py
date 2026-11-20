@@ -247,8 +247,12 @@ class AlaService:
             with self.lock:
                 self._live(sid, gen)
                 if not transcript:
+                    # Firmware requires a monotonic context revision for each
+                    # completed turn, including STT silence. Never replay stale
+                    # empty turns, and never request LLM or TTS for silence.
+                    s.revision += 1
                     return {"session_id": sid, "generation": gen, "turn_id": turn_id,
-                            "context_revision": revision, "transcript": "",
+                            "context_revision": s.revision, "transcript": "",
                             "action": "IGNORE", "confidence": 0, "sensitive": False,
                             "reason": "empty", "text": "", "ticket": ""}
                 # Firmware context is 160 *bytes*, not 160 Unicode codepoints.
