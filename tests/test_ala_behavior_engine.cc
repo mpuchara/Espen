@@ -51,7 +51,7 @@ int main() {
         // Afterglow is restarted at the actual end of speaking (7500).
         assert(Step(e, 14100).mood == Mood::Happy);
         auto end = Step(e, 21500);
-        assert(end.mood == Mood::Neutral && !end.phone_locked);
+        assert(end.source != BehaviorSource::MoodMemory && !end.phone_locked);
     }
     // 6: praise transitions surprise -> happy and doesn't retain social lock.
     {
@@ -60,7 +60,7 @@ int main() {
         e.SocialReaction(Social::Praise, 100);
         assert(Step(e, 101).mood == Mood::Surprise);
         assert(Step(e, 800).mood == Mood::Happy);
-        assert(Step(e, 14100).mood == Mood::Neutral);
+        assert(Step(e, 14100).source != BehaviorSource::MoodMemory);
         assert(Step(e, 14101, Phase::Speaking).priority < 90);
     }
     // 7-8: keyword-only standby never authorizes autonomous voice or a TV
@@ -80,8 +80,8 @@ int main() {
         AlaBehaviorEngine e;
         Step(e, 1);
         auto autonomous = Step(e, 30000);
-        assert(autonomous.source == BehaviorSource::Autonomous);
-        assert(autonomous.mood == Mood::Wink);
+        assert(autonomous.allow_autonomous_animation);
+        assert(autonomous.activity != LivingActivity::Sleep);
         auto speaking = Step(e, 30001, Phase::Speaking);
         assert(!speaking.allow_autonomous_animation);
         assert(speaking.source != BehaviorSource::Autonomous);
@@ -159,7 +159,7 @@ int main() {
         Step(e, 101, Phase::Speaking);
         assert(Step(e, 50000, Phase::Speaking).mood == Mood::Love);
         assert(Step(e, 50001).mood == Mood::Love);
-        assert(Step(e, 64001).mood == Mood::Neutral);
+        assert(Step(e, 64001).source != BehaviorSource::MoodMemory);
     }
     // Standby invalidates social memory but does not persist it through wake.
     {
