@@ -38,6 +38,8 @@ python3 tests/test_ala_native_xiaozhi.py
 python3 tests/test_memory_contracts.py
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_memory_engine.cc -o /tmp/ala-memory-test
 /tmp/ala-memory-test
+c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_face_recognition.cc -o /tmp/ala-face-test
+/tmp/ala-face-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_conversation_manager.cc -o /tmp/ala-turn-policy-test
 /tmp/ala-turn-policy-test
 /tmp/ala-behavior-engine-test
@@ -129,6 +131,8 @@ for setting in \
   CONFIG_WAKE_WORD_DISABLED=y \
   CONFIG_USE_AUDIO_PROCESSOR=y \
   CONFIG_CAM_CTLR_MIPI_CSI_ISR_CACHE_SAFE=y \
+  CONFIG_FLASH_HUMAN_FACE_FEAT_MFN_S8_V1=y \
+  CONFIG_FLASH_HUMAN_FACE_DETECT_MSRMNP_S8_V1=y \
   CONFIG_SR_NSN_NSNET2=y \
   CONFIG_SR_VADN_VADNET1_MEDIUM=y \
   CONFIG_ESP_HOSTED_MEMPOOL_PREFER_SPIRAM=y \
