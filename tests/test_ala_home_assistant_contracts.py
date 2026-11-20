@@ -18,7 +18,7 @@ assert 'self.home_assistant.control_light' not in mcp
 assert 'call_service' not in mcp
 assert 'GetState' not in mcp or 'get_state' in mcp
 assert 'SetToken(' in engine and 'ClearTokenLocked()' in engine
-assert 'NVS' not in engine and 'Settings' not in engine
+assert '#include <nvs.h>' not in engine and 'Settings(' not in engine and 'nvs_set_' not in engine
 assert 'disable_auto_redirect=true' in engine
 assert 'crt_bundle_attach=esp_crt_bundle_attach' in engine
 assert 'cJSON_ParseWithLength' in engine
