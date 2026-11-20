@@ -4,6 +4,7 @@
 #include "face_engine.h"
 #include "phone_panel_html.h"
 #include "robot_name.h"
+#include "ala_social_intelligence.h"
 #include "settings.h"
 #include <esp_http_server.h>
 #include <esp_log.h>
@@ -15,6 +16,9 @@
 #include <cstring>
 #include <mutex>
 #include <string>
+
+// Implemented by the existing Espen board; this does not own networking.
+bool EspenNetworkAvailable();
 
 namespace espen {
 
@@ -34,6 +38,9 @@ class PhonePanel {
     std::atomic<bool> emotion_speak_{false};
     std::atomic<uint32_t> phrase_count_{0};
     std::atomic<int64_t> last_say_us_{0};
+    std::mutex social_lock_;
+    AlaSocialIntelligence social_;
+
 
     PhonePanel() = default;
     PhonePanel(const PhonePanel&) = delete;
@@ -202,6 +209,69 @@ class PhonePanel {
         else Application::GetInstance().EspenSayText(body, self.Name());
         return Respond(req, 200, "OK");
     }
+    static esp_err_t GetSocial(httpd_req_t* req) {
+        auto& self = Instance();
+        if (!self.Authorized(req)) return Respond(req, 401, "Niepoprawny kod.");
+        const auto now = static_cast<uint32_t>(esp_timer_get_time()/1000);
+        const auto snapshot = self.TickSocial(now,
+            Application::GetInstance().EspenIsStandby(), ::EspenNetworkAvailable());
+        const bool listening = snapshot.active &&
+            Application::GetInstance().GetDeviceState() == kDeviceStateListening;
+        char json[410];
+        snprintf(json, sizeof(json),
+            "{\\"active\\":%s,\\"remaining_ms\\":%lu,\\"activity\\":%u,"
+            "\\"context\\":%u,\\"listening\\":%s,\\"auto_evaluation\\":false,"
+            "\\"comments\\":%lu,\\"utterances\\":%lu}",
+            snapshot.active?"true":"false",
+            static_cast<unsigned long>(snapshot.remaining_ms),
+            static_cast<unsigned>(snapshot.activity),
+            static_cast<unsigned>(snapshot.context_count),
+            listening?"true":"false",
+            static_cast<unsigned long>(snapshot.counters.approved),
+            static_cast<unsigned long>(snapshot.counters.utterances));
+        httpd_resp_set_type(req, "application/json; charset=utf-8");
+        httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+        return httpd_resp_send(req, json, HTTPD_RESP_USE_STRLEN);
+    }
+    static esp_err_t SocialCommand(httpd_req_t* req) {
+        auto& self = Instance();
+        if (!self.Authorized(req)) return Respond(req, 401, "Niepoprawny kod.");
+        std::string body;
+        if (!ReadBody(req, body, 32)) return Respond(req, 400, "Niepoprawna komenda.");
+        auto& app = Application::GetInstance();
+        const auto now = static_cast<uint32_t>(esp_timer_get_time()/1000);
+        if (body == "stop") {
+            self.StopSocial(); return Respond(req, 200, "Tryb Towarzyski wyłączony.");
+        }
+        if (body == "start") {
+            return self.StartSocial(now,app.EspenIsStandby(),::EspenNetworkAvailable())
+                ? Respond(req,200,"Włączono na 10 min. Dźwięk w aktywnej sesji może trafiać do Xiaozhi.")
+                : Respond(req,409,"Wymagane Wi-Fi i wyłączony tryb bez odbioru.");
+        }
+        if (body == "quiet" || body == "normal" || body == "talkative") {
+            auto level = body == "quiet" ? SocialActivity::Quiet :
+                         body == "talkative" ? SocialActivity::Talkative : SocialActivity::Normal;
+            self.SetSocialLevel(level);
+            return Respond(req,200,"OK");
+        }
+        if (body != "comment") return Respond(req,400,"Nieznana komenda.");
+        if (!::EspenNetworkAvailable() || app.EspenIsStandby() ||
+            app.GetDeviceState()!=kDeviceStateIdle)
+            return Respond(req,409,"Ala musi być wolna, online i nie może być w trybie bez odbioru.");
+        const int64_t us = esp_timer_get_time();
+        const int64_t previous = self.last_say_us_.load(std::memory_order_acquire);
+        if (previous && us-previous<7000000)
+            return Respond(req,429,"Odczekaj 7 sekund.");
+        std::string prompt;
+        if (!self.SocialPrompt(prompt,now,false))
+            return Respond(req,409,"Nie ma jeszcze kontekstu STT z aktywnej sesji Xiaozhi.");
+        // This is a *manual* LLM request via the existing phone chat path;
+        // no second microphone, local LLM, voice recognition or autonomous TTS.
+        self.last_say_us_.store(us,std::memory_order_release);
+        { std::lock_guard<std::mutex> lock(self.reply_lock_); self.last_reply_.clear(); }
+        app.EspenAskText(prompt,false,self.Name());
+        return Respond(req,200,"Poproszono Xiaozhi o krótki komentarz.");
+    }
     static esp_err_t Say(httpd_req_t* req) { return SendText(req, false); }
     static esp_err_t Chat(httpd_req_t* req) { return SendText(req, true); }
     static esp_err_t Reply(httpd_req_t* req) {
@@ -267,7 +337,7 @@ public:
         Name();
         httpd_config_t config = HTTPD_DEFAULT_CONFIG();
         config.server_port = 80;
-        config.max_uri_handlers = 8;
+        config.max_uri_handlers = 10;
         config.stack_size = 8192;
         if (httpd_start(&server_, &config) != ESP_OK) {
             server_ = nullptr;
@@ -291,7 +361,35 @@ public:
         add("/api/say", HTTP_POST, Say);
         add("/api/chat", HTTP_POST, Chat);
         add("/api/reply", HTTP_GET, Reply);
+        add("/api/social", HTTP_GET, GetSocial);
+        add("/api/social", HTTP_POST, SocialCommand);
         ESP_LOGI("AlaPhone", "Phone panel listening on port 80");
+    }
+    bool StartSocial(uint32_t now, bool standby, bool online) {
+        std::lock_guard<std::mutex> lock(social_lock_);
+        return social_.Start(now,standby,online);
+    }
+    void StopSocial() {
+        std::lock_guard<std::mutex> lock(social_lock_);
+        social_.Stop();
+    }
+    void SetSocialLevel(SocialActivity level) {
+        std::lock_guard<std::mutex> lock(social_lock_);
+        social_.SetActivity(level);
+    }
+    SocialSnapshot TickSocial(uint32_t now, bool standby, bool online) {
+        std::lock_guard<std::mutex> lock(social_lock_);
+        social_.Tick(now,standby,online);
+        return social_.Snapshot(now);
+    }
+    void ObserveSocialStt(const char* text, uint32_t now) {
+        std::lock_guard<std::mutex> lock(social_lock_);
+        social_.ObserveStt(text,now);
+    }
+    bool SocialPrompt(std::string& out,uint32_t now,bool busy) {
+        std::lock_guard<std::mutex> lock(social_lock_);
+        social_.Tick(now,false,true);
+        return social_.ManualPrompt(out,now,false,busy);
     }
     bool PollEmotion(uint32_t& seen, int& mood, bool& sticky, bool& speak) {
         std::lock_guard<std::mutex> command_lock(emotion_lock_);
