@@ -1361,14 +1361,16 @@ replace("main/audio/audio_service.h",
 replace("main/audio/audio_service.h",
         '    bool QueueEspenDiagnosticPcm(std::vector<int16_t>&& pcm);',
         '    bool QueueEspenDiagnosticPcm(std::vector<int16_t>&& pcm);\n'
-        '    bool QueueEspenEmotionalCue(int cue, int gain, bool defer_when_busy = false);')
+        '    bool QueueEspenEmotionalCue(int cue, int gain, bool defer_when_busy = false);
+    void SetEspenTtsFinished(bool finished);')
 # Keep one response-specific cue pending while TTS is playing. Its generation
 # is invalidated by ResetDecoder so a barge-in cannot play stale sound.
 replace("main/audio/audio_service.h",
         '    uint32_t playback_generation_ = 0;',
         '    uint32_t playback_generation_ = 0;\n'
         '    int espen_pending_cue_ = -1;\n'
-        '    int espen_pending_gain_ = 0;')
+        '    int espen_pending_gain_ = 0;\n'
+        '    bool espen_tts_finished_ = false;')
 replace("main/audio/audio_service.cc", '#include <esp_heap_caps.h>',
         '#include <esp_heap_caps.h>\n#include "emotional_audio.h"')
 replace("main/audio/audio_service.cc",
@@ -1419,6 +1421,25 @@ replace("main/audio/audio_service.cc",
         '            EspenPlaybackLevel(task.pcm.data(), task.pcm.size());\n'
         '            codec_->OutputData(task.pcm);\n'
         '        }')
+# Mark cloud TTS stop from the application loop (after the start event has
+# reset the decoder). A brief network gap between Opus packets is NOT a
+# completed sentence and must never be mistaken for a safe cue position.
+replace("main/audio/audio_service.cc",
+        'bool AudioService::QueueEspenDiagnosticPcm(std::vector<int16_t>&& pcm) {',
+        '''void AudioService::SetEspenTtsFinished(bool finished) {
+    bool notify_drained = false;
+    {
+        std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+        espen_tts_finished_ = finished;
+        if (finished) notify_drained = MarkPlaybackDrainedLocked();
+    }
+    if (notify_drained && callbacks_.on_playback_drained)
+        callbacks_.on_playback_drained();
+}
+
+bool AudioService::QueueEspenDiagnosticPcm(std::vector<int16_t>& pcm) {'''.replace(
+            'std::vector<int16_t>& pcm', 'std::vector<int16_t>&& pcm'))
+
 # Insert a deferred effect ONLY once real TTS playback has fully drained;
 # neither the codec output task nor the decoder may be busy at that point.
 # Playback remains sequential on the existing single output task.
@@ -1426,7 +1447,7 @@ replace("main/audio/audio_service.cc",
         'bool AudioService::MarkPlaybackDrainedLocked() {\n'
         '    if (!IsPlaybackDrainedLocked() || playback_drained_notified_) {',
         '''bool AudioService::MarkPlaybackDrainedLocked() {
-    if (espen_pending_cue_ >= 0 && IsPlaybackDrainedLocked() &&
+    if (espen_pending_cue_ >= 0 && espen_tts_finished_ && IsPlaybackDrainedLocked() &&
         !service_stopped_.load()) {
         AudioTask task;
         task.type = kAudioTaskTypeDecodeToPlaybackQueue;
@@ -1447,6 +1468,7 @@ replace("main/audio/audio_service.cc",
         '        audio_playback_queue_.clear();\n'
         '        espen_pending_cue_ = -1;\n'
         '        espen_pending_gain_ = 0;\n'
+        '        espen_tts_finished_ = false;\n'
         '        audio_testing_queue_.clear();')
 
 # The stock upstream OGG popup is replaced to avoid playing twice and
@@ -1813,3 +1835,14 @@ replace("main/application.cc",
         '            return;\n'
         '        }\n'
         '    }')
+
+# Cloud TTS stop must be observed BEFORE the normal auto-stop drain check.
+# Nothing is played after a reset, even if the stop event races with standby.
+replace("main/application.cc",
+        '            } else if (strcmp(state->valuestring, "stop") == 0) {\n'
+        '                Schedule([this]() {\n'
+        '                    if (espen_standby_requested_.load(std::memory_order_acquire)) return;',
+        '            } else if (strcmp(state->valuestring, "stop") == 0) {\n'
+        '                Schedule([this]() {\n'
+        '                    if (espen_standby_requested_.load(std::memory_order_acquire)) return;\n'
+        '                    audio_service_.SetEspenTtsFinished(true);')
