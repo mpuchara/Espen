@@ -34,6 +34,8 @@ assert "DrainVisionTap();" in board
 assert "PumpVisionNarration();" in board
 
 # Each press grants one bounded photo. Missing HTTPS/consent/Wi-Fi fails closed.
+assert "    bool GrantOneTap();\n    void RevokeOneTap();\n    void NoteQuestion(" in api
+assert r"HTTPS photo.\n" not in api
 assert "bool GrantOneTap();" in api
 assert "bool EspenCamera::GrantOneTap()" in camera
 assert "CloudEnabled() || !EndpointReady()" in camera
