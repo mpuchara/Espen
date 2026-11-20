@@ -14,7 +14,7 @@ int main() {
         assert(pre==ms*16);
         // 10-ms blocks (160 consecutive unique samples) retained in order.
         std::vector<int16_t> source;
-        for(size_t k=0;k<pre+1600;k++) source.push_back(static_cast<int16_t>(k%32000));
+        for(size_t k=0;k<2*pre+3200;k++) source.push_back(static_cast<int16_t>(k%32000));
         for(size_t pos=0;pos<pre;pos+=160)ring.Push(source.data()+pos,160);
         ring.Keep(pre);
         for(size_t pos=pre;pos<pre+800;pos+=160)ring.Push(source.data()+pos,160);
