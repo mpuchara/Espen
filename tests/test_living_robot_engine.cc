@@ -112,9 +112,9 @@ int main() {
     // SLEEP is not 'bez odbioru': it never enables automatic speech.
     {
         AlaBehaviorEngine e;FaceEngine f;
-        e.Tick(0,Phase::Idle);
-        assert(e.Tick(150000,Phase::Idle).activity==LivingActivity::Calm);
-        auto sleeping=e.Tick(211000,Phase::Idle);
+        e.Tick(0,Phase::Idle,false);
+        assert(e.Tick(150000,Phase::Idle,false).activity==LivingActivity::Calm);
+        auto sleeping=e.Tick(211000,Phase::Idle,false);
         assert(sleeping.activity==LivingActivity::Sleep);
         assert(!sleeping.allow_autonomous_animation);
         auto frame=Render(e,f,211050);
@@ -134,17 +134,17 @@ int main() {
     // accelerates sleep, never triggers sound; offline flapping cannot reset it.
     {
         AlaBehaviorEngine e;
-        assert(e.Tick(0).activity==LivingActivity::Active);
-        assert(e.Tick(100000,Phase::Offline).activity==LivingActivity::Calm);
-        assert(e.Tick(215000,Phase::Idle).activity==LivingActivity::Sleep);
+        assert(e.Tick(0,Phase::Idle,false).activity==LivingActivity::Active);
+        assert(e.Tick(100000,Phase::Offline,false).activity==LivingActivity::Calm);
+        assert(e.Tick(215000,Phase::Idle,false).activity==LivingActivity::Sleep);
         AlaBehaviorEngine night;
         night.SetDayPart(DayPart::Night);
-        night.Tick(0);
-        assert(night.Tick(91000).activity==LivingActivity::Sleep);
+        night.Tick(0,Phase::Idle,false);
+        assert(night.Tick(91000,Phase::Idle,false).activity==LivingActivity::Sleep);
         AlaBehaviorEngine evening;
         evening.SetDayPart(DayPart::Evening);
-        evening.Tick(0);
-        assert(evening.Tick(151000).activity==LivingActivity::Sleep);
+        evening.Tick(0,Phase::Idle,false);
+        assert(evening.Tick(151000,Phase::Idle,false).activity==LivingActivity::Sleep);
     }
     // 32-bit millis rollover with no phantom animation, snooze or re-awake.
     {
@@ -154,7 +154,7 @@ int main() {
         int events=0;uint32_t previous=0;
         for(uint32_t offset=50;offset<=250000;offset+=50) {
             const uint32_t now=start+offset;
-            auto d=e.Tick(now);
+            auto d=e.Tick(now,Phase::Idle,false);
             if(d.living_sequence!=previous) {
                 ++events;previous=d.living_sequence;
             }
