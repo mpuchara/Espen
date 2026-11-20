@@ -22,11 +22,7 @@ inline const char* BehaviorSourceName(BehaviorSource s) {
     }
 }
 // Visual activity is deliberately independent of Xiaozhi standby.
-enum class LivingActivity : uint8_t { Active, Calm, Sleep };
 enum class DayPart : uint8_t { Unknown, Day, Evening, Night };
-enum class LivingCue : uint8_t {
-    None, Left, Right, Up, Down, Blink, DoubleBlink, Smile, Tilt, Squint
-};
 struct LivingTiming {
     uint32_t active_ms = 45000;
     uint32_t sleep_ms = 210000;
