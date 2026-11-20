@@ -26,6 +26,7 @@ python3 tests/test_photo_chat_integration.py
 python3 tests/test_tv_safe_release.py
 python3 tests/test_phone_panel.py
 python3 tests/test_mood_voice.py
+python3 tests/test_listening_start_silent.py
 python3 tests/test_audio_cue_integration.py
 python3 tests/test_stage9_regression_contracts.py
 # Cross-module contract + real host behavior tests, before the ESP-IDF build.
