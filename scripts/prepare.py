@@ -11,7 +11,8 @@ board.mkdir(parents=True, exist_ok=True)
 for src, dst in [("config.h","config.h"),("config.json","config.json"),
                  ("espen_board.cc","espen_board.cc"),
                  ("board_p4_st7701_init.h","board_p4_st7701_init.h"),
-                 ("face_engine.h","face_engine.h"),("ala_behavior_engine.h","ala_behavior_engine.h"),("dirty_rect.h","dirty_rect.h"),
+                 ("face_engine.h","face_engine.h"),("ala_behavior_engine.h","ala_behavior_engine.h"),
+                 ("ala_face_recognition.h","ala_face_recognition.h"),("ala_face_runtime.h","ala_face_runtime.h"),("ala_face_runtime.cc","ala_face_runtime.cc"),("dirty_rect.h","dirty_rect.h"),
                  ("social_reactions.h","social_reactions.h"),("response_reactions.h","response_reactions.h"),("speech_quality.h","speech_quality.h"),("visual_world.h","visual_world.h"),("speaker_audio.h","speaker_audio.h"),("emotional_audio.h","emotional_audio.h"),
                  ("espen_camera.h","espen_camera.h"),("espen_camera.cc","espen_camera.cc"),("vision_gate.h","vision_gate.h"),("vision_endpoint.h","vision_endpoint.h")]:
     shutil.copyfile(root / "firmware" / src, board / dst)
@@ -1869,3 +1870,15 @@ src = src[:a] + """void Application::EspenCheckSilence() {
 }
 """ + src[b:]
 p.write_text(src)
+
+# Stage 7: local ESP-DL models on ESP32-P4 only, no SD card and no cloud AI.
+# Use registry-pinned component versions and build model binaries into app rodata.
+manifest = up / "main/idf_component.yml"
+original_manifest = manifest.read_text()
+assert "espressif/human_face_recognition:" not in original_manifest
+manifest.write_text(original_manifest + "\n  espressif/human_face_recognition:\n    version: ==0.3.3\n    rules:\n      - if: target in [esp32p4]\n")
+cmake = up / "main/CMakeLists.txt"
+cmake_text = cmake.read_text()
+needle = 'set(MAIN_PRIV_REQUIRES_EXTRA "")'
+assert cmake_text.count(needle) == 1
+cmake.write_text(cmake_text.replace(needle, needle + '\nif(CONFIG_BOARD_TYPE_ESPEN_GUITION_P4)\n    list(APPEND MAIN_PRIV_REQUIRES_EXTRA espressif__human_face_recognition)\nendif()\n', 1))
