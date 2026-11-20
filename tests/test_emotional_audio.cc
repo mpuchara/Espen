@@ -18,7 +18,7 @@ int main() {
         assert(sound.size() <= static_cast<size_t>(duration * 24));
         int peak = 0;
         for (auto s : sound) peak = std::max(peak, std::abs(static_cast<int>(s)));
-        assert(peak > 250 && peak <= 7600);
+        assert(peak > 250 && peak <= 15000);
         assert(sound.front() == 0 && sound.back() == 0);
         assert(RenderEmotionalCue(cue, 24000, 0).empty());
     }
@@ -32,6 +32,11 @@ int main() {
     for (auto s : loud) max_loud = std::max(max_loud, std::abs(static_cast<int>(s)));
     for (auto s : joy) max_soft = std::max(max_soft, std::abs(static_cast<int>(s)));
     assert(max_loud > max_soft);
+    auto full_gain = RenderEmotionalCue(EmotionalCue::Joy, 24000, 100);
+    int max_full = 0;
+    for (auto sample : full_gain)
+        max_full = std::max(max_full, std::abs(static_cast<int>(sample)));
+    assert(max_full > 7600 && max_full <= 15000); // audible but with digital headroom
     EmotionalCueLimiter limit;
     assert(limit.CanPlay(EmotionalCue::ListenStart, 1000));
     limit.Played(EmotionalCue::ListenStart, 1000);
@@ -42,5 +47,8 @@ int main() {
     assert(!limit.CanPlay(EmotionalCue::Laugh, 2500));
     limit.NewTurn();
     assert(limit.CanPlay(EmotionalCue::Laugh, 2500));
+    limit.Played(EmotionalCue::Laugh, 2500);
+    limit.NewTurn(true); // a new reply must survive the previous cue's cooldown
+    assert(limit.CanPlay(EmotionalCue::Heart, 2501));
     std::cout << "Espen Emotional Audio Engine: 37 cues, envelope, limiter OK\n";
 }
