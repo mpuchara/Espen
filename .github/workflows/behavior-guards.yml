@@ -1,7 +1,7 @@
 name: Ala behavior contracts
 on:
   pull_request:
-    branches: [main]
+    branches: [main, feature/ala-central-behavior-engine-stage2]
   push:
     branches: [main]
   workflow_dispatch:
@@ -20,5 +20,7 @@ jobs:
           python3 tests/test_behavior_contracts.py
           c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_behavior_engine.cc -o /tmp/ala-behavior-engine-test
           /tmp/ala-behavior-engine-test
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_living_robot_engine.cc -o /tmp/ala-living-robot-test
+          /tmp/ala-living-robot-test
           c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_behavior_foundation.cc -o /tmp/ala-behavior-foundation-test
           /tmp/ala-behavior-foundation-test
