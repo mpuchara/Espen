@@ -38,6 +38,9 @@ int main(){
     assert(memory.Search("ASTRONOMI").size()==1);
     assert(memory.Search("astronomi").size()==1);
     assert(memory.Search("nieistnieje").empty());
+    assert(memory.SearchQuestion("Co pamiętasz o astronomii?").size()==1);
+    assert(memory.SearchQuestion("Co pamiętasz?").size()==2);
+    assert(memory.SearchQuestion("Czy lubię Minecrafta?").empty());
     assert(memory.Search("",3,MemoryCategory::Interest).size()==1);
     assert(memory.Search("",3,MemoryCategory::Robot).empty());
     assert(!memory.Add(MemoryCategory::Fact,"Moje hasło to 12345"));
