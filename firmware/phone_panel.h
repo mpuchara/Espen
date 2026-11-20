@@ -52,12 +52,8 @@ class PhonePanel {
         });
     }
     void CancelBridgeAudio() {
-        if (!bridge_.Speaking()) return;
-        Application::GetInstance().Schedule([]() {
-            auto& app=Application::GetInstance();
-            if (app.GetDeviceState()==kDeviceStateIdle)
-                app.GetAudioService().ResetDecoder();
-        });
+        // Never ResetDecoder(): that would erase legal Xiaozhi speech.
+        Application::GetInstance().GetAudioService().CancelEspenSocialPcm();
     }
 
 
@@ -244,18 +240,21 @@ class PhonePanel {
             "\"context\":%u,\"listening\":%s,\"auto_evaluation\":%s,"
             "\"backend_configured\":%s,\"backend_state\":%u,"
             "\"analysed\":%lu,\"accepted\":%lu,\"ignored\":%lu,\"cancelled\":%lu,"
+            "\"rejected_segments\":%lu,\"pcm_drained\":%lu,"
             "\"comments\":%lu,\"utterances\":%lu}",
             snapshot.active?"true":"false",
             static_cast<unsigned long>(snapshot.remaining_ms),
             static_cast<unsigned>(snapshot.activity),
             static_cast<unsigned>(snapshot.context_count),
             listening?"true":"false",
-            (bridge.available && bridge.analysed>0)?"true":"false", bridge.configured?"true":"false",
+            (bridge.available && bridge.pcm_drained>0)?"true":"false", bridge.configured?"true":"false",
             static_cast<unsigned>(bridge.state),
             static_cast<unsigned long>(bridge.analysed),
             static_cast<unsigned long>(bridge.accepted),
             static_cast<unsigned long>(bridge.ignored),
             static_cast<unsigned long>(bridge.cancelled),
+            static_cast<unsigned long>(bridge.rejected_segments),
+            static_cast<unsigned long>(bridge.pcm_drained),
             static_cast<unsigned long>(snapshot.counters.approved),
             static_cast<unsigned long>(snapshot.counters.utterances));
         httpd_resp_set_type(req, "application/json; charset=utf-8");
@@ -427,7 +426,10 @@ public:
         EnsureBridgeLoaded();
         std::lock_guard<std::mutex> lock(social_lock_);
         if (!social_.Start(now,standby,online)) return false;
-        bridge_.Start();
+        if (!bridge_.Start()) {
+            social_.Stop();
+            return false;
+        }
         return true;
     }
     void StopSocial() {
