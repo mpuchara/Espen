@@ -328,7 +328,7 @@ void EspenResponseCue() {
     // characteristic sound; neither suppresses the other.
     {
         std::lock_guard<std::mutex> l(espen_fx_mutex);
-        espen_fx_limiter.NewTurn();
+        espen_fx_limiter.NewTurn(true);
     }
     espen_response_ready.store(true,std::memory_order_release);
     if(visual_packet_tag.load(std::memory_order_acquire))
