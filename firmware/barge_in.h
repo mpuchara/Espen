@@ -21,6 +21,10 @@ class BargeInDetector {
     bool gain_calibrated_=false;
     float reference_rms_=0, background_floor_=0;
     unsigned playback_ms_=0;
+    // Input PCM can continue after the final speaker write. A retained echo
+    // estimate alone must never authorize an interruption in that tail.
+    unsigned mic_frames_without_reference_=0;
+    static constexpr unsigned kMaxUnrefreshedMicFrames=20; // ~200 ms
     int positive_=0;
     bool latched_=false;
 
@@ -49,10 +53,12 @@ public:
     void Reset(){
         pos_=count_=0;gain_=0.35f;gain_calibrated_=false;
         reference_rms_=background_floor_=0;playback_ms_=0;
+        mic_frames_without_reference_=0;
         positive_=0;latched_=false;
     }
     void Reference(const int16_t* pcm,size_t n,int sample_rate) {
         if(!pcm||!n||sample_rate<=0)return;
+        mic_frames_without_reference_=0;
         double sum=0;const size_t stride=std::max<size_t>(1,n/240);
         size_t measured=0;
         for(size_t i=0;i<n;i+=stride){sum+=double(pcm[i])*pcm[i];++measured;}
@@ -74,6 +80,10 @@ public:
     // guess that a TV, click or a random room voice addresses the robot.
     bool Microphone(const int16_t* pcm,size_t n) {
         if(latched_||!pcm||n<80||n>320)return false;
+        ++mic_frames_without_reference_;
+        if(mic_frames_without_reference_>kMaxUnrefreshedMicFrames){
+            positive_=0;return false; // no fresh output reference to compare
+        }
         double energy=0;int crossings=0;
         for(size_t i=0;i<n;++i){
             float v=pcm[i];energy+=v*v;
