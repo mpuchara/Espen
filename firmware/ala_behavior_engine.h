@@ -155,6 +155,13 @@ public:
     // No wake-word classifier or TV classifier is introduced here.
     // External standby/wake policy remains the only authority for Xiaozhi.
     BehaviorDecision Tick(uint32_t now, Phase phase, bool standby, bool awake = true) {
+        if (initial_ && previous_phase_ == Phase::Speaking &&
+            phase != Phase::Speaking &&
+            (cloud_.Alive(now) || reply_.Alive(now))) {
+            // Mood starts decaying when TTS ends, not when the first packet arrived.
+            afterglow_.Set(cloud_.Alive(now) ? cloud_.mood : reply_.mood,
+                           now, kAfterglowMs);
+        }
         if (!initial_ || phase != previous_phase_) {
             if (!initial_ || phase == Phase::Idle || phase == Phase::Offline) {
                 idle_at_ = now;
