@@ -384,7 +384,15 @@ public:
     }
     void ObserveSocialStt(const char* text, uint32_t now) {
         std::lock_guard<std::mutex> lock(social_lock_);
-        social_.ObserveStt(text,now);
+        const auto command = ClassifySocialVoiceCommand(text);
+        if (command == SocialVoiceCommand::Start) {
+            social_.Start(now,Application::GetInstance().EspenIsStandby(),
+                         ::EspenNetworkAvailable());
+        } else if (command == SocialVoiceCommand::Stop) {
+            social_.Stop();
+        } else {
+            social_.ObserveStt(text,now);
+        }
     }
     bool SocialSpeechPermission() {
         std::lock_guard<std::mutex> lock(social_lock_);
