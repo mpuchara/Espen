@@ -1361,8 +1361,8 @@ replace("main/audio/audio_service.h",
 replace("main/audio/audio_service.h",
         '    bool QueueEspenDiagnosticPcm(std::vector<int16_t>&& pcm);',
         '    bool QueueEspenDiagnosticPcm(std::vector<int16_t>&& pcm);\n'
-        '    bool QueueEspenEmotionalCue(int cue, int gain, bool defer_when_busy = false);
-    void SetEspenTtsFinished(bool finished);')
+        '    bool QueueEspenEmotionalCue(int cue, int gain, bool defer_when_busy = false);\n'
+        '    void SetEspenTtsFinished(bool finished);')
 # Keep one response-specific cue pending while TTS is playing. Its generation
 # is invalidated by ResetDecoder so a barge-in cannot play stale sound.
 replace("main/audio/audio_service.h",
@@ -1437,8 +1437,7 @@ replace("main/audio/audio_service.cc",
         callbacks_.on_playback_drained();
 }
 
-bool AudioService::QueueEspenDiagnosticPcm(std::vector<int16_t>& pcm) {'''.replace(
-            'std::vector<int16_t>& pcm', 'std::vector<int16_t>&& pcm'))
+bool AudioService::QueueEspenDiagnosticPcm(std::vector<int16_t>&& pcm) {''')
 
 # Insert a deferred effect ONLY once real TTS playback has fully drained;
 # neither the codec output task nor the decoder may be busy at that point.
