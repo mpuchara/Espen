@@ -1,170 +1,180 @@
 #pragma once
-// Ala Stage 12: bounded, host-testable AI story session and reply parser.
-// No hardware, cloud, microphone, filesystem, or LVGL dependencies.
+// Ala Stage 13: voice-first, single-suggestion AI story.
+// All narrative is spoken by Xiaozhi. The UI does not depend on AI labels,
+// numbered options, JSON output or a fragile two-choice text parser.
+// Host-testable, no audio, LVGL or network dependencies.
 #include "ala_play_games.h"
-#include <algorithm>
 #include <cctype>
-#include <cstddef>
+#include <cstdint>
 #include <cstring>
-#include <initializer_list>
-#include <utility>
 #include <string>
-#include <string_view>
+#include <utility>
 
 namespace espen {
-enum class MagicPhase : uint8_t { Off, Generating, Ready, Listening, Error };
+enum class MagicPhase : uint8_t {
+    Off, Generating, Ready, Listening, Clarifying, Error
+};
 
 class AlaMagicStory {
     MagicPhase phase_ = MagicPhase::Off;
     StorySetting theme_ = StorySetting::Forest;
-    std::string scene_, choices_[2], last_choice_, history_;
+    std::string scene_, suggestion_, last_choice_, history_;
     unsigned turn_ = 0;
-    static constexpr size_t kSceneMax=1500,kOptionMax=180,kChoiceMax=250,kHistoryMax=1150;
+    static constexpr size_t kSceneMax=1400, kChoiceMax=250, kHistoryMax=1650;
 
     static std::string Trim(std::string value) {
-        auto space=[](unsigned char c){return std::isspace(c)!=0;};
-        while(!value.empty() && (space(static_cast<unsigned char>(value.front())) ||
+        while(!value.empty() && (std::isspace(static_cast<unsigned char>(value.front())) ||
                                   value.front()=='*' || value.front()=='#'))value.erase(0,1);
-        while(!value.empty() && (space(static_cast<unsigned char>(value.back())) ||
+        while(!value.empty() && (std::isspace(static_cast<unsigned char>(value.back())) ||
                                   value.back()=='*' || value.back()=='#'))value.pop_back();
         return value;
     }
     static std::string Bound(std::string value,size_t limit) {
         if(value.size()>limit) {
             value.resize(limit);
-            // Avoid leaving half a UTF-8 letter at the end.
-            while(!value.empty() && (static_cast<unsigned char>(value.back())&0xc0)==0x80)
-                value.pop_back();
-            if(!value.empty() && (static_cast<unsigned char>(value.back())&0xc0)==0xc0)
-                value.pop_back();
+            while(!value.empty() &&
+                  (static_cast<unsigned char>(value.back())&0xc0)==0x80)value.pop_back();
+            if(!value.empty() &&
+               (static_cast<unsigned char>(value.back())&0xc0)==0xc0)value.pop_back();
         }
         return Trim(std::move(value));
     }
-    static size_t FindAny(const std::string& text,
-                          std::initializer_list<std::string_view> tokens,
-                          size_t from,size_t& match_len) {
-        size_t pos=std::string::npos;
-        for(auto token:tokens) {
-            size_t hit=text.find(token,from);
-            if(hit!=std::string::npos && (pos==std::string::npos || hit<pos)) {
-                pos=hit;match_len=token.size();
-            }
-        }
-        return pos;
+    static std::string LowerAscii(std::string value) {
+        for(auto& ch:value)if(ch>='A'&&ch<='Z')ch+=('a'-'A');
+        return value;
+    }
+    static std::string NormalizeShort(std::string value) {
+        value=LowerAscii(Trim(std::move(value)));
+        while(!value.empty() && (value.back()=='.'||value.back()=='!'||
+                                 value.back()=='?'||value.back()==','))value.pop_back();
+        return Trim(std::move(value));
+    }
+    static bool IsConfirmation(const std::string& text) {
+        const auto t=NormalizeShort(text);
+        return t=="tak" || t=="tak poproszę" || t=="tak poprosze" ||
+               t=="dobrze" || t=="zgoda" || t=="ok" || t=="okej" ||
+               t=="dalej" || t=="wybieram twój pomysł" ||
+               t=="wybieram twoj pomysl" || t=="twój pomysł" ||
+               t=="twoj pomysl" || t=="jak proponujesz" ||
+               t=="zróbmy tak" || t=="zrobmy tak";
+    }
+    static bool WantsClarification(const std::string& text) {
+        const auto t=NormalizeShort(text);
+        return t=="nie" || t=="inaczej" || t=="nie inaczej" ||
+               t=="mam inny pomysł" || t=="mam inny pomysl" ||
+               t=="chcę inaczej" || t=="chce inaczej";
     }
     void CommitChoice(const std::string& selected) {
-        const std::string previous=Bound(scene_,350);
-        history_+="\nCzesc "+std::to_string(turn_+1)+": "+previous+
-                  "\nGracz postanowil: "+Bound(selected,kChoiceMax);
+        history_+="\nRozdzial "+std::to_string(turn_+1)+": "+Bound(scene_,500)+
+                  "\nWybor gracza: "+Bound(selected,kChoiceMax);
         if(history_.size()>kHistoryMax) {
             size_t first=history_.size()-kHistoryMax;
             while(first<history_.size() &&
                   (static_cast<unsigned char>(history_[first])&0xc0)==0x80)++first;
-            history_.erase(0,first); // never leave an invalid UTF-8 prefix
+            history_.erase(0,first);
         }
-        last_choice_=selected;
+        last_choice_=Bound(selected,kChoiceMax);
         ++turn_;
+        scene_.clear();suggestion_.clear();
         phase_=MagicPhase::Generating;
     }
 public:
     MagicPhase Phase() const{return phase_;}
     unsigned Turn() const{return turn_;}
-    const std::string& Scene() const{return scene_;}
-    const std::string& Option(int i) const{return choices_[i==1?1:0];}
-    const std::string& LastChoice() const{return last_choice_;}
     StorySetting Theme() const{return theme_;}
-    void Reset(){
-        phase_=MagicPhase::Off;scene_.clear();choices_[0].clear();choices_[1].clear();
+    const std::string& Scene() const{return scene_;}
+    const std::string& Suggestion() const{return suggestion_;}
+    const std::string& LastChoice() const{return last_choice_;}
+    void Reset() {
+        phase_=MagicPhase::Off;scene_.clear();suggestion_.clear();
         last_choice_.clear();history_.clear();turn_=0;
     }
     void Start(StorySetting theme) {
         Reset();theme_=theme;phase_=MagicPhase::Generating;
     }
-    bool ChooseSuggestion(int i){
-        if(phase_!=MagicPhase::Ready || i<0 || i>1 || choices_[i].empty())return false;
-        CommitChoice(choices_[i]);return true;
+    bool ChooseSuggestion(int i=0) {
+        if((phase_!=MagicPhase::Ready && phase_!=MagicPhase::Listening) || i!=0)return false;
+        const std::string choice=
+            "Tak. Wybieram jeden pomysl Ali z ostatniej sceny: "+suggestion_+
+            ". Nie wymyslaj innej decyzji - wykonaj te propozycje.";
+        CommitChoice(choice);
+        return true;
     }
-    bool BeginVoiceChoice(){
-        if(phase_!=MagicPhase::Ready)return false;
+    bool BeginVoiceChoice() {
+        if(phase_!=MagicPhase::Ready && phase_!=MagicPhase::Clarifying)return false;
         phase_=MagicPhase::Listening;return true;
     }
-    bool AcceptVoiceChoice(std::string voice){
+    bool AcceptVoiceChoice(std::string voice) {
         voice=Bound(std::move(voice),kChoiceMax);
-        if(phase_!=MagicPhase::Listening || voice.size()<3)return false;
+        if(phase_!=MagicPhase::Listening || voice.size()<2)return false;
+        if(IsConfirmation(voice))return ChooseSuggestion();
+        if(WantsClarification(voice)) {
+            phase_=MagicPhase::Clarifying;
+            return true; // Ask for the actual idea; do not generate from "nie".
+        }
         CommitChoice(voice);return true;
     }
-    bool CancelVoiceChoice(){
-        if(phase_!=MagicPhase::Listening)return false;
+    bool CancelVoiceChoice() {
+        if(phase_!=MagicPhase::Listening && phase_!=MagicPhase::Clarifying)return false;
         phase_=MagicPhase::Ready;return true;
     }
-    bool Retry(){
+    bool Retry() {
         if(phase_!=MagicPhase::Error)return false;
         phase_=MagicPhase::Generating;return true;
     }
-    void Fail(){
+    void Fail() {
         if(phase_==MagicPhase::Generating)phase_=MagicPhase::Error;
     }
-    // The actual AI response, as spoken by Xiaozhi, must specify two options.
-    // Never pretend a scripted branch came from the model when parsing fails.
-    bool CompleteTurn(const std::string& speech) {
+    // Never demand model-specific labels. Xiaozhi may speak paragraphs with
+    // punctuation and different formatting. Any meaningful spoken scene is
+    // accepted instead of causing a parser failure/reset.
+    bool CompleteTurn(const std::string& spoken) {
         if(phase_!=MagicPhase::Generating)return false;
-        std::string text=Bound(speech,5000);
-        size_t m1=0,m2=0,ms=0;
-        const auto first=FindAny(text,{"Opcja pierwsza:","Opcja pierwsza —",
-            "Opcja 1:","Wybór pierwszy:","Wybór 1:","opcja pierwsza:","opcja 1:"},0,m1);
-        const auto second=first==std::string::npos?std::string::npos:
-            FindAny(text,{"Opcja druga:","Opcja druga —","Opcja 2:",
-              "Wybór drugi:","Wybór 2:","opcja druga:","opcja 2:"},first+m1,m2);
-        if(first==std::string::npos || second==std::string::npos){Fail();return false;}
-        std::string story=text.substr(0,first);
-        // Remove a spoken section label but keep real narrative.
-        for(const auto marker:{"Scena:","Opowieść:","Historia:","SCENA:","OPOWIEŚĆ:"}){
-            auto found=story.find(marker);
-            if(found!=std::string::npos && found<10){story.erase(0,found+std::strlen(marker));break;}
+        std::string text=Bound(spoken,kSceneMax);
+        if(text.size()<25){Fail();return false;}
+        scene_=std::move(text);
+        // Optional cosmetic extraction only, never a validity condition.
+        size_t start=scene_.rfind("Propozycja:");
+        if(start==std::string::npos)start=scene_.rfind("proponuję:");
+        if(start==std::string::npos)start=scene_.rfind("proponuje:");
+        if(start!=std::string::npos) {
+            const auto colon=scene_.find(':',start);
+            suggestion_=Bound(scene_.substr(colon+1),130);
+            const auto question=suggestion_.find("Może wolisz");
+            if(question!=std::string::npos)suggestion_.resize(question);
         }
-        story=Bound(std::move(story),kSceneMax);
-        auto a=Bound(text.substr(first+m1,second-(first+m1)),kOptionMax);
-        auto tail=text.substr(second+m2);
-        const auto end=FindAny(tail,{"Opcja trzecia:","Trzecia opcja:",
-            "Jeśli masz własny pomysł","A jeśli masz własny pomysł",
-            "Możesz też powiedzieć","A może wymyślisz"},0,ms);
-        auto b=Bound(tail.substr(0,end),kOptionMax);
-        while(!a.empty() && (a.back()=='.'||a.back()==';'))a.pop_back();
-        while(!b.empty() && (b.back()=='.'||b.back()==';'))b.pop_back();
-        a=Trim(a);b=Trim(b);
-        if(story.size()<20 || a.size()<3 || b.size()<3){Fail();return false;}
-        scene_=std::move(story);choices_[0]=std::move(a);choices_[1]=std::move(b);
+        if(suggestion_.size()<3)suggestion_="kontynuacja, którą Ala przed chwilą zaproponowała";
         phase_=MagicPhase::Ready;return true;
     }
     std::string Prompt() const {
         if(phase_!=MagicPhase::Generating)return {};
         const char* theme=theme_==StorySetting::Lake?"nad jeziorem":
              theme_==StorySetting::Car?"z mama w samochodzie":"w magicznym lesie";
-        std::string result=
-            "Jestes Ala, przyjazna narratorka interaktywnej magicznej bajki po polsku "
-            "dla dziecka okolo 8-10 lat. Kontynuuj JEDNA scene na ture, bez zakonczenia "
-            "calkowitej historii, z bezpieczna i ciepla fabula. "
+        std::string prompt=
+            "Jestes Ala, przyjazna, pelna emocji narratorka magicznej opowiesci dla dzieci. "
+            "MOW NA GLOS po polsku, naturalnie jak bajke, bez etykiet, bez JSON, bez numerowania "
+            "i bez instrukcji technicznych. Zawsze kontynuuj TE SAMA opowiesc, z wyrazna fabula. "
             "Motyw: "+std::string(theme)+". ";
         if(theme_==StorySetting::Car)
-            result+="Gdy akcja dzieje sie w aucie, mama prowadzi bezpiecznie; "
-                    "nie sugeruj jej czynnosci rozpraszajacych ani wychodzenia w ruchu. ";
+            prompt+="Mama prowadzi bezpiecznie; przygody w samochodzie nie moga "
+                    "rozpraszac kierowcy ani wymagac wyjscia podczas jazdy. ";
         if(turn_==0)
-            result+="To PIERWSZA scena. Rozpocznij ciekawa przygode. ";
+            prompt+="To pierwsza scena. Zacznij glosem: 'Witaj w Magicznej Opowiesci!' "
+                    "i od razu przedstaw miejsce, bohaterow i niezwykla zagadke. ";
         else
-            result+="To dalszy ciag TEJ SAMEJ historii; zachowaj bohaterow, "
-                    "miejsce i skutek wyboru gracza. Historia dotad: "+history_+
+            prompt+="To dalszy ciag historii. Zachowaj wydarzenia i bohaterow. "
+                    "Dotychczasowa historia: "+history_+
                     "\nOSTATNI WYBOR GRACZA: "+last_choice_+
-                    "\nMusisz oprzec nowa scene na tym wyborze, a nie na przypadkowej drodze. ";
-        result+="Odpowiedz naturalnym polskim glosem, bez kodu JSON, bez markdown. "
-                "Dokladnie trzy sekcje, doslownie z ponizszymi etykietami, "
-                "w tej kolejnosci i bez dodatkowych sekcji:\n"
-                "Scena: [4-6 krotkich, obrazowych zdan opowiesci, z konsekwencja wyboru]\n"
-                "Opcja pierwsza: [jedno konkretne dzialanie, do 7 slow]\n"
-                "Opcja druga: [inne konkretne dzialanie, do 7 slow]\n"
-                "Po tych dwoch opcjach powiedz: 'A jesli masz wlasny pomysl, "
-                "wybierz trzecia opcje i powiedz mi go'. "
-                "Nie generuj trzeciego gotowego wyboru; gracz wymysli go sam.";
-        return result;
+                    "\nZacznij od skutku tego konkretnego wyboru, a nie od losowej sceny. ";
+        prompt+="Opowiedz 4-6 krotkich, obrazowych zdan. Potem zaproponuj TYLKO JEDEN "
+                "konkretny nastepny krok jako czesc opowiesci, np. 'Proponuje, zebysmy "
+                "otworzyli tajemnicza brame'. NIE tworz dwoch ani trzech opcji. "
+                "Na samym koncu KONIECZNIE zapytaj doslownie: "
+                "'Moze chcialbys, zeby historia potoczyla sie inaczej? "
+                "Opowiedz mi, co ma sie wydarzyc. "
+                "Jesli wybierasz moj pomysl, powiedz tak.' "
+                "Nie dopisuj nic po tym pytaniu. Mow przyjaznie, z emocjami.";
+        return prompt;
     }
 };
 } // namespace espen
