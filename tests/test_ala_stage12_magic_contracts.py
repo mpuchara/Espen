@@ -18,7 +18,8 @@ assert "magic_story_.ChooseSuggestion(j)" in board
 assert "self->StartMagicVoiceChoice()" in board
 assert "magic_story_.AcceptVoiceChoice(" in board
 assert "EspenMagicStoryArmVoice(true)" in board
-assert "app.StartListening()" in board
+assert "app.EspenStartMagicVoiceListening()" in board
+assert "void Application::EspenStartMagicVoiceListening()" in scripts
 assert "EspenMagicStoryConsumeVoice" in board and "EspenMagicStoryConsumeVoice" in scripts
 assert "EspenMagicStorySuppressStale()" in scripts
 assert "protocol_->CloseAudioChannel();" in scripts
