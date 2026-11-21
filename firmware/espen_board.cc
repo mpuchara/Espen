@@ -6,6 +6,7 @@
 #include "face_engine.h"
 #include "ala_behavior_engine.h"
 #include "ala_play_games.h"
+#include "ala_magic_story.h"
 #include "ala_face_runtime.h"
 #include "speech_quality.h"
 #include "standby_policy.h"
@@ -524,6 +525,90 @@ static void CloudSnapshot(std::string& status, std::string& code) {
     std::lock_guard<std::mutex> guard(cloud_mutex);
     status = cloud_status;
     code = cloud_code;
+}
+
+
+// Stage 12: Xiaozhi transport callbacks are on the protocol task, never LVGL.
+// Only explicitly requested story turns and voice choices enter this mailbox.
+// Bound text and do not store transcripts in NVS or log their contents.
+namespace {
+struct MagicStoryWire {
+    std::mutex mutex;
+    std::atomic<bool> capturing{false};
+    std::atomic<bool> voice_armed{false};
+    std::atomic<bool> suppress_stale{false};
+    std::string speech, choice;
+    bool finished=false, failed=false, choice_ready=false;
+    uint32_t revision=0;
+} magic_wire;
+}
+void EspenMagicStoryResetWire() {
+    std::lock_guard<std::mutex> l(magic_wire.mutex);
+    magic_wire.capturing.store(false,std::memory_order_release);
+    magic_wire.speech.clear();magic_wire.choice.clear();
+    magic_wire.finished=false;magic_wire.failed=false;
+    magic_wire.choice_ready=false;
+    ++magic_wire.revision;
+}
+void EspenMagicStoryBeginOutput() {
+    std::lock_guard<std::mutex> l(magic_wire.mutex);
+    magic_wire.speech.clear();magic_wire.finished=false;magic_wire.failed=false;
+    magic_wire.suppress_stale.store(false,std::memory_order_release);
+    magic_wire.capturing.store(true,std::memory_order_release);
+    ++magic_wire.revision;
+}
+void EspenMagicStorySentence(const char* text) {
+    if(!magic_wire.capturing.load(std::memory_order_acquire) || !text)return;
+    std::lock_guard<std::mutex> l(magic_wire.mutex);
+    if(!magic_wire.capturing.load(std::memory_order_relaxed))return;
+    const size_t size=strlen(text);
+    if(size && size<1200 && magic_wire.speech.size()+size+1<=5200) {
+        if(!magic_wire.speech.empty())magic_wire.speech+=" ";
+        magic_wire.speech+=text;
+        ++magic_wire.revision;
+    }
+}
+void EspenMagicStoryOutputDone() {
+    std::lock_guard<std::mutex> l(magic_wire.mutex);
+    if(!magic_wire.capturing.exchange(false,std::memory_order_acq_rel))return;
+    magic_wire.finished=true;
+    ++magic_wire.revision;
+}
+void EspenMagicStoryOutputFailed() {
+    std::lock_guard<std::mutex> l(magic_wire.mutex);
+    magic_wire.capturing.store(false,std::memory_order_release);
+    magic_wire.failed=true;
+    ++magic_wire.revision;
+}
+void EspenMagicStoryArmVoice(bool enabled) {
+    magic_wire.voice_armed.store(enabled,std::memory_order_release);
+}
+bool EspenMagicStoryConsumeVoice(const char* text) {
+    if(!text || !magic_wire.voice_armed.load(std::memory_order_acquire))return false;
+    const size_t n=strlen(text);
+    if(n<3 || n>700)return false;
+    if(!magic_wire.voice_armed.exchange(false,std::memory_order_acq_rel))return false;
+    std::lock_guard<std::mutex> l(magic_wire.mutex);
+    magic_wire.choice=std::string(text,std::min<size_t>(n,250));
+    magic_wire.choice_ready=true;
+    magic_wire.suppress_stale.store(true,std::memory_order_release);
+    ++magic_wire.revision;
+    return true;
+}
+bool EspenMagicStorySuppressStale() {
+    return magic_wire.suppress_stale.load(std::memory_order_acquire);
+}
+static void MagicStoryWireSnapshot(std::string& speech,bool& finished,bool& failed,
+                                  std::string& choice,bool& has_choice,
+                                  uint32_t& revision) {
+    std::lock_guard<std::mutex> l(magic_wire.mutex);
+    speech=magic_wire.speech;finished=magic_wire.finished;failed=magic_wire.failed;
+    revision=magic_wire.revision;
+    has_choice=magic_wire.choice_ready;
+    if(has_choice) {
+        choice.swap(magic_wire.choice);
+        magic_wire.choice_ready=false;
+    }
 }
 
 static void ConversationClick() {
