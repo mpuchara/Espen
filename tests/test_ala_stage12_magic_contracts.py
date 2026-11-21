@@ -12,7 +12,14 @@ assert "EspenMagicStorySuppressStale()" in bridge
 assert "EspenMagicStorySentence(text->valuestring)" in bridge
 assert "EspenMagicStoryOutputDone()" in bridge
 assert 'cJSON_AddStringToObject(request, "text", wake_word.c_str());' in bridge
-assert "protocol_->SendWakeWordDetected(prompt);" in bridge
+uplink = bridge.split("void Application::EspenStartButtonInput", 1)[1].split("void Application::EspenCancelMagicStory", 1)[0]
+assert "SendWakeWordDetected" not in uplink
+assert "protocol_->SendStartListening(kListeningModeManualStop)" in uplink
+assert "protocol_->SendAudio(std::move(packet))" in uplink
+assert "protocol_->SendStopListening()" in uplink
+assert "esp_timer_start_once(espen_button_timer_,60000)" in uplink
+assert "magic_story_.AwaitSpokenReply" in board
+assert "magic_story_.ButtonPrompt()" in board
 assert "epoch != espen_story_epoch_.load()" in bridge
 assert "event.finished && idle && event.audible" in board
 assert "tests/test_ala_magic_story.cc" in build

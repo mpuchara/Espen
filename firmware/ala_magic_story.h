@@ -200,6 +200,24 @@ public:
         context_.state = MagicPhase::Ready;
         return true;
     }
+    const char* ButtonPrompt() const {
+        if (decision_ == StoryDecision::Repeat) return "repeat";
+        if (decision_ == StoryDecision::End) return "end";
+        if (context_.fragment) return "continue";
+        switch (context_.theme) {
+            case StorySetting::Lake: return "lake";
+            case StorySetting::Car: return "car";
+            default: return "forest";
+        }
+    }
+    StoryDecision AwaitSpokenReply(std::string choice) {
+        auto intent=ClassifyStorySpeech(choice);
+        if(intent==StoryDecision::Exit) return intent;
+        decision_=intent;
+        context_.child_decision=BoundStoryText(choice,700);
+        context_.state=MagicPhase::Generating;
+        return intent;
+    }
     std::string Prompt() const {
         if (Phase() != MagicPhase::Generating) return {};
         const char* theme = context_.theme == StorySetting::Lake ? "nad jeziorem" :
