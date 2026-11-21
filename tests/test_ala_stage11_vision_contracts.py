@@ -23,10 +23,10 @@ assert "app.EspenSetMicMode(mode);" in board
 
 # The camera button starts a real analysis, not just a settings panel.
 camera_button = board.split('LV_SYMBOL_IMAGE "  Aparat"', 1)[1].split("},this,142);", 1)[0]
-assert "self->OpenCameraPanel();" in camera_button
-assert "self->StartTapVision();" in camera_button
+assert "self->OpenCameraPanel();" not in camera_button
+assert "self->StartTapVision(true);" in camera_button
 assert '"Opowiedz, co widzisz"' in board
-assert "StartTapVision()" in board and "VisionTapWorker" in board
+assert "void StartTapVision(bool dock=false)" in board and "VisionTapWorker" in board
 assert "camera.Capture()" in board and "camera.Explain(" in board
 assert "xTaskCreate(VisionTapWorker" in board
 assert "std::lock_guard<std::mutex> guard(vision_tap_mutex_)" in board
@@ -57,8 +57,8 @@ assert "SendWakeWordDetected(prompt)" in speech
 assert '"Jestes Ala, przyjaznym robotem dla dzieci.' in speech
 
 # New distinct version, full merged image, no accidental Pages publishing.
-assert any(f'"version": "{v}"' in manifest for v in ("0.2.18", "0.2.19", "0.2.20", "0.2.22"))
-assert any(f'"Espen {v} boot:' in board for v in ("0.2.18", "0.2.19", "0.2.20", "0.2.22"))
+assert any(f'"version": "{v}"' in manifest for v in ("0.2.18", "0.2.19", "0.2.20", "0.2.23"))
+assert any(f'"Espen {v} boot:' in board for v in ("0.2.18", "0.2.19", "0.2.20", "0.2.23"))
 assert 'test_ala_stage11_vision_contracts.py' in build
 pages = (root / ".github/workflows/build-pages.yml").read_text()
 assert "feature/ala-stage11-tap-vision" in pages

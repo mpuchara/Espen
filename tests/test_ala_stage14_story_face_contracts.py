@@ -8,8 +8,8 @@ board=(root/"firmware/espen_board.cc").read_text(encoding="utf-8")
 engine=(root/"firmware/ala_magic_story.h").read_text(encoding="utf-8")
 build=(root/"scripts/build.sh").read_text(encoding="utf-8")
 manifest=(root/"web/manifest-full.json").read_text(encoding="utf-8")
-assert '"version": "0.2.22"' in manifest
-assert '"Espen 0.2.22 boot:' in board
+assert '"version": "0.2.23"' in manifest
+assert '"Espen 0.2.23 boot:' in board
 assert "tests/test_ala_stage14_story_face_contracts.py" in build
 
 # Regression cause: the opaque, fullscreen LVGL game panel hid the face AND

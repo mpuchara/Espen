@@ -77,6 +77,7 @@ replace(app, 'void Application::Reboot() {',
 
 speech_method = r'''
 extern bool EspenMagicStoryActive();
+extern bool EspenTextPromptsRejected();
 // Local phone text is sent to the SAME Xiaozhi agent as a detect event.
 // This is an experimental text-to-LLM-to-TTS path, not an offline TTS engine.
 // Only an idle device can accept it; all protocol operations happen on the
@@ -116,7 +117,7 @@ void Application::EspenNarrateGameText(const std::string& text, bool vision, boo
     }
     Schedule([this, text, vision]() {
         if (!protocol_ || GetDeviceState() != kDeviceStateIdle ||
-            EspenIsStandby() || text.empty() || text.size()>700) return;
+            EspenIsStandby() || EspenTextPromptsRejected() || text.empty() || text.size()>700) return;
         if (!SetDeviceState(kDeviceStateConnecting)) return;
         Schedule([this, text, vision]() {
             if (GetDeviceState() != kDeviceStateConnecting || EspenIsStandby()) return;
@@ -188,7 +189,8 @@ void Application::EspenGenerateMagicStory(const std::string& prompt, bool allow_
     Schedule([this, prompt, allow_barge, epoch]() {
         if (epoch != espen_story_epoch_.load() || !EspenMagicStoryActive()) return;
         if (!protocol_ || GetDeviceState()!=kDeviceStateIdle || EspenIsStandby() ||
-            prompt.empty() || prompt.size()>4600 || !SetDeviceState(kDeviceStateConnecting)) {
+            EspenTextPromptsRejected() || prompt.empty() || prompt.size()>4600 ||
+            !SetDeviceState(kDeviceStateConnecting)) {
             EspenMagicStoryOutputFailed();
             return;
         }
@@ -325,9 +327,33 @@ extern void EspenMagicStoryChannelClosed();
         '    }\n'
         '    if (EspenMagicStoryActive()) EspenMagicStoryBargeIn();\n'
         '    espen_barge_guard_.store(true, std::memory_order_release);')
+    # Accept audio only after resetting the decoder. The separate MQTT media
+    # callback sees Speaking before the asynchronous state-changed handler.
     replace(app, '                    aborted_ = false;\n                    SetDeviceState(kDeviceStateSpeaking);',
         '                    if (EspenMagicStorySuppressStale()) return;\n'
-        '                    aborted_ = false;\n                    SetDeviceState(kDeviceStateSpeaking);')
+        '                    audio_service_.ResetDecoder();\n'
+        '                    aborted_ = false;\n'
+        '                    SetDeviceState(kDeviceStateSpeaking);')
+    replace(app,
+        '            audio_service_.ResetDecoder();\n'
+        '            audio_service_.EnableEspenBargeIn(EspenGetMicMode()!=EspenMicMode::Off',
+        '            audio_service_.EnableEspenBargeIn(EspenGetMicMode()!=EspenMicMode::Off')
+    replace(app,
+        '            auto emotion = cJSON_GetObjectItem(root, "emotion");\n'
+        '            if (cJSON_IsString(status) && cJSON_IsString(message) && cJSON_IsString(emotion)) {',
+        '            auto emotion = cJSON_GetObjectItem(root, "emotion");\n'
+        '            if (cJSON_IsString(message) && std::strstr(message->valuestring,\n'
+        '                    "Detect is only for wake words")) {\n'
+        '                extern void EspenRejectTextPrompts();\n'
+        '                EspenRejectTextPrompts();\n'
+        '                ESP_LOGW(TAG, "Xiaozhi rejected a text prompt on the wake-word transport");\n'
+        '                if (EspenMagicStoryActive()) {\n'
+        '                    extern void EspenMagicStoryOutputFailed();\n'
+        '                    EspenMagicStoryOutputFailed();\n'
+        '                    return;\n'
+        '                }\n'
+        '            }\n'
+        '            if (cJSON_IsString(status) && cJSON_IsString(message) && cJSON_IsString(emotion)) {')
     replace(app,
         '        espen_xiaozhi_channel_open_.store(false, std::memory_order_release);',
         '        EspenMagicStoryChannelClosed();\n'
@@ -336,7 +362,7 @@ extern void EspenMagicStoryChannelClosed();
     replace(audio, '            EspenPlaybackReference(task.pcm.data(), task.pcm.size());\n'
         '        codec_->OutputData(task.pcm);',
         '            EspenPlaybackReference(task.pcm.data(), task.pcm.size());\n'
-                '            codec_->OutputData(task.pcm);\n'
+        '            codec_->OutputData(task.pcm);\n'
         '            extern void EspenMagicStoryPlayback();\n'
         '            if (task.espen_cue < 0) EspenMagicStoryPlayback();')
     replace(app,

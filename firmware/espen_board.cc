@@ -539,6 +539,7 @@ struct MagicStoryWire {
     std::atomic<bool> active{false};
     std::atomic<bool> suppress_stale{false};
     std::atomic<bool> text_turn{false};
+    std::atomic<bool> prompts_rejected{false};
     std::atomic<bool> audible{false};
     bool capturing=false, voice_armed=false, interrupted=false;
     bool finished=false, failed=false;
@@ -547,6 +548,8 @@ struct MagicStoryWire {
 }
 bool EspenMagicStoryActive() { return magic_wire.active.load(); }
 bool EspenMagicStoryTextTurn() { return magic_wire.text_turn.load(); }
+bool EspenTextPromptsRejected() { return magic_wire.prompts_rejected.load(); }
+void EspenRejectTextPrompts() { magic_wire.prompts_rejected.store(true); }
 bool EspenMagicStorySuppressStale() {
     return magic_wire.suppress_stale.load() ||
            (EspenMagicStoryActive() && !EspenMagicStoryTextTurn());
@@ -772,6 +775,8 @@ class EspenDisplay : public LcdDisplay {
     std::mutex vision_tap_mutex_;
     std::string vision_tap_result_;
     std::string pending_vision_voice_;
+    lv_obj_t* dock_vision_label_=nullptr;
+    uint32_t dock_vision_ms_=0;
     bool vision_tap_ready_=false,vision_tap_ok_=false,vision_dock_request_=false;
     lv_obj_t* camera_analysis_label_=nullptr;
     lv_obj_t* camera_panel_=nullptr;
@@ -832,6 +837,10 @@ class EspenDisplay : public LcdDisplay {
         // Called by LVGL timer; camera worker only publishes a PSRAM snapshot.
         AppendChatPhoto();
         DrainVisionTap();
+        if(dock_vision_label_ && dock_vision_ms_ && lv_tick_get()-dock_vision_ms_>6000) {
+            Hide(dock_vision_label_,true);
+            dock_vision_ms_=0;
+        }
         PumpMagicStory();
         PumpVisionNarration();
         std::string state, code;
@@ -1027,10 +1036,22 @@ class EspenDisplay : public LcdDisplay {
         lv_obj_set_flex_flow(bottom_dock_,LV_FLEX_FLOW_ROW);
         lv_obj_set_flex_align(bottom_dock_,LV_FLEX_ALIGN_SPACE_EVENLY,
                               LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_CENTER);
+        dock_vision_label_=lv_label_create(lv_layer_top());
+        lv_obj_set_width(dock_vision_label_,DISPLAY_WIDTH-32);
+        lv_obj_set_style_text_align(dock_vision_label_,LV_TEXT_ALIGN_CENTER,0);
+        lv_obj_set_style_text_font(dock_vision_label_,EspenUiFont(),0);
+        lv_obj_set_style_text_color(dock_vision_label_,lv_color_hex(0xD6F5FC),0);
+        lv_obj_set_style_bg_opa(dock_vision_label_,LV_OPA_90,0);
+        lv_obj_set_style_bg_color(dock_vision_label_,lv_color_hex(0x07182A),0);
+        lv_obj_set_style_pad_all(dock_vision_label_,8,0);
+        lv_label_set_long_mode(dock_vision_label_,LV_LABEL_LONG_WRAP);
+        lv_obj_align(dock_vision_label_,LV_ALIGN_BOTTOM_MID,0,-86);
+        Hide(dock_vision_label_,true);
         auto* play=MakeButton(bottom_dock_,LV_SYMBOL_PLAY "  Gry",[](lv_event_t* e){
             auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
             self->pending_vision_voice_.clear();
             self->vision_dock_request_=false;
+            self->Hide(self->dock_vision_label_,true);
             if(self->camera_panel_){self->StopCameraPreview();self->Hide(self->camera_panel_,true);}
             self->OpenPlayGames();
         },this,142);
@@ -1041,16 +1062,18 @@ class EspenDisplay : public LcdDisplay {
             self->pending_vision_voice_.clear();
             auto& app=Application::GetInstance();
             if(app.EspenIsStandby())app.EspenWakeFromTouch();
-            self->OpenCameraPanel();
-            // This tap itself is a per-photo request and consent.
-            self->vision_dock_request_=true;
-            self->StartTapVision();
+            if(self->camera_panel_) {
+                self->StopCameraPreview();
+                self->Hide(self->camera_panel_,true);
+            }
+            self->StartTapVision(true);
         },this,142);
         auto* mic=MakeButton(bottom_dock_,LV_SYMBOL_AUDIO "  Mikrofon",[](lv_event_t* e){
             auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
             self->CloseMagicStory();
             self->pending_vision_voice_.clear();
             self->vision_dock_request_=false;
+            self->Hide(self->dock_vision_label_,true);
             if(self->camera_panel_){self->StopCameraPreview();self->Hide(self->camera_panel_,true);}
             auto& app=Application::GetInstance();
             using Mode=Application::EspenMicMode;
@@ -1273,11 +1296,12 @@ class EspenDisplay : public LcdDisplay {
         Hide(game_next_,true);
         Hide(game_again_,true);
         Hide(game_home_,true);
-        Hide(game_repeat_,phase!=MagicPhase::Error);
+        Hide(game_repeat_,phase!=MagicPhase::Error || EspenTextPromptsRejected());
         const char* status="";
         switch(phase) {
             case MagicPhase::Themes:
-                status=EspenNetworkAvailable()?"Wybierz miejsce przygody":"Włącz Wi-Fi, aby usłyszeć Alę";
+                status=EspenTextPromptsRejected()?"Xiaozhi wymaga serwera obsługującego prompty":
+                    EspenNetworkAvailable()?"Wybierz miejsce przygody":"Włącz Wi-Fi, aby usłyszeć Alę";
                 break;
             case MagicPhase::Ready:
                 status="Wybierz, co ma się wydarzyć";
@@ -1292,7 +1316,8 @@ class EspenDisplay : public LcdDisplay {
                 status="Pauza. Dotknij przycisku, aby wrócić do historii";
                 break;
             case MagicPhase::Error:
-                status="Brak odpowiedzi Xiaozhi. Sprawdź połączenie";
+                status=EspenTextPromptsRejected()?"Ten serwer Xiaozhi nie przyjmuje promptów opowieści":
+                    "Brak odpowiedzi Xiaozhi. Sprawdź połączenie";
                 lv_label_set_text(lv_obj_get_child(game_repeat_,0),"Spróbuj ponownie");
                 break;
             case MagicPhase::Generating:
@@ -1382,12 +1407,12 @@ class EspenDisplay : public LcdDisplay {
         }
 
         if (phase==MagicPhase::Themes) {
-            if (online && idle && story_intro_index_<std::size(kStoryIntro))
+            if (online && idle && !EspenTextPromptsRejected() && story_intro_index_<std::size(kStoryIntro))
                 StartStoryAudio(StoryAudio::Intro,kStoryIntro[story_intro_index_],now);
             return;
         }
         if (phase==MagicPhase::Generating) {
-            if (!online || now-story_action_ms_>15000) {
+            if (!online || EspenTextPromptsRejected() || now-story_action_ms_>15000) {
                 magic_story_.Fail();
                 RefreshPlayGames();
             } else if (idle) StartStoryAudio(StoryAudio::Chapter,magic_story_.Prompt(),now);
@@ -1977,26 +2002,35 @@ class EspenDisplay : public LcdDisplay {
         self->vision_tap_busy_.store(false,std::memory_order_release);
         vTaskDelete(nullptr);
     }
-    void StartTapVision(){
-        if(!camera_analysis_label_)return;
+    void SetTapVisionStatus(bool dock,const char* text,bool keep=false) {
+        auto* label=dock?dock_vision_label_:camera_analysis_label_;
+        if(!label)return;
+        lv_label_set_text(label,text);
+        if(dock) {
+            Hide(label,false);
+            dock_vision_ms_=keep?0:lv_tick_get();
+        }
+    }
+    void StartTapVision(bool dock=false){
+        if(!dock&&!camera_analysis_label_)return;
         auto& camera=EspenVision();
         if(vision_tap_busy_.load(std::memory_order_acquire)){
-            lv_label_set_text(camera_analysis_label_,
+            SetTapVisionStatus(dock,
                 "Ala już ogląda zdjęcie. Poczekaj na wynik.");
             return;
         }
         if(!EspenNetworkAvailable()){
-            lv_label_set_text(camera_analysis_label_,
+            SetTapVisionStatus(dock,
                 "Brak Wi-Fi. Połącz Alę z internetem, aby analizować zdjęcia.");
             return;
         }
         if(!camera.CloudEnabled()){
-            lv_label_set_text(camera_analysis_label_,
-                "Wysyłanie zdjęć jest wyłączone. Włącz je niżej, jeśli chcesz.");
+            SetTapVisionStatus(dock,
+                "Wysyłanie zdjęć jest wyłączone. Zmień zgodę w ustawieniach aparatu.");
             return;
         }
         if(!camera.EndpointReady()){
-            lv_label_set_text(camera_analysis_label_,
+            SetTapVisionStatus(dock,
                 "Xiaozhi nie udostępnił jeszcze bezpiecznej analizy obrazu HTTPS.");
             return;
         }
@@ -2009,15 +2043,17 @@ class EspenDisplay : public LcdDisplay {
         }
         if(!camera.GrantOneTap()){
             vision_tap_busy_.store(false,std::memory_order_release);
-            lv_label_set_text(camera_analysis_label_,"Analiza obrazu jest niedostępna.");
+            SetTapVisionStatus(dock,"Analiza obrazu jest niedostępna.");
             return;
         }
+        vision_dock_request_=dock;
         pending_vision_voice_.clear();
-        lv_label_set_text(camera_analysis_label_,"Ala robi jedno zdjęcie i analizuje je...");
+        SetTapVisionStatus(dock,"Ala robi jedno zdjęcie i analizuje je…",true);
+        ESP_LOGI(TAG,"Ala one-shot camera: dock=%d",dock);
         if(xTaskCreate(VisionTapWorker,"ala_vision_tap",12288,this,4,nullptr)!=pdPASS){
             camera.RevokeOneTap();
             vision_tap_busy_.store(false,std::memory_order_release);
-            lv_label_set_text(camera_analysis_label_,"Za mało pamięci, aby uruchomić aparat.");
+            SetTapVisionStatus(dock,"Za mało pamięci, aby uruchomić aparat.");
         }
     }
     void DrainVisionTap(){
@@ -2030,18 +2066,18 @@ class EspenDisplay : public LcdDisplay {
             ok=vision_tap_ok_;
             vision_tap_ready_=false;
         }
-        if(camera_analysis_label_)lv_label_set_text(camera_analysis_label_,result.c_str());
-        if(ok && EspenVision().CloudEnabled() && camera_panel_ &&
-           !lv_obj_has_flag(camera_panel_,LV_OBJ_FLAG_HIDDEN))
+        if(!vision_dock_request_ && (!camera_panel_ ||
+            lv_obj_has_flag(camera_panel_,LV_OBJ_FLAG_HIDDEN)))return;
+        if(vision_dock_request_ && ok) {
+            AddBubble("assistant",result.c_str());
+            SetTapVisionStatus(true,"Opis zdjęcia w czacie");
+        } else SetTapVisionStatus(vision_dock_request_,result.c_str());
+        if(ok && EspenVision().CloudEnabled() && !EspenTextPromptsRejected())
             pending_vision_voice_=std::move(result);
-        if(!pending_vision_voice_.empty() && vision_dock_request_) {
-            StopCameraPreview();
-            Hide(camera_panel_,true);
-        }
     }
     void PumpVisionNarration(){
         if(pending_vision_voice_.empty())return;
-        if(!camera_panel_ || (!vision_dock_request_ && lv_obj_has_flag(camera_panel_,LV_OBJ_FLAG_HIDDEN))){
+        if(!vision_dock_request_ && (!camera_panel_ || lv_obj_has_flag(camera_panel_,LV_OBJ_FLAG_HIDDEN))){
             pending_vision_voice_.clear();
             return;
         }
@@ -3579,7 +3615,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.2.22 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.2.23 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();
