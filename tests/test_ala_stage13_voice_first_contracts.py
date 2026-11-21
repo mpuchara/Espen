@@ -11,8 +11,8 @@ assert "PulseStoryTheme(topic && event.audible && !drained" in board
 assert "EspenMagicStoryPlayback();" in bridge
 assert "app.EspenNarrateGameText(prompt,false,true)" in board
 assert "app.EspenSetMicMode(mode);" in board
-assert "EspenWake().SetAutoSpeech(EspenMicMode()==0)" in bridge
-assert "if (EspenMicMode()==2 || EspenMagicStoryActive())" in bridge
+assert "EspenWake().SetAutoSpeech(EspenGetMicMode()==EspenMicMode::Conversation)" in bridge
+assert "if (EspenGetMicMode()==EspenMicMode::Off || EspenMagicStoryActive())" in bridge
 assert "audio_service_.EnableVoiceProcessing(false)" in bridge
 assert "EspenMagicStoryBargeIn();" in bridge
 assert "story_auto_voice_=magic_story_.CompleteTurn(event.speech)" in board

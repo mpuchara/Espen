@@ -61,6 +61,7 @@ static constexpr const char* TAG = "EspenBoard";
 static std::atomic<espen::Mood> espen_fx_last_mood{espen::Mood::Neutral};
 static std::atomic<bool> espen_response_ready{false};
 static std::atomic<bool> espen_fx_response_attempted{false};
+bool EspenMagicStoryActive();
 static void EspenTryResponseCue(espen::ReplyBeat beat);
 LV_FONT_DECLARE(font_noto_sans_basic_20_4);
 extern lv_font_t* EspenPolishFont();
@@ -341,6 +342,7 @@ static espen::EmotionalCue EspenCueForMood(espen::Mood mood) {
 // Let a response-specific cue wait for a natural gap/end of TTS if PCM is
 // already flowing. Do not lose it just because decoding started first.
 static void EspenTryResponseCue(espen::ReplyBeat beat) {
+    if(EspenMagicStoryActive())return;
     if(!espen_response_ready.load(std::memory_order_acquire) ||
        espen_fx_response_attempted.load(std::memory_order_acquire))return;
     auto cue=beat!=espen::ReplyBeat::None?espen::ReplyCue(beat):
@@ -740,7 +742,7 @@ class EspenDisplay : public LcdDisplay {
     uint32_t story_action_ms_=0;
     size_t story_intro_index_=0;
     int story_pulse_=-1;
-    bool story_auto_voice_=false;
+    bool story_auto_voice_=false, story_prompted_voice_=false;
     lv_obj_t* dock_mic_label_=nullptr;
     lv_obj_t* game_panel_=nullptr;
     bool magic_face_layout_ = false; // transparent story HUD, never covers the animated face
@@ -1048,11 +1050,14 @@ class EspenDisplay : public LcdDisplay {
             self->vision_dock_request_=false;
             if(self->camera_panel_){self->StopCameraPreview();self->Hide(self->camera_panel_,true);}
             auto& app=Application::GetInstance();
-            const int mode=(app.EspenMicMode()+1)%3;
+            using Mode=Application::EspenMicMode;
+            const auto current=app.EspenGetMicMode();
+            const auto mode=current==Mode::Conversation?Mode::Keyword:
+                            current==Mode::Keyword?Mode::Off:Mode::Conversation;
             if(app.EspenIsStandby())app.EspenWakeFromTouch();
             app.EspenSetMicMode(mode);
-            {Settings ui("espen_ui",true);ui.SetInt("dock_mic",mode);}
-            self->auto_speech_=mode==0;
+            {Settings ui("espen_ui",true);ui.SetInt("dock_mic",static_cast<int>(mode));}
+            self->auto_speech_=mode==Mode::Conversation;
             self->RefreshDockMic();
         },this,142);
         dock_mic_label_=lv_obj_get_child(mic,0);
@@ -1078,7 +1083,7 @@ class EspenDisplay : public LcdDisplay {
         static constexpr const char* labels[]={
             LV_SYMBOL_AUDIO " Rozmowa", LV_SYMBOL_BELL " Hasło", LV_SYMBOL_MUTE " Wyłączony"
         };
-        const auto mode=Application::GetInstance().EspenMicMode();
+        const auto mode=static_cast<size_t>(Application::GetInstance().EspenGetMicMode());
         lv_label_set_text(dock_mic_label_,labels[mode]);
     }
 
@@ -1115,6 +1120,7 @@ class EspenDisplay : public LcdDisplay {
         magic_wire.active.store(false);
         magic_story_.Reset();
         story_auto_voice_=false;
+        story_prompted_voice_=false;
     }
     void CloseMagicStory() {
         CancelMagicStory();
@@ -1141,6 +1147,8 @@ class EspenDisplay : public LcdDisplay {
         EspenMagicStoryResetWire();
         story_audio_=kind;
         story_action_ms_=now;
+        ESP_LOGI(TAG,"Ala story audio start: kind=%d cue=%u chapter=%u",
+                 static_cast<int>(kind),static_cast<unsigned>(story_intro_index_),magic_story_.Turn());
         auto& app=Application::GetInstance();
         if (kind==StoryAudio::Voice) app.EspenStartMagicVoiceListening();
         else if (kind==StoryAudio::Intro || kind==StoryAudio::Question)
@@ -1157,7 +1165,8 @@ class EspenDisplay : public LcdDisplay {
             // spoken story it becomes a transparent, non-scrolling HUD: title
             // and status ABOVE the face, optional choices BELOW the face.
             lv_obj_set_layout(game_panel_,LV_LAYOUT_NONE);
-            lv_obj_clear_flag(game_panel_,LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_clear_flag(game_panel_,LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_clear_flag(game_panel_,LV_OBJ_FLAG_CLICKABLE);
             lv_obj_set_scrollbar_mode(game_panel_,LV_SCROLLBAR_MODE_OFF);
             lv_obj_set_style_pad_all(game_panel_,0,0);
             lv_obj_set_style_bg_opa(game_panel_,LV_OPA_TRANSP,0);
@@ -1191,7 +1200,8 @@ class EspenDisplay : public LcdDisplay {
             lv_obj_set_style_pad_row(game_panel_,8,0);
             lv_obj_set_flex_flow(game_panel_,LV_FLEX_FLOW_COLUMN);
             lv_obj_set_scroll_dir(game_panel_,LV_DIR_VER);
-            lv_obj_add_flag(game_panel_,LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_add_flag(game_panel_,LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_add_flag(game_panel_,LV_OBJ_FLAG_CLICKABLE);
             lv_obj_set_scrollbar_mode(game_panel_,LV_SCROLLBAR_MODE_AUTO);
             lv_obj_set_size(head,lv_pct(100),55);
             lv_obj_set_style_bg_opa(head,LV_OPA_TRANSP,0);
@@ -1213,6 +1223,9 @@ class EspenDisplay : public LcdDisplay {
         const auto phase=magic_story_.Phase();
         using espen::MagicPhase;
         const bool themes=phase==MagicPhase::Themes;
+        const bool confirming_theme=phase==MagicPhase::Generating && magic_story_.Turn()==0;
+        const int selected_theme=static_cast<int>(magic_story_.Theme());
+        const bool theme_row=themes || confirming_theme;
         const bool choices=phase==MagicPhase::Ready || phase==MagicPhase::Paused ||
                            phase==MagicPhase::Listening;
         lv_label_set_text(game_title_,"Magiczna opowieść");
@@ -1225,15 +1238,17 @@ class EspenDisplay : public LcdDisplay {
         static constexpr int theme_width=(DISPLAY_WIDTH-32)/3;
         for(int i=0;i<3;++i) {
             auto* button=game_choices_[i];
-            const int width=themes?theme_width:(DISPLAY_WIDTH-22)/2;
+            const int width=theme_row?theme_width:(DISPLAY_WIDTH-22)/2;
             lv_obj_set_width(button,width);
-            lv_obj_set_height(button,themes?64:56);
-            lv_obj_set_pos(button,themes?8+i*(theme_width+8):6+i*(DISPLAY_WIDTH/2-5),
-                           DISPLAY_HEIGHT-76-(themes?74:66));
+            lv_obj_set_height(button,theme_row?64:56);
+            lv_obj_set_pos(button,theme_row?8+i*(theme_width+8):6+i*(DISPLAY_WIDTH/2-5),
+                           DISPLAY_HEIGHT-76-(theme_row?74:66));
             auto* label=lv_obj_get_child(button,0);
             lv_obj_set_width(label,width-20);
-            Hide(button,!themes && (!choices || i==2));
-            if(themes) lv_label_set_text(label,names[i]);
+            const bool selected=confirming_theme && i==selected_theme;
+            Hide(button,!themes && !selected && (!choices || i==2));
+            lv_obj_set_style_border_color(button,lv_color_hex(selected?0xFBE083:0xB3E3EB),0);
+            if(theme_row) lv_label_set_text(label,names[i]);
             else if(choices && i<2)
                 lv_label_set_text(label,i==0?LV_SYMBOL_OK " Pomysł Ali":LV_SYMBOL_AUDIO " Mój pomysł");
         }
@@ -1320,12 +1335,18 @@ class EspenDisplay : public LcdDisplay {
                 RefreshPlayGames();
             }
             if (event.finished && idle && event.audible) {
+                ESP_LOGI(TAG,"Ala story audio drained: kind=%d chapter=%u",
+                         static_cast<int>(kind),magic_story_.Turn());
                 story_audio_=StoryAudio::None;
                 story_action_ms_=now;
                 PulseStoryTheme(-1,now);
                 if (kind==StoryAudio::Intro) ++story_intro_index_;
-                if (kind==StoryAudio::Question) story_auto_voice_=true;
+                if (kind==StoryAudio::Question) {
+                    story_auto_voice_=true;
+                    story_prompted_voice_=true;
+                }
                 if (kind==StoryAudio::Chapter) {
+                    story_prompted_voice_=false;
                     story_auto_voice_=magic_story_.CompleteTurn(event.speech);
                     if (magic_story_.Phase()==MagicPhase::Finished) CloseMagicStory();
                 }
@@ -1363,7 +1384,7 @@ class EspenDisplay : public LcdDisplay {
             }
             return;
         }
-        if (story_auto_voice_ && online && idle && app.EspenMicMode()!=2) {
+        if (story_auto_voice_ && online && idle && app.EspenGetMicMode()!=Application::EspenMicMode::Off) {
             story_auto_voice_=false;
             if (magic_story_.BeginVoiceChoice()) {
                 StartStoryAudio(StoryAudio::Voice,{},now);
@@ -1484,8 +1505,8 @@ class EspenDisplay : public LcdDisplay {
                         if(phase!=MagicPhase::Off) {
                             bool accepted=false;
                             if(j==0) accepted=self->magic_story_.ChooseSuggestion();
-                            if(j==1 && phase!=MagicPhase::Listening) {
-                                if(Application::GetInstance().EspenMicMode()==2) {
+                            if(j==1 && (phase!=MagicPhase::Listening || !self->story_prompted_voice_)) {
+                                if(Application::GetInstance().EspenGetMicMode()==Application::EspenMicMode::Off) {
                                     lv_label_set_text(self->game_voice_status_,
                                         "Mikrofon jest wyłączony. Wybierz pomysł Ali");
                                     return;
@@ -1495,6 +1516,7 @@ class EspenDisplay : public LcdDisplay {
                             if(accepted) {
                                 self->StopStoryAudio();
                                 self->story_auto_voice_=false;
+                                self->story_prompted_voice_=false;
                                 self->story_action_ms_=lv_tick_get();
                                 self->RefreshPlayGames();
                             }
@@ -2220,7 +2242,8 @@ class EspenDisplay : public LcdDisplay {
                     ui.SetBool("auto_speech",self->auto_speech_);
                     ui.SetInt("dock_mic",self->auto_speech_?0:1);
                 }
-                Application::GetInstance().EspenSetMicMode(self->auto_speech_?0:1);
+                Application::GetInstance().EspenSetMicMode(self->auto_speech_?
+                    Application::EspenMicMode::Conversation:Application::EspenMicMode::Keyword);
                 self->RefreshDockMic();
                 lv_label_set_text(self->speech_mode_label_,self->auto_speech_?
                     "Wybudzanie: mowa (TV!)":"Wybudzanie: hasło");
@@ -2594,7 +2617,7 @@ class EspenDisplay : public LcdDisplay {
         const int mic_mode=std::clamp(cfg.GetInt("dock_mic",cfg.GetBool("auto_speech",false)?0:1),0,2);
         auto_speech_=mic_mode==0;
         visual_enabled_=cfg.GetBool("visual_world",true);
-        Application::GetInstance().EspenSetMicMode(mic_mode);
+        Application::GetInstance().EspenSetMicMode(static_cast<Application::EspenMicMode>(mic_mode));
         RefreshDockMic();
         face_=lv_obj_create(container_);Solid(face_,0x09141D,36);
         lv_obj_set_size(face_,384,294);

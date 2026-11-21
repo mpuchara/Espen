@@ -1,0 +1,16 @@
+{
+  "name": "Ala Pilot Espen – GUITION JC4880P443C (pełna instalacja)",
+  "version": "0.2.22",
+  "new_install_prompt_erase": false,
+  "builds": [
+    {
+      "chipFamily": "ESP32-P4",
+      "parts": [
+        {
+          "path": "espen.bin",
+          "offset": 0
+        }
+      ]
+    }
+  ]
+}

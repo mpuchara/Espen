@@ -26,9 +26,9 @@ assert "lv_obj_set_style_bg_opa(game_panel_,LV_OPA_COVER,0);" in board
 assert "lv_obj_set_flex_flow(game_panel_,LV_FLEX_FLOW_COLUMN);" in board
 assert "Hide(game_prompt_,true);" in board and "Hide(game_prompt_,false);" in board
 assert "magic_live_text_" not in board  # no on-screen transcript stealing memory and frames
-assert "lv_obj_set_pos(button,themes" in board
+assert "lv_obj_set_pos(button,theme_row" in board
 assert "lv_obj_set_pos(game_voice_status_,12,48);" in board
-assert "Hide(button,!themes && (!choices || i==2));" in board
+assert "Hide(button,!themes && !selected && (!choices || i==2));" in board
 assert "app.EspenStartMagicVoiceListening()" in board
 
 # Do NOT create a second render/audio loop. Existing 50-ms FaceEngine

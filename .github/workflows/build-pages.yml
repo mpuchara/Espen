@@ -121,6 +121,51 @@ jobs:
             dist/espen-assets.bin
             dist/espen-update.sha256
           if-no-files-found: error
+      - name: Verify full Ala 0.2.22 preview installer
+        if: github.head_ref == 'codex/ala-stage15'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp dist/espen.bin dist/espen.bin.sha256 dist/stage15/
+          (cd dist/stage15 && sha256sum --check espen.bin.sha256)
+          python3 - <<'PY'
+          import json
+          import struct
+          from pathlib import Path
+
+          folder = Path("dist/stage15")
+          image = (folder / "espen.bin").read_bytes()
+          app = Path("dist/espen-app.bin").read_bytes()
+          assets = Path("dist/espen-assets.bin").read_bytes()
+          manifest = json.loads((folder / "manifest.json").read_text())
+          assert manifest["version"] == "0.2.22"
+          assert manifest["builds"] == [{
+              "chipFamily": "ESP32-P4", "parts": [{"path": "espen.bin", "offset": 0}]
+          }]
+          assert 0x800000 < len(image) <= 0x1000000
+          assert image[0x2000] == image[0x20000] == 0xe9
+          assert image[0x20000:0x20000 + len(app)] == app
+          assert image[0x800000:0x800000 + len(assets)] == assets
+          entries = {}
+          for offset in range(0x8000, 0x8c00, 32):
+              magic, _, _, start, size, label, _ = struct.unpack_from("<HBBII16sI", image, offset)
+              if magic != 0x50aa:
+                  break
+              entries[label.split(b"\0", 1)[0].decode()] = (start, size)
+          assert entries == {
+              "nvs": (0x9000, 0x4000), "otadata": (0xd000, 0x2000),
+              "phy_init": (0xf000, 0x1000), "ota_0": (0x20000, 0x7e0000),
+              "assets": (0x800000, 0x800000)
+          }
+          assert "manifest.json" in (folder / "index.html").read_text()
+          PY
+      - name: Upload Ala 0.2.22 full preview installer
+        if: github.head_ref == 'codex/ala-stage15'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ala-stage15-full-installer
+          path: dist/stage15
+          if-no-files-found: error
       - name: Upload debug symbols and effective configuration
         uses: actions/upload-artifact@v4
         with:
