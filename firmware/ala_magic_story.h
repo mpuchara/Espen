@@ -159,7 +159,8 @@ public:
             prompt+="Mama prowadzi bezpiecznie; przygody w samochodzie nie moga "
                     "rozpraszac kierowcy ani wymagac wyjscia podczas jazdy. ";
         if(turn_==0)
-            prompt+="To pierwsza scena: przedstaw miejsce, bohaterow i niezwykla zagadke. ";
+            prompt+="To pierwsza scena. Zacznij glosem: 'Witaj w Magicznej Opowiesci!' "
+                    "i od razu przedstaw miejsce, bohaterow i niezwykla zagadke. ";
         else
             prompt+="To dalszy ciag historii. Zachowaj wydarzenia i bohaterow. "
                     "Dotychczasowa historia: "+history_+
