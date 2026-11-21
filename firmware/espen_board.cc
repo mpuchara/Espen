@@ -590,7 +590,8 @@ bool EspenMagicStoryConsumeVoice(const char* text) {
     if(n<3 || n>700)return false;
     if(!magic_wire.voice_armed.exchange(false,std::memory_order_acq_rel))return false;
     std::lock_guard<std::mutex> l(magic_wire.mutex);
-    magic_wire.choice=std::string(text,std::min<size_t>(n,250));
+    // Keep complete UTF-8 codepoints; AlaMagicStory bounds the actual choice.
+    magic_wire.choice=std::string(text,n);
     magic_wire.choice_ready=true;
     magic_wire.suppress_stale.store(true,std::memory_order_release);
     ++magic_wire.revision;
@@ -1230,7 +1231,15 @@ class EspenDisplay : public LcdDisplay {
             auto b=speech.find("Opcja 1:");
             const size_t end=a!=std::string::npos?a:b;
             magic_live_text_=speech.substr(0,end);
-            if(magic_live_text_.size()>1250)magic_live_text_.resize(1250);
+            if(magic_live_text_.size()>1250) {
+                magic_live_text_.resize(1250);
+                while(!magic_live_text_.empty() &&
+                      (static_cast<unsigned char>(magic_live_text_.back())&0xc0)==0x80)
+                    magic_live_text_.pop_back();
+                if(!magic_live_text_.empty() &&
+                   (static_cast<unsigned char>(magic_live_text_.back())&0xc0)==0xc0)
+                    magic_live_text_.pop_back();
+            }
             RefreshMagicStory();
         }
         if(done || failed || (magic_sent_ms_ && now-magic_sent_ms_>55000)) {
