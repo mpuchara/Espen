@@ -206,7 +206,7 @@ public:
             context_.theme == StorySetting::Car ? "podróż samochodem z mamą" : "magiczny las";
         std::string prompt =
             "Jesteś Alą, przyjazną narratorką Magicznej Opowieści dla dziecka. "
-            "Mów po polsku, ciepło i naturalnie. Wypowiedz samą historię. "
+            "Mów po polsku, ciepło i naturalnie. Wypowiedz samą historię, bez używania narzędzi. "
             "Temat: " + std::string(theme) + ". ";
         if (context_.theme == StorySetting::Car)
             prompt += "Mama prowadzi bezpiecznie i nic jej nie rozprasza. ";

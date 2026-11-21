@@ -547,7 +547,10 @@ struct MagicStoryWire {
 }
 bool EspenMagicStoryActive() { return magic_wire.active.load(); }
 bool EspenMagicStoryTextTurn() { return magic_wire.text_turn.load(); }
-bool EspenMagicStorySuppressStale() { return magic_wire.suppress_stale.load(); }
+bool EspenMagicStorySuppressStale() {
+    return magic_wire.suppress_stale.load() ||
+           (EspenMagicStoryActive() && !EspenMagicStoryTextTurn());
+}
 void EspenMagicStoryResetWire() {
     std::lock_guard<std::mutex> lock(magic_wire.mutex);
     magic_wire.capturing=false;
@@ -616,11 +619,11 @@ struct MagicStoryEvents {
     bool finished, failed, audible, interrupted;
     std::string speech, choice;
 };
-static MagicStoryEvents TakeMagicStoryEvents() {
+static MagicStoryEvents TakeMagicStoryEvents(bool drained) {
     std::lock_guard<std::mutex> lock(magic_wire.mutex);
     MagicStoryEvents event{magic_wire.finished, magic_wire.failed,
                           magic_wire.audible.load(), magic_wire.interrupted, {}, {}};
-    if (event.finished || event.interrupted) event.speech=magic_wire.speech;
+    if ((event.finished && drained) || event.interrupted) event.speech.swap(magic_wire.speech);
     event.choice.swap(magic_wire.choice);
     return event;
 }
@@ -1107,6 +1110,19 @@ class EspenDisplay : public LcdDisplay {
         lv_obj_set_style_transform_width(game_choices_[index],expansion,0);
         lv_obj_set_style_transform_height(game_choices_[index],expansion,0);
     }
+    void RevealStoryChoices(int count) {
+        for(int index=0;index<count;++index) {
+            lv_anim_t fade;
+            lv_anim_init(&fade);
+            lv_anim_set_var(&fade,game_choices_[index]);
+            lv_anim_set_values(&fade,110,LV_OPA_COVER);
+            lv_anim_set_duration(&fade,260);
+            lv_anim_set_exec_cb(&fade,[](void* target,int32_t value) {
+                lv_obj_set_style_opa(static_cast<lv_obj_t*>(target),static_cast<lv_opa_t>(value),0);
+            });
+            lv_anim_start(&fade);
+        }
+    }
     void StopStoryAudio() {
         if (story_audio_ != StoryAudio::None) {
             Application::GetInstance().EspenCancelMagicStory();
@@ -1136,6 +1152,7 @@ class EspenDisplay : public LcdDisplay {
         if(app.EspenIsStandby()) app.EspenWakeFromTouch();
         app.EspenCancelMagicStory();
         RefreshPlayGames();
+        RevealStoryChoices(3);
     }
     void SelectStoryTheme(int index) {
         StopStoryAudio();
@@ -1299,7 +1316,7 @@ class EspenDisplay : public LcdDisplay {
         const bool online=EspenNetworkAvailable() && !app.EspenIsStandby();
 
         if (story_audio_ != StoryAudio::None) {
-            auto event=TakeMagicStoryEvents();
+            auto event=TakeMagicStoryEvents(idle);
             const auto kind=story_audio_;
             if (event.interrupted && kind==StoryAudio::Chapter) {
                 magic_story_.Interrupt(event.speech);
@@ -1351,6 +1368,8 @@ class EspenDisplay : public LcdDisplay {
                     if (magic_story_.Phase()==MagicPhase::Finished) CloseMagicStory();
                 }
                 RefreshPlayGames();
+                if (kind==StoryAudio::Chapter && magic_story_.Phase()==MagicPhase::Ready)
+                    RevealStoryChoices(2);
             } else if (!online || event.failed ||
                        now-story_action_ms_>(kind==StoryAudio::Chapter?65000u:14000u)) {
                 StopStoryAudio();
