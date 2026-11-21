@@ -505,14 +505,26 @@ extern bool EspenButtonCameraPreparing();
         '                extern void EspenMagicStorySentence(const char*);\n'
         '                EspenMagicStorySentence(text->valuestring);')
     replace(app,
+        '            } else if (strcmp(state->valuestring, "sentence_start") == 0) {',
+        '            } else if (strcmp(state->valuestring, "sentence_start") == 0) {\n'
+        '                if (EspenMagicStoryContextPending()) return;')
+    replace(app,
         '            } else if (strcmp(state->valuestring, "stop") == 0) {',
         '            } else if (strcmp(state->valuestring, "stop") == 0) {\n'
         '                extern void EspenMagicStoryOutputDone();\n'
         '                EspenMagicStoryOutputDone();')
     replace(app,
         '                EspenVisionQuestion(text->valuestring);',
-        '                extern bool EspenMagicStoryConsumeVoice(const char*);\n'
-        '                if (EspenMagicStoryConsumeVoice(text->valuestring)) return;\n'
+        '                extern bool EspenMagicStoryConsumeVoice(const char*, bool&);\n'
+        '                bool show_story_choice=false;\n'
+        '                if (EspenMagicStoryConsumeVoice(text->valuestring,show_story_choice)) {\n'
+        '                    if (show_story_choice) Schedule([display, message = std::string(text->valuestring),\n'
+        '                                                     glyphs = std::move(glyphs), bpp]() {\n'
+        '                        display->AddTextGlyphs(glyphs, bpp);\n'
+        '                        display->SetChatMessage("user", message.c_str());\n'
+        '                    });\n'
+        '                    return;\n'
+        '                }\n'
         '                if (!EspenMagicStoryActive() && !EspenButtonCameraReplyActive()) EspenVisionQuestion(text->valuestring);')
     replace(app,
         '        } else if (strcmp(type->valuestring, "tts") == 0) {',

@@ -9,7 +9,8 @@ assert "app.EspenGenerateMagicStory(prompt,context,kind==StoryAudio::Chapter)" i
 assert "magic_story_.Prompt()" in board and '"self.story.read_context"' in bridge
 assert "EspenMagicStorySuppressStale() || EspenMagicStoryContextPending()" in bridge
 assert "app.EspenStartMagicVoiceListening()" in board
-assert "EspenMagicStoryConsumeVoice(text->valuestring)) return;" in bridge
+assert "EspenMagicStoryConsumeVoice(text->valuestring,show_story_choice)" in bridge
+assert "if (EspenMagicStoryContextPending()) return;" in bridge
 assert "EspenMagicStorySuppressStale()" in bridge
 assert "EspenMagicStorySentence(text->valuestring)" in bridge
 assert "EspenMagicStoryOutputDone()" in bridge

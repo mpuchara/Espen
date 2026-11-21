@@ -656,12 +656,13 @@ void EspenMagicStoryBargeIn() {
     magic_wire.context_pending.store(false);
     magic_wire.text_turn.store(false);
 }
-bool EspenMagicStoryConsumeVoice(const char* text) {
+bool EspenMagicStoryConsumeVoice(const char* text, bool& show_choice) {
     std::lock_guard<std::mutex> lock(magic_wire.mutex);
     if (!EspenMagicStoryActive() || !text) return false;
-    if (!magic_wire.voice_armed) return true;
+    if (!magic_wire.voice_armed || !*text) return true;
     magic_wire.voice_armed=false;
     magic_wire.choice=espen::BoundStoryText(text,700);
+    show_choice=!magic_wire.choice.empty();
     const bool exit=espen::ClassifyStorySpeech(magic_wire.choice)==espen::StoryDecision::Exit;
     if(exit) magic_wire.suppress_stale.store(true);
     return true;
