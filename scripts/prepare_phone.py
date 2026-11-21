@@ -147,7 +147,14 @@ void Application::EspenGenerateMagicStory(const std::string& prompt) {
             }
             extern void EspenMagicStoryBeginOutput();
             EspenMagicStoryBeginOutput();
-            protocol_->SendWakeWordDetected(prompt);
+            // Upstream Protocol::SendWakeWordDetected concatenates JSON without
+            // escaping. Never send raw newlines/quotes from a child's option.
+            std::string json_safe_prompt=prompt;
+            for(char& c:json_safe_prompt) {
+                const auto uc=static_cast<unsigned char>(c);
+                if(c=='"' || c=='\\\\' || uc<0x20)c=' ';
+            }
+            protocol_->SendWakeWordDetected(json_safe_prompt);
             play_popup_on_listening_ = false;
             SetListeningMode(kListeningModeAutoStop);
         });
