@@ -547,6 +547,7 @@ void EspenMagicStoryResetWire() {
     magic_wire.capturing.store(false,std::memory_order_release);
     magic_wire.speech.clear();magic_wire.choice.clear();
     magic_wire.finished=false;magic_wire.failed=false;
+    magic_wire.suppress_stale.store(false,std::memory_order_release);
     magic_wire.choice_ready=false;
     ++magic_wire.revision;
 }
@@ -722,6 +723,10 @@ class EspenDisplay : public LcdDisplay {
     lv_obj_t* settings_ = nullptr;
     // Touch-only child-friendly games run entirely on the LVGL thread.
     espen::AlaPlayGames games_{};
+    espen::AlaMagicStory magic_story_{};
+    std::string pending_magic_prompt_, magic_live_text_;
+    uint32_t magic_rx_rev_=0, magic_sent_ms_=0, magic_voice_ms_=0;
+    bool magic_request_sent_=false;
     lv_obj_t* game_panel_ = nullptr;
     lv_obj_t* game_title_ = nullptr;
     lv_obj_t* game_progress_ = nullptr;
@@ -807,6 +812,7 @@ class EspenDisplay : public LcdDisplay {
         // Called by LVGL timer; camera worker only publishes a PSRAM snapshot.
         AppendChatPhoto();
         DrainVisionTap();
+        PumpMagicStory();
         PumpStoryNarration();
         PumpVisionNarration();
         std::string state, code;
@@ -1046,7 +1052,8 @@ class EspenDisplay : public LcdDisplay {
     void QueueStoryNarration() {
         const auto view=games_.View();
         pending_story_voice_.clear();
-        if(view.mode!=espen::PlayMode::Story || view.phase==espen::PlayPhase::Feedback)return;
+        if(view.mode!=espen::PlayMode::Story || view.phase==espen::PlayPhase::Feedback ||
+           magic_story_.Phase()!=espen::MagicPhase::Off)return;
         pending_story_voice_=view.prompt;
         if(view.phase==espen::PlayPhase::Choice && view.option_count>0) {
             static constexpr const char* labels[]={"Opcja pierwsza: ","Opcja druga: ","Opcja trzecia: "};
@@ -1076,6 +1083,9 @@ class EspenDisplay : public LcdDisplay {
     }
     void RefreshPlayGames() {
         if (!game_panel_) return;
+        if(magic_story_.Phase()!=espen::MagicPhase::Off) {
+            RefreshMagicStory();return;
+        }
         const auto view=games_.View();
         lv_label_set_text(game_title_,view.title);
         if(view.mode==espen::PlayMode::Menu) {
