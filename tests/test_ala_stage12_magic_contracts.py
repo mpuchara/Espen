@@ -8,9 +8,9 @@ phone=(root/"scripts/prepare_phone.py").read_text(encoding="utf-8")
 overlay=(root/"scripts/prepare.py").read_text(encoding="utf-8")
 build=(root/"scripts/build.sh").read_text(encoding="utf-8")
 install=(root/"web/manifest-full.json").read_text(encoding="utf-8")
-assert any(f'"version": "{v}"' in install for v in ("0.2.19", "0.2.20"))
+assert any(f'"version": "{v}"' in install for v in ("0.2.19", "0.2.20", "0.2.21"))
 assert '("ala_magic_story.h","ala_magic_story.h")' in overlay
-assert any(f'"Espen {v} boot:' in board for v in ("0.2.19", "0.2.20"))
+assert any(f'"Espen {v} boot:' in board for v in ("0.2.19", "0.2.20", "0.2.21"))
 assert "tests/test_ala_magic_story.cc" in build
 assert "AlaMagicStory magic_story_" in board
 assert "magic_story_.Start(static_cast<espen::StorySetting>(j))" in board
