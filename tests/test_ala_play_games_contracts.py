@@ -16,9 +16,9 @@ assert 'Nad jeziorem' in f and 'Z mamą w samochodzie' in f
 assert 'BuildBottomDock()' in b and 'LV_SYMBOL_PLAY' in b
 assert 'LV_SYMBOL_IMAGE' in b and 'LV_SYMBOL_AUDIO' in b
 assert 'lv_obj_set_style_pad_bottom(content_,88,0)' in b
-assert 'game_repeat_' in b and 'QueueStoryNarration()' in b and 'PumpStoryNarration()' in b
+assert 'game_repeat_' in b and 'OpenStoryThemes()' in b and 'PumpMagicStory()' in b
 phone=(root/"scripts/prepare_phone.py").read_text()
-assert 'EspenNarrateGameText' in phone
+assert 'EspenPlayStoryCue' in phone
 assert 'SendWakeWordDetected(prompt)' in phone
 assert 'self->Hide(self->game_panel_,true)' in b
 assert 'auto* play=MakeButton(face_,"GRY"' not in b

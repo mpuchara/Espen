@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="pl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ala Stage 10 — pełna instalacja ESP32-P4</title>
+<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+<style>
+:root{font-family:system-ui,sans-serif;color-scheme:dark;background:#0b121c;color:#ecf6ff}
+body{margin:0;padding:32px 18px;min-height:100vh;background:radial-gradient(ellipse at top,#254456,#0b121c 65%);box-sizing:border-box}
+main{max-width:760px;margin:auto}
+h1{font-size:clamp(2.1rem,7vw,3.5rem);letter-spacing:-.045em;margin:.5rem 0}
+p,li{line-height:1.6;color:#c0d4df}
+.card{padding:24px;border-radius:17px;border:1px solid #35596a;background:#122532;margin:22px 0}
+.warning{border-left:4px solid #edb85b;padding:12px 16px;background:#34291c;border-radius:6px}
+button{padding:16px 22px;font-size:1.1rem;border:0;border-radius:12px;background:#7ce6d2;color:#08202a;font-weight:750;cursor:pointer}
+a{color:#9cebe1}small{color:#9ab0bf}
+code{color:#d5eeda}
+#status{padding:8px 0;font-weight:650}
+</style></head>
+<body><main>
+<p><a href="../">← Wróć do stabilnego instalatora Espen</a></p>
+<p style="font-weight:800;color:#f5c46f">🧪 WERSJA EKSPERYMENTALNA · ETAP 10</p>
+<h1>🤖 Ala Stage 10</h1>
+<p>Pełna instalacja Ali dla <b>GUITION JC4880P443C_I_W(_Y), ESP32-P4 rev1, flash 16 MiB</b>.</p>
+<div class="card">
+<h2>🔌 Wgraj najnowszą Alę przez USB</h2>
+<p>NOWOŚĆ: <b>trzy gry dla dzieci dostępne przez przycisk GRY na twarzy Ali</b>: Quiz Mistrza, Zgadnij zwierzę i Magiczna opowieść z wyborami. Kolorowe przyciski, gwiazdki, rundy i różne zakończenia. Zachowano rozmowy Xiaozhi, emocje, poprawiony słuch, pamięć i twarz. Gry działają lokalnie i dotykowo (nie prowadzą jeszcze rozmowy głosowej). <b>Bez Home Assistant.</b></p>
+<p class="warning"><b>Uwaga:</b> kompilacja i testy hostowe przeszły pomyślnie, ale <b>nie przetestowano tej wersji na fizycznej Ali</b>. Pełny flash od adresu <code>0x0</code> może usunąć Wi-Fi, PIN, zapisane wspomnienia i parowanie Xiaozhi. Przygotuj kopię konfiguracji, jeśli jest ważna.</p>
+<p id="status" role="status" aria-live="polite">Sprawdzanie pełnego obrazu i sumy SHA256…</p>
+<esp-web-install-button id="install" manifest="manifest.json" hidden>
+<button slot="activate">🔌 Pełna instalacja Ali Stage 10</button>
+<span slot="unsupported">Użyj Chrome lub Edge na komputerze obsługującym Web Serial.</span>
+<span slot="not-allowed">Otwórz tę stronę przez HTTPS.</span>
+</esp-web-install-button>
+<p><a id="download" href="espen.bin" download hidden>⬇️ Pobierz pełny espen.bin</a> <a href="espen.bin.sha256">· Zobacz SHA256</a></p>
+<p><small>Podłącz komputer do portu <b>USB ESP32-P4</b> (nie ESP32-C6). Pozostaw kabel głośnika zabezpieczony przed zwarciem. Nie odłączaj USB podczas instalacji.</small></p>
+</div>
+<div class="card">
+<h2>Informacje o kompilacji</h2>
+<p>Źródło: <a href="https://github.com/mpuchara/Espen/pull/50">PR #47</a> · <a href="https://github.com/mpuchara/Espen/actions/runs/44832672714">GitHub Actions — PASS</a>.</p>
+<p>Commit firmware: <code>f167878b7ffeffa9974e8417ad2a566e275dceaf</code>.</p>
+<p>Wewnętrzna wersja firmware: 0.2.17 + zmiany audytu Stage 10.</p>
+<p>Pełny obraz: 10 302 462 B, wymagane 16 MiB flash.</p>
+<p>SHA256: <code style="overflow-wrap:anywhere">4b0fd282b60ea1cd7363bb534a58dd54587142a59caef7f744d889b9d9a6d7ad</code></p>
+</div>
+<p><a href="../">← Starszy stabilniejszy instalator 0.2.17</a></p>
+<script>
+const expected="4b0fd282b60ea1cd7363bb534a58dd54587142a59caef7f744d889b9d9a6d7ad";
+const status=document.querySelector("#status");
+const install=document.querySelector("#install");
+const download=document.querySelector("#download");
+(async()=>{
+ if(!window.isSecureContext||!("serial" in navigator)){
+   status.textContent="Otwórz tę stronę w Chrome lub Edge na komputerze z obsługą USB (Web Serial).";
+   return;
+ }
+ try{
+   const res=await fetch("espen.bin",{cache:"no-store"});
+   if(!res.ok)throw Error("HTTP "+res.status);
+   const bytes=await res.arrayBuffer();
+   if(bytes.byteLength!==10302462)throw Error("Nieprawidłowy rozmiar pliku "+bytes.byteLength);
+   const digest=await crypto.subtle.digest("SHA-256",bytes);
+   const actual=Array.from(new Uint8Array(digest)).map(b=>b.toString(16).padStart(2,"0")).join("");
+   if(actual!==expected)throw Error("Błędna suma kontrolna SHA256");
+   install.hidden=false;download.hidden=false;
+   status.textContent="✅ Zweryfikowany pełny obraz. Podłącz Alę do komputera i kliknij przycisk instalacji.";
+ }catch(e){status.textContent="❌ Firmware Stage 10 niedostępny lub uszkodzony: "+(e&&e.message||e);}
+})();
+</script></main></body></html>

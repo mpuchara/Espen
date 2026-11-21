@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="pl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ala 0.2.24 — pełna instalacja ESP32-P4</title>
+<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+<style>
+:root{font-family:system-ui,sans-serif;color-scheme:dark;background:#0b121c;color:#ecf6ff}
+body{margin:0;padding:32px 18px;min-height:100vh;background:radial-gradient(ellipse at top,#254456,#0b121c 65%);box-sizing:border-box}
+main{max-width:760px;margin:auto}
+h1{font-size:clamp(2.1rem,7vw,3.5rem);letter-spacing:-.045em;margin:.5rem 0}
+p,li{line-height:1.6;color:#c0d4df}
+.card{padding:24px;border-radius:17px;border:1px solid #35596a;background:#122532;margin:22px 0}
+.warning{border-left:4px solid #edb85b;padding:12px 16px;background:#34291c;border-radius:6px}
+button{padding:16px 22px;font-size:1.1rem;border:0;border-radius:12px;background:#7ce6d2;color:#08202a;font-weight:750;cursor:pointer}
+a{color:#9cebe1}small{color:#9ab0bf}
+code{color:#d5eeda}
+#status{padding:8px 0;font-weight:650}
+</style></head>
+<body><main>
+<p>WERSJA TESTOWA</p>
+<h1>Ala 0.2.24</h1>
+<p>Nowy ekran główny i Magiczna Opowieść z Xiaozhi dla GUITION JC4880P443C, ESP32-P4, flash 16 MiB.</p>
+<div class="card">
+<h2>Pełna instalacja przez USB</h2>
+<p class="warning">Pełny obraz od adresu <code>0x0</code> może usunąć konfigurację Wi-Fi, parowanie Xiaozhi i zapisane dane. Przygotuj kopię konfiguracji przed instalacją.</p>
+<p id="status" role="status" aria-live="polite">Sprawdzanie obrazu i sumy SHA256…</p>
+<esp-web-install-button id="install" manifest="manifest.json" hidden>
+<button slot="activate">Zainstaluj Alę 0.2.24</button>
+<span slot="unsupported">Otwórz stronę w Chrome lub Edge z obsługą Web Serial.</span>
+<span slot="not-allowed">Otwórz stronę przez HTTPS.</span>
+</esp-web-install-button>
+<p id="downloads" hidden><a href="espen.bin" download>Pobierz pełny obraz</a> · <a href="espen.bin.sha256">Suma SHA256</a></p>
+<p><small>Podłącz robota do portu USB ESP32-P4. Opowieść i analiza zdjęć wymagają Wi-Fi oraz skonfigurowanego Xiaozhi.</small></p>
+</div>
+<p><a href="https://github.com/mpuchara/Espen/pull/56">Zmiany i status testów</a> · <a href="https://mpuchara.github.io/Espen/">Poprzednie instalatory Espen</a></p>
+<script>
+const status=document.querySelector("#status");
+async function fetchFile(path) {
+  const response=await fetch(path,{cache:"no-store"});
+  if(!response.ok) throw new Error("HTTP "+response.status);
+  return response;
+}
+async function verify() {
+  if(!window.isSecureContext) {
+    status.textContent="Do sprawdzenia obrazu i instalacji otwórz stronę przez HTTPS lub localhost.";
+    return;
+  }
+  try {
+    const [image,checksum]=await Promise.all([
+      fetchFile("espen.bin").then(r=>r.arrayBuffer()),
+      fetchFile("espen.bin.sha256").then(r=>r.text()),
+    ]);
+    const expected=checksum.trim().match(/^([a-f0-9]{64})\s+espen\.bin$/)?.[1];
+    const bytes=new Uint8Array(image);
+    if(!expected || bytes.length<=0x800000 || bytes.length>0x1000000 ||
+       bytes[0x2000]!==0xe9 || bytes[0x20000]!==0xe9)
+      throw new Error("Nieprawidłowy obraz ESP32-P4");
+    const digest=new Uint8Array(await crypto.subtle.digest("SHA-256",image));
+    const actual=Array.from(digest,b=>b.toString(16).padStart(2,"0")).join("");
+    if(actual!==expected) throw new Error("Niezgodna suma SHA256");
+    document.querySelector("#downloads").hidden=false;
+    document.querySelector("#install").hidden=false;
+    status.textContent="Pełny obraz ESP32-P4 przeszedł sprawdzenie SHA256.";
+  } catch (error) {
+    status.textContent="Nie udało się sprawdzić obrazu. "+error.message;
+  }
+}
+verify();
+</script></main></body></html>

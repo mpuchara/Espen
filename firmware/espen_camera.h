@@ -19,7 +19,7 @@ class EspenCamera final:public Camera {
     size_t jpeg_size_=0;
     int64_t jpeg_at_=0;
     std::atomic<bool> enabled_{false},endpoint_{false};
-    std::atomic<uint32_t> grant_{0};
+    std::atomic<uint32_t> grant_{0}, tap_grant_{0};
     std::atomic<int> activity_{0}; // 1=capture, 2=upload
     void ClearPhoto();
     void ClearChatPhoto();

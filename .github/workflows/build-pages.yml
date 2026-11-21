@@ -3,10 +3,11 @@ on:
   push:
     branches: [main, feature/ala-personal-memory-engine-stage6, feature/ala-play-games-stage10, feature/ala-stage11-tap-vision, feature/ala-stage12-ai-magic-story, feature/ala-stage13-voice-first-single-choice, feature/ala-stage14-story-face-animations]
   pull_request:
-    branches: [main, feature/ala-central-behavior-engine-stage2, feature/ala-living-robot-engine-stage3, feature/ala-conversation-intelligence-stage4, feature/ala-social-intelligence-stage5, feature/ala-native-xiaozhi-social-stage5-2, feature/ala-personal-memory-engine-stage6, feature/ala-local-face-recognition-stage7, feature/ala-multimodal-perception-stage7c]
+    branches: [main, feature/ala-central-behavior-engine-stage2, feature/ala-living-robot-engine-stage3, feature/ala-conversation-intelligence-stage4, feature/ala-social-intelligence-stage5, feature/ala-native-xiaozhi-social-stage5-2, feature/ala-personal-memory-engine-stage6, feature/ala-local-face-recognition-stage7, feature/ala-multimodal-perception-stage7c, feature/ala-stage14-story-face-animations]
   workflow_dispatch:
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: espen-pages-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref_name }}
   cancel-in-progress: true
@@ -46,6 +47,69 @@ jobs:
           assert image[:0x800000] != b'\\xff'*0x800000, "empty flash image"
           print("Ala Pilot 0.2.19 verified: bootloader, app, assets, checksums")
           PILOT_VALIDATION
+      # Deliberately publish the audited PR #47 as a SEPARATE EXPERIMENTAL installer.
+      # Do NOT replace the stable root 0.2.17 image or merge experimental firmware into main.
+      - name: Download pinned Stage 9 experimental image
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/download-artifact@v4
+        with:
+          name: espen-guition-p4
+          run-id: 44815907855
+          github-token: ${{ github.token }}
+          path: dist/ala-stage9
+      - name: Verify Stage 9 full-flash image and immutable checksum
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          python3 - <<'STAGE9_VERIFY'
+          import hashlib
+          import json
+          from pathlib import Path
+          folder = Path("dist/ala-stage9")
+          image_path = folder / "espen.bin"
+          sha_path = folder / "espen.bin.sha256"
+          expected = "a5b44d3a86b8051295f6f0bd80458c00edfade6327b325516382beca2de0fcf2"
+          checksum = sha_path.read_text().strip().split()
+          assert checksum == [expected, "espen.bin"], "Stage 9 checksum file is unexpected"
+          binary = image_path.read_bytes()
+          assert len(binary) == 10302462, "Unexpected Stage 9 full image size"
+          assert len(binary) <= 16 * 1024 * 1024, "Stage 9 exceeds 16 MiB flash"
+          assert binary[0x2000] == 0xE9, "Missing bootloader at 0x2000"
+          assert binary[0x20000] == 0xE9, "Missing application at 0x20000"
+          assert hashlib.sha256(binary).hexdigest() == expected, "Stage 9 SHA256 mismatch"
+          manifest = json.loads((folder / "manifest.json").read_text())
+          assert manifest["builds"][0]["parts"] == [{"path":"espen.bin","offset":0}]
+          print("Verified Stage 9 full-flash image, SHA256, size and 0x0 installer")
+          STAGE9_VERIFY
+      # Independent experimental full-image installer for Stage 10 games,
+      # pinned to CI-verified PR #50; root 0.2.17 and Stage 9 stay untouched.
+      - name: Download pinned Stage 10 games firmware
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/download-artifact@v4
+        with:
+          name: espen-guition-p4
+          run-id: 44832672714
+          github-token: ${{ github.token }}
+          path: dist/ala-stage10
+      - name: Verify Stage 10 game image, partition and immutable checksum
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          python3 - <<'STAGE10_VERIFY'
+          import hashlib
+          import json
+          from pathlib import Path
+          folder=Path('dist/ala-stage10')
+          image=(folder/'espen.bin').read_bytes()
+          expected='4b0fd282b60ea1cd7363bb534a58dd54587142a59caef7f744d889b9d9a6d7ad'
+          assert (folder/'espen.bin.sha256').read_text().strip().split() == [expected, 'espen.bin']
+          assert len(image)==10302462 and len(image)<=16*1024*1024
+          assert image[0x2000]==0xe9 and image[0x20000]==0xe9
+          assert hashlib.sha256(image).hexdigest()==expected
+          manifest=json.loads((folder/'manifest.json').read_text())
+          assert manifest['builds'][0]['parts']==[{'path':'espen.bin','offset':0}]
+          print('Ala Stage 10: full image, manifest, offsets, SHA256 OK')
+          STAGE10_VERIFY
       - name: Upload firmware
         uses: actions/upload-artifact@v4
         with:
@@ -56,6 +120,51 @@ jobs:
             dist/espen-app.bin
             dist/espen-assets.bin
             dist/espen-update.sha256
+          if-no-files-found: error
+      - name: Verify full Ala 0.2.24 preview installer
+        if: github.head_ref == 'codex/ala-stage15'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp dist/espen.bin dist/espen.bin.sha256 dist/stage15/
+          (cd dist/stage15 && sha256sum --check espen.bin.sha256)
+          python3 - <<'PY'
+          import json
+          import struct
+          from pathlib import Path
+
+          folder = Path("dist/stage15")
+          image = (folder / "espen.bin").read_bytes()
+          app = Path("dist/espen-app.bin").read_bytes()
+          assets = Path("dist/espen-assets.bin").read_bytes()
+          manifest = json.loads((folder / "manifest.json").read_text())
+          assert manifest["version"] == "0.2.24"
+          assert manifest["builds"] == [{
+              "chipFamily": "ESP32-P4", "parts": [{"path": "espen.bin", "offset": 0}]
+          }]
+          assert 0x800000 < len(image) <= 0x1000000
+          assert image[0x2000] == image[0x20000] == 0xe9
+          assert image[0x20000:0x20000 + len(app)] == app
+          assert image[0x800000:0x800000 + len(assets)] == assets
+          entries = {}
+          for offset in range(0x8000, 0x8c00, 32):
+              magic, _, _, start, size, label, _ = struct.unpack_from("<HBBII16sI", image, offset)
+              if magic != 0x50aa:
+                  break
+              entries[label.split(b"\0", 1)[0].decode()] = (start, size)
+          assert entries == {
+              "nvs": (0x9000, 0x4000), "otadata": (0xd000, 0x2000),
+              "phy_init": (0xf000, 0x1000), "ota_0": (0x20000, 0x7e0000),
+              "assets": (0x800000, 0x800000)
+          }
+          assert "manifest.json" in (folder / "index.html").read_text()
+          PY
+      - name: Upload Ala 0.2.24 full preview installer
+        if: github.head_ref == 'codex/ala-stage15'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ala-stage15-full-installer
+          path: dist/stage15
           if-no-files-found: error
       - name: Upload debug symbols and effective configuration
         uses: actions/upload-artifact@v4

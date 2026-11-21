@@ -1,0 +1,16 @@
+{
+  "name": "Ala Stage 9 – eksperymentalna pełna instalacja (ESP32-P4 16 MiB)",
+  "version": "0.2.17-stage9-f4d05d4",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32-P4",
+      "parts": [
+        {
+          "path": "espen.bin",
+          "offset": 0
+        }
+      ]
+    }
+  ]
+}

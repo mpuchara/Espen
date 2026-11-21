@@ -35,6 +35,8 @@ EspenCamera::EspenCamera(){
 EspenCamera::~EspenCamera(){ClearPhoto();ClearChatPhoto();}
 EspenCamera& EspenVision(){static EspenCamera camera;return camera;}
 void EspenVisionQuestion(const char* text){EspenVision().NoteQuestion(text);}
+bool EspenGrantButtonCamera(){return EspenVision().GrantOneTap();}
+void EspenRevokeButtonCamera(){EspenVision().RevokeOneTap();}
 bool EspenCamera::StartLocal(){
     auto e=hb_camera_start();
     if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE){
@@ -45,17 +47,18 @@ bool EspenCamera::StartLocal(){
 void EspenCamera::SetCloudEnabled(bool value){
     enabled_.store(value,std::memory_order_release);
     grant_.store(0,std::memory_order_release);
+    tap_grant_.store(0,std::memory_order_release);
     if(!value)ClearChatPhoto();
     Settings cfg("espen_camera",true);cfg.SetBool("cloud_enabled",value);
 }
 bool EspenCamera::GrantOneTap(){
     // The child touched "Aparat": a single, expiring permission, not streaming.
-    if(!CloudEnabled() || !EndpointReady())return false;
-    grant_.store(NowMs()+45000U,std::memory_order_release);
+    if(!CloudEnabled())return false;
+    tap_grant_.store(NowMs()+45000U,std::memory_order_release);
     return true;
 }
 void EspenCamera::RevokeOneTap(){
-    grant_.store(0,std::memory_order_release);
+    tap_grant_.store(0,std::memory_order_release);
 }
 void EspenCamera::NoteQuestion(const char* text){
     // Clear unused consent on every new recognized user turn.
@@ -95,7 +98,11 @@ bool EspenCamera::Capture(){
     std::lock_guard<std::mutex> lock(mutex_);
     ClearPhoto();
     uint32_t grant=grant_.exchange(0,std::memory_order_acq_rel);
-    if(!CloudEnabled()||!grant||static_cast<int32_t>(grant-NowMs())<=0){
+    const uint32_t tap=tap_grant_.exchange(0,std::memory_order_acq_rel);
+    const uint32_t now=NowMs();
+    const bool authorized=(grant && static_cast<int32_t>(grant-now)>0) ||
+                          (tap && static_cast<int32_t>(tap-now)>0);
+    if(!CloudEnabled()||!authorized){
         ESP_LOGW(TAG,"Photo denied: enable cloud vision and explicitly ask to look");return false;
     }
     if(!EndpointReady()){ESP_LOGW(TAG,"No HTTPS vision endpoint from Xiaozhi");return false;}
