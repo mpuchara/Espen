@@ -1142,10 +1142,13 @@ class EspenDisplay : public LcdDisplay {
         if(!game_panel_)return;
         auto phase=magic_story_.Phase();
         lv_label_set_text(game_title_,"Magiczna opowieść");
+        // Keep all three options visible at the bottom on a 480px-high P4.
+        lv_obj_set_height(lv_obj_get_parent(game_title_),42);
+        Hide(game_progress_,true);
         lv_label_set_text_fmt(game_progress_,"Twoja przygoda • część %u",magic_story_.Turn()+1);
         const std::string& text=magic_live_text_.empty()?magic_story_.Scene():magic_live_text_;
         lv_label_set_text(game_prompt_,text.empty()?"Ala wymyśla magiczną przygodę...":text.c_str());
-        lv_obj_set_height(game_prompt_,113);
+        lv_obj_set_height(game_prompt_,phase==espen::MagicPhase::Ready?98:172);
         lv_obj_add_flag(game_prompt_,LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_scroll_dir(game_prompt_,LV_DIR_VER);
         bool ready=phase==espen::MagicPhase::Ready;
@@ -1155,16 +1158,18 @@ class EspenDisplay : public LcdDisplay {
                 const char* label=i==2?LV_SYMBOL_AUDIO "  Powiem własny pomysł":
                     magic_story_.Option(i).c_str();
                 lv_label_set_text(lv_obj_get_child(game_choices_[i],0),label);
-                lv_obj_set_height(game_choices_[i],54);
+                lv_obj_set_height(game_choices_[i],50);
             }
         }
         Hide(game_spacer_,true);
         Hide(game_next_,true);
         Hide(game_again_,true);
-        Hide(game_home_,false);
+        Hide(game_home_,true);
+        Hide(game_feedback_,ready);
+        Hide(game_voice_status_,ready);
+        lv_obj_set_height(game_repeat_,42);
         Hide(game_repeat_,phase==espen::MagicPhase::Generating ||
                           phase==espen::MagicPhase::Listening);
-        Hide(game_voice_status_,false);
         if(phase==espen::MagicPhase::Ready) {
             lv_label_set_text(game_feedback_,"Wybierz 1, 2 lub powiedz własny pomysł.");
             lv_label_set_text(game_voice_status_,"Możesz odsłuchać propozycje ponownie.");
@@ -1247,6 +1252,10 @@ class EspenDisplay : public LcdDisplay {
         if(magic_story_.Phase()!=espen::MagicPhase::Off) {
             RefreshMagicStory();return;
         }
+        lv_obj_set_height(lv_obj_get_parent(game_title_),55);
+        Hide(game_progress_,false);
+        Hide(game_feedback_,false);
+        Hide(game_spacer_,false);
         const auto view=games_.View();
         lv_label_set_text(game_title_,view.title);
         if(view.mode==espen::PlayMode::Menu) {
