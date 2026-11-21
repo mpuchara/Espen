@@ -1,0 +1,66 @@
+name: Ala Stage 13 - voice-first one-choice Magic Story (full flash)
+on:
+  push:
+    branches: [feature/ala-stage13-voice-first-single-choice]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  story-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify voice-first story and previous game/camera behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/prepare_phone.py scripts/prepare.py
+          python3 tests/test_ala_stage13_voice_first_contracts.py
+          python3 tests/test_ala_stage12_magic_contracts.py
+          python3 tests/test_ala_stage11_vision_contracts.py
+          python3 tests/test_ala_play_games_contracts.py
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_magic_story.cc -o /tmp/ala-stage13-story
+          /tmp/ala-stage13-story
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_play_games.cc -o /tmp/ala-stage13-games
+          /tmp/ala-stage13-games
+  p4-complete-firmware:
+    needs: story-contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    container:
+      image: espressif/idf:v6.1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and verify full-flash Ala 0.2.20
+        shell: bash
+        run: |
+          set -euo pipefail
+          source "$IDF_PATH/export.sh"
+          bash scripts/build.sh
+          (cd dist && sha256sum --check espen.bin.sha256 && sha256sum --check espen-update.sha256)
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          d=Path('dist')
+          full=(d/'espen.bin').read_bytes()
+          app=(d/'espen-app.bin').read_bytes()
+          m=json.loads((d/'manifest-full.json').read_text(encoding='utf-8'))
+          assert m['version']=='0.2.20'
+          assert m['builds'][0]['chipFamily']=='ESP32-P4'
+          assert m['builds'][0]['parts']==[{'path':'espen.bin','offset':0}]
+          assert 0x800000<len(full)<=16*1024*1024
+          assert full[0x2000]==0xe9 and full[0x20000]==0xe9
+          assert full[0x20000:0x20000+len(app)]==app
+          print("Ala 0.2.20 full ESP32-P4 image verified")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ala-stage13-voice-story-full-flash
+          path: |
+            dist/espen.bin
+            dist/espen.bin.sha256
+            dist/espen-app.bin
+            dist/espen-assets.bin
+            dist/espen-update.sha256
+          if-no-files-found: error
