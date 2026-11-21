@@ -1,7 +1,7 @@
 name: Espen firmware and installer
 on:
   push:
-    branches: [main, feature/ala-personal-memory-engine-stage6, feature/ala-play-games-stage10]
+    branches: [main, feature/ala-personal-memory-engine-stage6, feature/ala-play-games-stage10, feature/ala-stage11-tap-vision]
   pull_request:
     branches: [main, feature/ala-central-behavior-engine-stage2, feature/ala-living-robot-engine-stage3, feature/ala-conversation-intelligence-stage4, feature/ala-social-intelligence-stage5, feature/ala-native-xiaozhi-social-stage5-2, feature/ala-personal-memory-engine-stage6, feature/ala-local-face-recognition-stage7, feature/ala-multimodal-perception-stage7c]
   workflow_dispatch:
@@ -24,7 +24,7 @@ jobs:
           bash scripts/build.sh
       # Publish exactly the SAME firmware as the main installer, never the
       # older Ala Pilot test release. Verify the complete bootloader+app image.
-      - name: Stage Ala Pilot installer from current 0.2.17 build
+      - name: Stage Ala Pilot installer from current 0.2.18 build
         shell: bash
         run: |
           set -euo pipefail
@@ -44,7 +44,7 @@ jobs:
           assert image[0x20000] == 0xE9, "missing application at 0x20000"
           assert image[0x20000:0x20000+len(app)] == app, "unexpected application content"
           assert image[:0x800000] != b'\\xff'*0x800000, "empty flash image"
-          print("Ala Pilot 0.2.17 verified: bootloader, app, assets, checksums")
+          print("Ala Pilot 0.2.18 verified: bootloader, app, assets, checksums")
           PILOT_VALIDATION
       - name: Upload firmware
         uses: actions/upload-artifact@v4

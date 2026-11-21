@@ -34,6 +34,9 @@ public:
     bool CloudEnabled()const{return enabled_.load(std::memory_order_acquire);}
     bool EndpointReady()const{return endpoint_.load(std::memory_order_acquire);}
     int Activity()const{return activity_.load(std::memory_order_acquire);}
+    // One explicit press of the camera button authorizes exactly one HTTPS photo.
+    bool GrantOneTap();
+    void RevokeOneTap();
     void NoteQuestion(const char* text);
     void SetExplainUrl(const std::string& url,const std::string& token) override;
     bool Capture() override;
