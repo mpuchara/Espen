@@ -1,0 +1,112 @@
+name: Publish Ala 0.2.18 Stage 11 preview installer (Pages)
+on:
+  push:
+    branches: [feature/ala-stage11-tap-vision]
+    paths:
+      - .github/workflows/publish-stage11-pages.yml
+  workflow_dispatch:
+permissions:
+  actions: read
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: ala-stage11-pages-preview
+  cancel-in-progress: false
+jobs:
+  publish-preview:
+    if: github.ref == 'refs/heads/feature/ala-stage11-tap-vision'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}stage11/
+    steps:
+      - name: Checkout current stable installer (preserve 0.2.17 root)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: stable
+      - name: Checkout verified Stage 11 installer (0.2.18)
+        uses: actions/checkout@v4
+        with:
+          ref: feature/ala-stage11-tap-vision
+          path: stage11src
+      - name: Download stable 0.2.17 firmware from successful main build
+        uses: actions/download-artifact@v4
+        with:
+          name: espen-guition-p4
+          run-id: 44833709126
+          repository: mpuchara/Espen
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: dist
+      - name: Download verified Stage 11 firmware (commit 104241df)
+        uses: actions/download-artifact@v4
+        with:
+          name: ala-stage11-camera-vision-full-flash
+          run-id: 44840342163
+          repository: mpuchara/Espen
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: dist/stage11
+      - name: Assemble isolated full-flash installer /stage11/
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp -a stable/web/. dist/
+          cp -a stage11src/web/. dist/stage11/
+          # Both versions are complete 0x0 flash images; keep pilot links working
+          # but do not change the stable v0.2.17 root installation.
+          for file in espen.bin espen.bin.sha256 espen-app.bin espen-assets.bin espen-update.sha256; do
+            cp "dist/$file" "dist/pilot/$file"
+            cp "dist/stage11/$file" "dist/stage11/pilot/$file"
+          done
+          (cd dist && sha256sum --check espen.bin.sha256 && sha256sum --check espen-update.sha256)
+          (cd dist/stage11 && sha256sum --check espen.bin.sha256 && sha256sum --check espen-update.sha256)
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          for dirname, version in (('dist', '0.2.17'), ('dist/stage11', '0.2.18')):
+              base=Path(dirname)
+              m=json.loads((base/'manifest-full.json').read_text(encoding='utf-8'))
+              assert m['version']==version, (dirname, m['version'])
+              assert m['builds'][0]['parts']==[{'path':'espen.bin','offset':0}]
+              image=(base/'espen.bin').read_bytes()
+              app=(base/'espen-app.bin').read_bytes()
+              assert 0x800000<len(image)<=16*1024*1024
+              assert image[0x2000]==0xE9 and image[0x20000]==0xE9
+              assert image[0x20000:0x20000+len(app)]==app
+              print(f'{dirname}: complete flash image and version {version} confirmed')
+          index=Path('dist/index.html')
+          html=index.read_text(encoding='utf-8')
+          anchor='<h1>Espen.</h1>'
+          assert html.count(anchor)==1, 'Expected stable index heading'
+          banner=('<div style="border:2px solid #78e1cb;border-radius:15px;'
+                  'padding:15px;margin:18px 0;background:#102a32">'
+                  '<strong>NOWOŚĆ: Ala 0.2.18 — Stage 11 (wersja testowa)</strong>'
+                  '<p>Nowe przyciski Gry, Aparat i Mikrofon. Dotknięcie Aparat '
+                  'uruchamia analizę jednego zdjęcia przez Xiaozhi.</p>'
+                  '<a href="stage11/" style="font-size:1.15rem;font-weight:bold">'
+                  '➡ Otwórz instalator Ali 0.2.18 Stage 11</a>'
+                  '</div>')
+          index.write_text(html.replace(anchor,anchor+banner,1),encoding='utf-8')
+          preview=Path('dist/stage11/index.html')
+          html=preview.read_text(encoding='utf-8')
+          assert '0.2.18' in html
+          assert 'id="full-installer"' in html
+          assert 'manifest="manifest-full.json"' in html
+          preview.write_text(html.replace('<h1>Espen.</h1>',
+              '<h1>Espen.</h1><p><b>ALA STAGE 11 — wersja testowa.</b> '
+              'Nowe przyciski 🎮 Gry, 📷 Aparat i 🎤 Mikrofon. '
+              'Dotknięcie aparatu uruchamia analizę pojedynczego zdjęcia '
+              'i odczyt odpowiedzi Xiaozhi (wymaga Wi-Fi i Vision HTTPS). '
+              'Funkcji nie zweryfikowano jeszcze na fizycznej płytce.</p>',1),
+              encoding='utf-8')
+          PY
+      - uses: actions/configure-pages@v5
+      - name: Upload full installer and separate Stage 11 preview to GitHub Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+      - name: Deploy GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4
