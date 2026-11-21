@@ -8,10 +8,10 @@ up = Path(sys.argv[1]).resolve()
 board = up / "main/boards/guition/espen-guition-jc4880p443"
 
 def replace(path, before, after):
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     if text.count(before) != 1:
         raise RuntimeError(f"Phone panel: missing or ambiguous patch anchor {path}: {before[:85]}")
-    path.write_text(text.replace(before, after, 1))
+    path.write_text(text.replace(before, after, 1), encoding="utf-8")
 
 # Keep the HTML in web/ for human editing and embed it into firmware at build time.
 html = (root / "web/phone.html").read_text(encoding="utf-8")
@@ -37,8 +37,10 @@ replace(header, '    void WakeWordInvoke(const std::string& wake_word);',
         '    void WakeWordInvoke(const std::string& wake_word);\n'
         '    void EspenSayText(const std::string& text, const std::string& robot_name);\n'
         '    void EspenAskText(const std::string& text, bool only_hello, const std::string& robot_name);\n'
-        '    void EspenNarrateGameText(const std::string& text, bool vision = false);\n'
-        '    void EspenGenerateMagicStory(const std::string& prompt);\n'
+        '    void EspenNarrateGameText(const std::string& text, bool vision = false, bool story_cue = false);\n'
+        '    void EspenGenerateMagicStory(const std::string& prompt, bool allow_barge = true);\n'
+        '    int EspenMicMode() const { return espen_mic_mode_.load(); }\n'
+        '    void EspenSetMicMode(int mode);\n'
         '    void EspenStartMagicVoiceListening();\n'
         '    void EspenCancelMagicStory();')
 
@@ -99,7 +101,13 @@ void Application::EspenSayText(const std::string& text, const std::string& robot
 
 // Game narration uses the already provisioned Xiaozhi speech channel; no
 // second TTS/microphone/audio task. The scripted story is the only source.
-void Application::EspenNarrateGameText(const std::string& text, bool vision) {
+void Application::EspenNarrateGameText(const std::string& text, bool vision, bool story_cue) {
+    if (story_cue) {
+        EspenGenerateMagicStory(
+            "Wypowiedz po polsku dokładnie ten fragment zapowiedzi, bez wstępu ani dodatków: " + text,
+            false);
+        return;
+    }
     Schedule([this, text, vision]() {
         if (!protocol_ || GetDeviceState() != kDeviceStateIdle ||
             EspenIsStandby() || text.empty() || text.size()>700) return;
@@ -125,72 +133,94 @@ void Application::EspenNarrateGameText(const std::string& text, bool vision) {
 }
 
 
-// Stage 12: dynamic story generation is a real Xiaozhi LLM request.
-// The model speaks the entire scene and two choices; the board parses the
-// identical incoming TTS subtitles. Never manufacture a local "AI" story.
+// Story turns use the existing acknowledged channel and application task.
+extern bool EspenMagicStoryActive();
+extern bool EspenMagicStoryTextTurn();
+extern void EspenMagicStoryInvalidate();
+extern void EspenMagicStoryArmVoice();
+extern void EspenMagicStoryBeginOutput();
+extern void EspenMagicStoryOutputFailed();
 
-// The spoken third choice uses the same Xiaozhi codec in AUTO mode so the
-// player can simply talk and pause; no second microphone tap is necessary.
-void Application::EspenStartMagicVoiceListening() {
-    Schedule([this]() {
-        if(!protocol_ || EspenIsStandby())return;
-        auto state=GetDeviceState();
-        if(state==kDeviceStateSpeaking)
-            protocol_->SendAbortSpeaking(kAbortReasonNone);
-        else if(state==kDeviceStateListening)
-            protocol_->SendStopListening();
-        else if(state!=kDeviceStateIdle)return;
-        if(!protocol_->IsAudioChannelOpened()) {
-            if(!SetDeviceState(kDeviceStateConnecting))return;
-            Schedule([this]() {
-                if(GetDeviceState()!=kDeviceStateConnecting || !protocol_)return;
-                if(!protocol_->IsAudioChannelOpened() && !protocol_->OpenAudioChannel()) {
-                    SetDeviceState(kDeviceStateIdle);return;
-                }
-                SetListeningMode(kListeningModeAutoStop);
-            });
-        } else SetListeningMode(kListeningModeAutoStop);
+void Application::EspenSetMicMode(int mode) {
+    if (mode < 0 || mode > 2) return;
+    espen_mic_mode_.store(mode);
+    Schedule([this, mode]() {
+        if (EspenMicMode() != mode) return;
+        ESP_LOGI(TAG, "Espen dock microphone: mode=%d (talk=0, keyword=1, off=2)",mode);
+        EspenWake().SetAutoSpeech(mode == 0);
+        audio_service_.CancelEspenSpeechCapture();
+        if (mode != 0 && (GetDeviceState() == kDeviceStateListening ||
+                         GetDeviceState() == kDeviceStateConnecting)) {
+            audio_service_.EnableVoiceProcessing(false);
+            if (protocol_ && protocol_->IsAudioChannelOpened()) protocol_->CloseAudioChannel();
+            SetDeviceState(kDeviceStateIdle);
+        }
+        if (mode == 2) audio_service_.EnableEspenBargeIn(false);
+        EspenEnsureWake();
     });
 }
-void Application::EspenGenerateMagicStory(const std::string& prompt) {
-    Schedule([this, prompt]() {
-        extern void EspenMagicStoryOutputFailed();
-        if (!protocol_ || GetDeviceState() != kDeviceStateIdle ||
-            EspenIsStandby() || prompt.empty() || prompt.size()>4200) {
-            EspenMagicStoryOutputFailed();return;
+
+void Application::EspenStartMagicVoiceListening() {
+    const auto epoch = espen_story_epoch_.load();
+    Schedule([this, epoch]() {
+        if (epoch != espen_story_epoch_.load() || !EspenMagicStoryActive()) return;
+        if (!protocol_ || EspenMicMode()==2 || EspenIsStandby() ||
+            GetDeviceState()!=kDeviceStateIdle || !SetDeviceState(kDeviceStateConnecting)) {
+            EspenMagicStoryOutputFailed();
+            return;
         }
-        if (!SetDeviceState(kDeviceStateConnecting)) {
-            EspenMagicStoryOutputFailed();return;
+        if (!protocol_->IsAudioChannelOpened() && !protocol_->OpenAudioChannel()) {
+            SetDeviceState(kDeviceStateIdle);
+            EspenMagicStoryOutputFailed();
+            return;
         }
-        Schedule([this, prompt]() {
-            extern void EspenMagicStoryOutputFailed();
-            if (GetDeviceState()!=kDeviceStateConnecting || EspenIsStandby() ||
-                !protocol_) {EspenMagicStoryOutputFailed();return;}
-            if (!protocol_->IsAudioChannelOpened() && !protocol_->OpenAudioChannel()) {
-                SetDeviceState(kDeviceStateIdle);
-                EspenMagicStoryOutputFailed();return;
-            }
-            extern void EspenMagicStoryBeginOutput();
-            EspenMagicStoryBeginOutput();
-            // Upstream Protocol::SendWakeWordDetected concatenates JSON without
-            // escaping. Never send raw newlines/quotes from a child's option.
-            std::string json_safe_prompt=prompt;
-            for(char& c:json_safe_prompt) {
-                const auto uc=static_cast<unsigned char>(c);
-                if(c=='"' || c=='\\' || uc<0x20)c=' ';
-            }
-            protocol_->SendWakeWordDetected(json_safe_prompt);
-            play_popup_on_listening_ = false;
-            SetListeningMode(kListeningModeAutoStop);
-        });
+        if (epoch != espen_story_epoch_.load()) return;
+        EspenMagicStoryArmVoice();
+        play_popup_on_listening_ = false;
+        SetListeningMode(kListeningModeAutoStop);
+    });
+}
+void Application::EspenGenerateMagicStory(const std::string& prompt, bool allow_barge) {
+    const auto epoch = espen_story_epoch_.load();
+    Schedule([this, prompt, allow_barge, epoch]() {
+        if (epoch != espen_story_epoch_.load() || !EspenMagicStoryActive()) return;
+        if (!protocol_ || GetDeviceState()!=kDeviceStateIdle || EspenIsStandby() ||
+            prompt.empty() || prompt.size()>4600 || !SetDeviceState(kDeviceStateConnecting)) {
+            EspenMagicStoryOutputFailed();
+            return;
+        }
+        if (!protocol_->IsAudioChannelOpened() && !protocol_->OpenAudioChannel()) {
+            SetDeviceState(kDeviceStateIdle);
+            EspenMagicStoryOutputFailed();
+            return;
+        }
+        if (epoch != espen_story_epoch_.load()) return;
+        espen_story_barge_.store(allow_barge);
+        EspenMagicStoryBeginOutput();
+        play_popup_on_listening_ = false;
+        SetListeningMode(kListeningModeAutoStop); // protocol state only, no live input
+        protocol_->SendWakeWordDetected(prompt);
     });
 }
 void Application::EspenCancelMagicStory() {
+    ++espen_story_epoch_;
+    EspenMagicStoryInvalidate();
     Schedule([this]() {
-        if (!protocol_)return;
-        if (GetDeviceState()==kDeviceStateSpeaking)
+        if (GetDeviceState()==kDeviceStateSpeaking && protocol_)
             protocol_->SendAbortSpeaking(kAbortReasonNone);
-        if (protocol_->IsAudioChannelOpened())protocol_->CloseAudioChannel();
+        audio_service_.CancelEspenSpeechCapture();
+        audio_service_.EnableVoiceProcessing(false);
+        audio_service_.ResetDecoder();
+        espen_barge_guard_.store(false);
+        espen_tv_turn_closing_ = false;
+        if (protocol_ && protocol_->IsAudioChannelOpened()) protocol_->CloseAudioChannel();
+        else {
+            extern void EspenMagicStoryChannelClosed();
+            EspenMagicStoryChannelClosed();
+        }
+        const auto state=GetDeviceState();
+        if (state==kDeviceStateSpeaking || state==kDeviceStateListening ||
+            state==kDeviceStateConnecting) SetDeviceState(kDeviceStateIdle);
     });
 }
 
@@ -227,7 +257,82 @@ replace(app, 'void Application::WakeWordInvoke(const std::string& wake_word) {',
 # The phone-panel host fixture has no Xiaozhi JSON callback. In the real
 # pinned firmware scripts/prepare.py added this symbol first; the hooks below
 # are mandatory there and are verified again after the overlay during build.
-if 'EspenVisualSentence(text->valuestring);' in app.read_text():
+if 'EspenVisualSentence(text->valuestring);' in app.read_text(encoding="utf-8"):
+    protocol = up / "main/protocols/protocol.cc"
+    old_detect = protocol.read_text(encoding="utf-8")
+    detect_start = old_detect.index("void Protocol::SendWakeWordDetected(")
+    detect_end = old_detect.index("void Protocol::SendStartListening", detect_start)
+    replace(protocol, old_detect[detect_start:detect_end], """void Protocol::SendWakeWordDetected(const std::string& wake_word) {
+    auto* request = cJSON_CreateObject();
+    if (!request) return;
+    cJSON_AddStringToObject(request, "session_id", session_id_.c_str());
+    cJSON_AddStringToObject(request, "type", "listen");
+    cJSON_AddStringToObject(request, "state", "detect");
+    cJSON_AddStringToObject(request, "text", wake_word.c_str());
+    char* payload = cJSON_PrintUnformatted(request);
+    if (payload) {
+        SendText(payload);
+        cJSON_free(payload);
+    }
+    cJSON_Delete(request);
+}
+
+""")
+    helpers = """extern bool EspenMagicStoryActive();
+extern bool EspenMagicStoryTextTurn();
+extern bool EspenMagicStorySuppressStale();
+extern void EspenMagicStoryBargeIn();
+extern void EspenMagicStoryChannelClosed();
+"""
+    replace(app, 'void Application::EspenEnsureWake() {', helpers + 'void Application::EspenEnsureWake() {')
+    replace(app,
+        '    const bool allowed = state == kDeviceStateStarting || state == kDeviceStateActivating ||',
+        '    EspenWake().SetAutoSpeech(EspenMicMode()==0);\n'
+        '    if (EspenMicMode()==2 || EspenMagicStoryActive()) {\n'
+        '        if (audio_service_.IsWakeWordRunning()) audio_service_.EnableWakeWordDetection(false);\n'
+        '        return;\n'
+        '    }\n'
+        '    const bool allowed = state == kDeviceStateStarting || state == kDeviceStateActivating ||')
+    for signature in ("void Application::HandleToggleChatEvent() {",
+                      "void Application::HandleStartListeningEvent() {",
+                      "void Application::ContinueOpenAudioChannel(ListeningMode mode) {",
+                      "void Application::HandleWakeWordDetectedEvent() {"):
+        replace(app, signature, signature +
+                '\n    if (EspenMicMode()==2 || EspenMagicStoryActive()) return;')
+    replace(app, '            while (auto packet = audio_service_.PopPacketFromSendQueue()) {',
+        '            while (auto packet = audio_service_.PopPacketFromSendQueue()) {\n'
+        '                if (EspenMicMode()==2 || EspenMagicStoryTextTurn()) continue;')
+    replace(app, 'void Application::EspenCheckSilence() {',
+        'void Application::EspenCheckSilence() {\n    if (EspenMagicStoryTextTurn()) return;')
+    replace(app, '        case kDeviceStateListening:',
+        '        case kDeviceStateListening:\n'
+        '            if (EspenMicMode()==2 || EspenMagicStoryTextTurn()) {\n'
+        '                audio_service_.EnableWakeWordDetection(false);\n'
+        '                audio_service_.EnableVoiceProcessing(false);\n'
+        '                break;\n'
+        '            }')
+    replace(app, '            audio_service_.EnableEspenBargeIn(true);',
+        '            audio_service_.EnableEspenBargeIn(EspenMicMode()!=2 &&\n'
+        '                (!EspenMagicStoryActive() || espen_story_barge_.load()));')
+    replace(app, '    espen_barge_guard_.store(true, std::memory_order_release);',
+        '    if (EspenMicMode()==2 || (EspenMagicStoryActive() && !espen_story_barge_.load())) {\n'
+        '        audio_service_.CancelEspenSpeechCapture();\n'
+        '        return;\n'
+        '    }\n'
+        '    if (EspenMagicStoryActive()) EspenMagicStoryBargeIn();\n'
+        '    espen_barge_guard_.store(true, std::memory_order_release);')
+    replace(app, '                    aborted_ = false;\n                    SetDeviceState(kDeviceStateSpeaking);',
+        '                    if (EspenMagicStorySuppressStale()) return;\n'
+        '                    aborted_ = false;\n                    SetDeviceState(kDeviceStateSpeaking);')
+    replace(app,
+        '        espen_xiaozhi_channel_open_.store(false, std::memory_order_release);',
+        '        EspenMagicStoryChannelClosed();\n'
+        '        espen_xiaozhi_channel_open_.store(false, std::memory_order_release);')
+    audio = up / "main/audio/audio_service.cc"
+    replace(audio, '        codec_->OutputData(task.pcm);',
+        '        codec_->OutputData(task.pcm);\n'
+        '        extern void EspenMagicStoryPlayback();\n'
+        '        EspenMagicStoryPlayback();')
     replace(app,
         '                EspenVisualSentence(text->valuestring);',
         '                EspenVisualSentence(text->valuestring);\n'
@@ -240,16 +345,9 @@ if 'EspenVisualSentence(text->valuestring);' in app.read_text():
         '                EspenMagicStoryOutputDone();')
     replace(app,
         '                EspenVisionQuestion(text->valuestring);',
-        '                EspenVisionQuestion(text->valuestring);\n'
         '                extern bool EspenMagicStoryConsumeVoice(const char*);\n'
-        '                if (EspenMagicStoryConsumeVoice(text->valuestring)) {\n'
-        '                    Schedule([this]() {\n'
-        '                        if (protocol_ && protocol_->IsAudioChannelOpened())\n'
-        '                            protocol_->CloseAudioChannel();\n'
-        '                        SetDeviceState(kDeviceStateIdle);\n'
-        '                    });\n'
-        '                    return; // one recorded choice; no unrelated assistant answer\n'
-        '                }')
+        '                if (EspenMagicStoryConsumeVoice(text->valuestring)) return;\n'
+        '                EspenVisionQuestion(text->valuestring);')
     replace(app,
         '        } else if (strcmp(type->valuestring, "tts") == 0) {',
         '        } else if (strcmp(type->valuestring, "tts") == 0) {\n'

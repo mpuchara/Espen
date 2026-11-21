@@ -8,8 +8,8 @@ board=(root/"firmware/espen_board.cc").read_text(encoding="utf-8")
 engine=(root/"firmware/ala_magic_story.h").read_text(encoding="utf-8")
 build=(root/"scripts/build.sh").read_text(encoding="utf-8")
 manifest=(root/"web/manifest-full.json").read_text(encoding="utf-8")
-assert '"version": "0.2.21"' in manifest
-assert '"Espen 0.2.21 boot:' in board
+assert '"version": "0.2.22"' in manifest
+assert '"Espen 0.2.22 boot:' in board
 assert "tests/test_ala_stage14_story_face_contracts.py" in build
 
 # Regression cause: the opaque, fullscreen LVGL game panel hid the face AND
@@ -26,9 +26,9 @@ assert "lv_obj_set_style_bg_opa(game_panel_,LV_OPA_COVER,0);" in board
 assert "lv_obj_set_flex_flow(game_panel_,LV_FLEX_FLOW_COLUMN);" in board
 assert "Hide(game_prompt_,true);" in board and "Hide(game_prompt_,false);" in board
 assert "magic_live_text_" not in board  # no on-screen transcript stealing memory and frames
-assert "lv_obj_set_pos(game_choices_[i]" in board
+assert "lv_obj_set_pos(button,themes" in board
 assert "lv_obj_set_pos(game_voice_status_,12,48);" in board
-assert "Hide(game_choices_[i],!(ready||listening) || i==2);" in board
+assert "Hide(button,!themes && (!choices || i==2));" in board
 assert "app.EspenStartMagicVoiceListening()" in board
 
 # Do NOT create a second render/audio loop. Existing 50-ms FaceEngine
@@ -45,10 +45,10 @@ assert "lv_obj_set_style_bg_opa(story_sparkles_[i]" in board
 assert "lv_obj_set_pos(story_sparkles_[i]" in board
 
 # All three scenery choices and the original quiz/animal menu are preserved.
-assert "magic_story_.Start(static_cast<espen::StorySetting>(j))" in board
-assert "games_.Start(static_cast<espen::PlayMode>(j+1)" in board
-assert "magic_story_.ChooseSuggestion(0)" in board
-assert "magic_story_.CompleteTurn(speech)" in board
-assert "OSTATNI WYBOR GRACZA:" in engine
+assert "magic_story_.Start(static_cast<espen::StorySetting>(index))" in board
+assert "games_.Start(mode," in board
+assert "magic_story_.ChooseSuggestion()" in board
+assert "magic_story_.CompleteTurn(event.speech)" in board
+assert "Pomysł dziecka:" in engine
 assert "LV_SYMBOL_IMAGE" in board and "LV_SYMBOL_AUDIO" in board
 print("Ala Stage 14: visible animated face + transparent Magic Story HUD contracts OK")

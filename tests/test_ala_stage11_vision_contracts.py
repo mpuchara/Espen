@@ -19,7 +19,7 @@ assert 'LV_SYMBOL_IMAGE "  Aparat"' in board
 assert 'LV_SYMBOL_AUDIO "  Mikrofon"' in board
 assert 'auto* play=MakeButton(face_,"GRY"' not in board
 assert "self->OpenPlayGames();" in board
-assert "else ConversationClick();" in board
+assert "app.EspenSetMicMode(mode);" in board
 
 # The camera button starts a real analysis, not just a settings panel.
 camera_button = board.split('LV_SYMBOL_IMAGE "  Aparat"', 1)[1].split("},this,142);", 1)[0]
@@ -52,13 +52,13 @@ assert "while(NowMs()-begin<7000&&CloudEnabled())" in camera
 
 # Text is voiced by the existing Xiaozhi worker, without a second audio pipeline.
 assert "EspenNarrateGameText(sentence,true)" in board
-assert "void Application::EspenNarrateGameText(const std::string& text, bool vision)" in speech
+assert "void Application::EspenNarrateGameText(const std::string& text, bool vision, bool story_cue)" in speech
 assert "SendWakeWordDetected(prompt)" in speech
 assert '"Jestes Ala, przyjaznym robotem dla dzieci.' in speech
 
 # New distinct version, full merged image, no accidental Pages publishing.
-assert any(f'"version": "{v}"' in manifest for v in ("0.2.18", "0.2.19", "0.2.20", "0.2.21"))
-assert any(f'"Espen {v} boot:' in board for v in ("0.2.18", "0.2.19", "0.2.20", "0.2.21"))
+assert any(f'"version": "{v}"' in manifest for v in ("0.2.18", "0.2.19", "0.2.20", "0.2.22"))
+assert any(f'"Espen {v} boot:' in board for v in ("0.2.18", "0.2.19", "0.2.20", "0.2.22"))
 assert 'test_ala_stage11_vision_contracts.py' in build
 pages = (root / ".github/workflows/build-pages.yml").read_text()
 assert "feature/ala-stage11-tap-vision" in pages
