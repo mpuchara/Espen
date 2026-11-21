@@ -1136,7 +1136,7 @@ class EspenDisplay : public LcdDisplay {
         EspenMagicStoryArmVoice(true);
         magic_voice_ms_=lv_tick_get();
         RefreshPlayGames();
-        app.StartListening();
+        app.EspenStartMagicVoiceListening();
     }
     void RefreshMagicStory() {
         if(!game_panel_)return;
