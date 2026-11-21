@@ -39,6 +39,7 @@ replace(header, '    void WakeWordInvoke(const std::string& wake_word);',
         '    void EspenAskText(const std::string& text, bool only_hello, const std::string& robot_name);\n'
         '    void EspenNarrateGameText(const std::string& text, bool vision = false);\n'
         '    void EspenGenerateMagicStory(const std::string& prompt);\n'
+        '    void EspenStartMagicVoiceListening();\n'
         '    void EspenCancelMagicStory();')
 
 app = up / "main/application.cc"
@@ -127,6 +128,30 @@ void Application::EspenNarrateGameText(const std::string& text, bool vision) {
 // Stage 12: dynamic story generation is a real Xiaozhi LLM request.
 // The model speaks the entire scene and two choices; the board parses the
 // identical incoming TTS subtitles. Never manufacture a local "AI" story.
+
+// The spoken third choice uses the same Xiaozhi codec in AUTO mode so the
+// player can simply talk and pause; no second microphone tap is necessary.
+void Application::EspenStartMagicVoiceListening() {
+    Schedule([this]() {
+        if(!protocol_ || EspenIsStandby())return;
+        auto state=GetDeviceState();
+        if(state==kDeviceStateSpeaking)
+            protocol_->SendAbortSpeaking(kAbortReasonNone);
+        else if(state==kDeviceStateListening)
+            protocol_->SendStopListening();
+        else if(state!=kDeviceStateIdle)return;
+        if(!protocol_->IsAudioChannelOpened()) {
+            if(!SetDeviceState(kDeviceStateConnecting))return;
+            Schedule([this]() {
+                if(GetDeviceState()!=kDeviceStateConnecting || !protocol_)return;
+                if(!protocol_->IsAudioChannelOpened() && !protocol_->OpenAudioChannel()) {
+                    SetDeviceState(kDeviceStateIdle);return;
+                }
+                SetListeningMode(kListeningModeAutoStop);
+            });
+        } else SetListeningMode(kListeningModeAutoStop);
+    });
+}
 void Application::EspenGenerateMagicStory(const std::string& prompt) {
     Schedule([this, prompt]() {
         extern void EspenMagicStoryOutputFailed();
