@@ -131,7 +131,12 @@ python3 scripts/prepare.py upstream
 python3 scripts/prepare_phone.py upstream
 # Real Xiaozhi STT/TTS callbacks must contain the Stage 12 capture hooks.
 # The host phone-panel fixture intentionally has no transport callback.
-for hook in   'EspenMagicStorySentence(text->valuestring)'   'EspenMagicStoryOutputDone()'   'EspenMagicStoryConsumeVoice(text->valuestring)'   'EspenMagicStorySuppressStale()'; do
+for hook in \
+  'EspenMagicStorySentence(text->valuestring)' \
+  'EspenMagicStoryOutputDone()' \
+  'EspenMagicStoryConsumeVoice(text->valuestring,show_story_choice)' \
+  'EspenMagicStorySuppressStale()' \
+  'EspenMagicStoryContextPending()'; do
   grep -Fq "$hook" upstream/main/application.cc || { echo "Missing Stage 12 cloud hook: $hook"; exit 1; }
 done
 # Verify both hardware-unmute and 75% defaults in the generated source.
