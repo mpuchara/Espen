@@ -1,0 +1,56 @@
+name: Publish isolated Ala 0.2.22 preview
+on:
+  push:
+    branches: [codex/ala-stage15-pages]
+permissions:
+  actions: read
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: ala-stage15-pages-preview
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: ala-stage15-preview
+      url: ${{ steps.deploy.outputs.page_url }}stage15/
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: github-pages
+          run-id: 44904340395
+          repository: mpuchara/Espen
+          github-token: ${{ github.token }}
+          path: previous
+      - uses: actions/download-artifact@v4
+        with:
+          name: ala-stage15-full-installer
+          run-id: 44912744264
+          repository: mpuchara/Espen
+          github-token: ${{ github.token }}
+          path: candidate
+      - name: Add the verified preview and preserve the deployed files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir dist
+          tar -xf previous/artifact.tar -C dist
+          test ! -e dist/stage15
+          for path in index.html espen.bin.sha256 manifest-full.json \
+            ala-stage{9,10}/{index.html,manifest.json} \
+            stage{11..14}/{index.html,espen.bin.sha256,manifest-full.json}; do
+            curl --fail --silent --show-error "https://mpuchara.github.io/Espen/$path" -o live-check
+            cmp "dist/$path" live-check
+          done
+          (cd dist && find . -type f -print0 | sort -z | xargs -0 sha256sum) > baseline.sha256
+          cp -a candidate dist/stage15
+          (cd dist && sha256sum --quiet --check ../baseline.sha256)
+          (cd dist/stage15 && sha256sum --check espen.bin.sha256)
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+      - uses: actions/deploy-pages@v4
+        id: deploy
