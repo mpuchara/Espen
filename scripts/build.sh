@@ -8,18 +8,18 @@ python3 - <<'PYVERSION'
 import json
 from pathlib import Path
 for file in ("web/manifest.json", "web/manifest-full.json"):
-    assert json.loads(Path(file).read_text())["version"] == "0.2.18", file
-assert "0.2.18 EXPERIMENTAL" in Path("web/index.html").read_text()
-assert "Espen 0.2.18 boot:" in Path("firmware/espen_board.cc").read_text()
+    assert json.loads(Path(file).read_text())["version"] == "0.2.19", file
+assert "0.2.19 EXPERIMENTAL" in Path("web/index.html").read_text()
+assert "Espen 0.2.19 boot:" in Path("firmware/espen_board.cc").read_text()
 root_installer=Path("web/index.html").read_text()
 assert 'manifest="manifest-full.json"' in root_installer, "Main installer must provide full image"
 assert 'manifest="manifest.json"' not in root_installer, "Main installer must not offer partial update"
 assert 'id="full-installer"' in root_installer, "Main installer must expose full flash control"
 full_manifest=json.loads(Path("web/manifest-full.json").read_text())
 assert full_manifest["builds"][0]["parts"]==[{"path":"espen.bin","offset":0}], "Full flash layout must start at 0x0"
-assert json.loads(Path("web/pilot/manifest.json").read_text())["version"] == "0.2.18"
-assert json.loads(Path("web/pilot/manifest-recovery.json").read_text())["version"] == "0.2.18"
-assert "0.2.18" in Path("web/pilot/index.html").read_text()
+assert json.loads(Path("web/pilot/manifest.json").read_text())["version"] == "0.2.19"
+assert json.loads(Path("web/pilot/manifest-recovery.json").read_text())["version"] == "0.2.19"
+assert "0.2.19" in Path("web/pilot/index.html").read_text()
 PYVERSION
 # Source-level integration guards for the LVGL/MCP bridge (plus host vision gate tests).
 python3 tests/test_photo_chat_integration.py
@@ -30,6 +30,9 @@ python3 tests/test_listening_start_silent.py
 python3 tests/test_audio_cue_integration.py
 python3 tests/test_stage9_regression_contracts.py
 python3 tests/test_ala_play_games_contracts.py
+python3 tests/test_ala_stage12_magic_contracts.py
+c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_magic_story.cc -o /tmp/ala-stage12-magic-test
+/tmp/ala-stage12-magic-test
 python3 tests/test_ala_stage11_vision_contracts.py
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_play_games.cc -o /tmp/ala-play-games-test
 /tmp/ala-play-games-test
