@@ -47,3 +47,4 @@ public:
 EspenCamera& EspenVision();
 void EspenVisionQuestion(const char*);
 void EspenSetButtonCameraPreparing(bool preparing);
+bool EspenButtonCameraReplyStarted();

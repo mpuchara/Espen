@@ -28,7 +28,9 @@ assert "self->OpenCameraPanel();" not in camera_button
 assert "self->StartTapVision(true);" in camera_button
 assert "EspenRequestCameraDescription(description);" in board
 assert 'EspenStartButtonInput("camera",epoch,description)' in speech
-assert "EspenActivateButtonCameraReply(description)" in speech
+assert "EspenActivateButtonCameraReply(payload)" in speech
+assert "EspenButtonCameraReplyStarted()" in board
+assert "EspenButtonCameraPlayback()" in speech
 assert "EspenPrepareCameraChannel(false)" in board
 assert "camera.GrantOneTap() && camera.Capture()" in board
 assert "camera.Explain(" in board
@@ -43,8 +45,8 @@ assert "bool GrantOneTap();" in api
 assert (root / "firmware/button_prompts/camera.ogg").read_bytes().startswith(b"OggS")
 
 # New distinct version, full merged image, no accidental Pages publishing.
-assert any(f'"version": "{v}"' in manifest for v in ("0.2.18", "0.2.19", "0.2.20", "0.2.25"))
-assert any(f'"Espen {v} boot:' in board for v in ("0.2.18", "0.2.19", "0.2.20", "0.2.25"))
+assert any(f'"version": "{v}"' in manifest for v in ("0.2.18", "0.2.19", "0.2.20", "0.2.26"))
+assert any(f'"Espen {v} boot:' in board for v in ("0.2.18", "0.2.19", "0.2.20", "0.2.26"))
 assert 'test_ala_stage11_vision_contracts.py' in build
 pages = (root / ".github/workflows/build-pages.yml").read_text()
 assert "feature/ala-stage11-tap-vision" in pages

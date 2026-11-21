@@ -549,7 +549,8 @@ struct MagicStoryWire {
     std::atomic<bool> audible{false};
     bool capturing=false, voice_armed=false, interrupted=false;
     bool finished=false, failed=false;
-    std::string speech, choice;
+    std::atomic<bool> context_pending{false};
+    std::string speech, choice, context;
 } magic_wire;
 }
 bool EspenMagicStoryActive() { return magic_wire.active.load(); }
@@ -572,27 +573,50 @@ void EspenMagicStoryResetWire() {
     magic_wire.audible.store(false);
     magic_wire.speech.clear();
     magic_wire.choice.clear();
+    magic_wire.context.clear();
+    magic_wire.context_pending.store(false);
 }
 void EspenMagicStoryInvalidate() {
     magic_wire.suppress_stale.store(true);
     magic_wire.text_turn.store(false);
 }
 void EspenMagicStoryChannelClosed() {
+    std::lock_guard<std::mutex> lock(magic_wire.mutex);
+    if (!magic_wire.suppress_stale.load() && magic_wire.active.load() &&
+        (magic_wire.capturing || magic_wire.voice_armed)) {
+        magic_wire.failed=true;
+        magic_wire.capturing=false;
+        magic_wire.voice_armed=false;
+        magic_wire.response_allowed.store(false);
+        magic_wire.context.clear();
+        magic_wire.context_pending.store(false);
+    }
     magic_wire.text_turn.store(false);
     magic_wire.suppress_stale.store(false);
 }
-void EspenMagicStoryBeginOutput() {
+void EspenMagicStoryBeginOutput(const std::string& context) {
     std::lock_guard<std::mutex> lock(magic_wire.mutex);
+    magic_wire.context=context;
+    magic_wire.context_pending.store(!context.empty());
     magic_wire.capturing=true;
     magic_wire.response_allowed.store(true);
     magic_wire.text_turn.store(true);
+}
+bool EspenMagicStoryContextPending() { return magic_wire.context_pending.load(); }
+std::string EspenMagicStoryReadContext() {
+    std::lock_guard<std::mutex> lock(magic_wire.mutex);
+    if (!magic_wire.active.load() || !magic_wire.capturing ||
+        !magic_wire.response_allowed.load() || magic_wire.suppress_stale.load())
+        return {};
+    magic_wire.context_pending.store(false);
+    return magic_wire.context;
 }
 void EspenMagicStoryPlayback() {
     if (magic_wire.response_allowed.load()) magic_wire.audible.store(true);
 }
 void EspenMagicStorySentence(const char* text) {
     std::lock_guard<std::mutex> lock(magic_wire.mutex);
-    if (!magic_wire.capturing || !text || magic_wire.speech.size() >= 5200) return;
+    if (!magic_wire.capturing || magic_wire.context_pending.load() || !text || magic_wire.speech.size() >= 5200) return;
     if (!magic_wire.speech.empty()) magic_wire.speech += ' ';
     magic_wire.speech += espen::BoundStoryText(text, 5200 - magic_wire.speech.size());
 }
@@ -600,7 +624,12 @@ void EspenMagicStoryOutputDone() {
     std::lock_guard<std::mutex> lock(magic_wire.mutex);
     if (!magic_wire.capturing) return;
     magic_wire.capturing=false;
-    magic_wire.finished=true;
+    if (magic_wire.context_pending.load()) {
+        magic_wire.failed=true;
+        magic_wire.response_allowed.store(false);
+    } else magic_wire.finished=true;
+    magic_wire.context.clear();
+    magic_wire.context_pending.store(false);
 }
 void EspenMagicStoryOutputFailed() {
     std::lock_guard<std::mutex> lock(magic_wire.mutex);
@@ -609,9 +638,10 @@ void EspenMagicStoryOutputFailed() {
 }
 void EspenMagicStoryArmVoice() {
     std::lock_guard<std::mutex> lock(magic_wire.mutex);
+    // This turn is used for transcription. Its ungrounded answer is discarded.
     magic_wire.voice_armed=true;
-    magic_wire.capturing=true;
-    magic_wire.response_allowed.store(true);
+    magic_wire.capturing=false;
+    magic_wire.response_allowed.store(false);
 }
 void EspenMagicStoryBargeIn() {
     std::lock_guard<std::mutex> lock(magic_wire.mutex);
@@ -620,6 +650,10 @@ void EspenMagicStoryBargeIn() {
     magic_wire.finished=false;
     magic_wire.audible.store(false);
     magic_wire.voice_armed=true;
+    magic_wire.capturing=false;
+    magic_wire.response_allowed.store(false);
+    magic_wire.context.clear();
+    magic_wire.context_pending.store(false);
     magic_wire.text_turn.store(false);
 }
 bool EspenMagicStoryConsumeVoice(const char* text) {
@@ -630,7 +664,7 @@ bool EspenMagicStoryConsumeVoice(const char* text) {
     magic_wire.choice=espen::BoundStoryText(text,700);
     const bool exit=espen::ClassifyStorySpeech(magic_wire.choice)==espen::StoryDecision::Exit;
     if(exit) magic_wire.suppress_stale.store(true);
-    return exit;
+    return true;
 }
 struct MagicStoryEvents {
     bool finished, failed, audible, interrupted;
@@ -795,11 +829,12 @@ class EspenDisplay : public LcdDisplay {
     std::atomic<unsigned> button_vision_epoch_{0};
     bool button_vision_dock_=true;
     bool button_vision_failed_=false;
+    bool button_vision_thinking_=false;
+    uint32_t button_vision_reply_ms_=0;
     lv_obj_t* camera_panel_=nullptr;
     lv_obj_t* camera_status_=nullptr;
     lv_obj_t* camera_cloud_label_=nullptr;
     lv_obj_t* camera_image_=nullptr;
-    lv_obj_t* camera_indicator_=nullptr;
     lv_obj_t* camera_preview_label_=nullptr;
     uint16_t* camera_preview_pixels_=nullptr;
     lv_image_dsc_t camera_preview_desc_{};
@@ -1072,6 +1107,8 @@ class EspenDisplay : public LcdDisplay {
                 self->button_vision_ready_ms_=0;
             }
             EspenVision().RevokeOneTap();
+            self->button_vision_thinking_=false;
+            self->button_vision_reply_ms_=0;
             self->Hide(self->dock_vision_label_,true);
             if(self->camera_panel_){self->StopCameraPreview();self->Hide(self->camera_panel_,true);}
             self->OpenPlayGames();
@@ -1099,6 +1136,8 @@ class EspenDisplay : public LcdDisplay {
                 self->button_vision_ready_ms_=0;
             }
             EspenVision().RevokeOneTap();
+            self->button_vision_thinking_=false;
+            self->button_vision_reply_ms_=0;
             self->Hide(self->dock_vision_label_,true);
             if(self->camera_panel_){self->StopCameraPreview();self->Hide(self->camera_panel_,true);}
             auto& app=Application::GetInstance();
@@ -1210,7 +1249,11 @@ class EspenDisplay : public LcdDisplay {
                  static_cast<int>(kind),magic_story_.Turn());
         auto& app=Application::GetInstance();
         if (kind==StoryAudio::Voice) app.EspenStartMagicVoiceListening();
-        else app.EspenGenerateMagicStory(prompt,kind==StoryAudio::Chapter);
+        else {
+            const auto context=kind==StoryAudio::Chapter && magic_story_.Turn()
+                ? magic_story_.Prompt() : std::string{};
+            app.EspenGenerateMagicStory(prompt,context,kind==StoryAudio::Chapter);
+        }
     }
 
     void SetMagicStoryFaceLayout(bool enabled) {
@@ -1335,9 +1378,6 @@ class EspenDisplay : public LcdDisplay {
                 status="Brak odpowiedzi Xiaozhi. Sprawdź połączenie";
                 lv_label_set_text(lv_obj_get_child(game_repeat_,0),"Spróbuj ponownie");
                 break;
-            case MagicPhase::Generating:
-                status="Ala przygotowuje opowieść…";
-                break;
             default: break;
         }
         lv_label_set_text(game_voice_status_,status);
@@ -1375,11 +1415,16 @@ class EspenDisplay : public LcdDisplay {
                     RefreshPlayGames();
                 }
                 if (!event.choice.empty()) {
-                    const auto decision=magic_story_.AwaitSpokenReply(std::move(event.choice));
-                    story_audio_=StoryAudio::Chapter;
+                    const auto decision=magic_story_.AcceptVoiceChoice(std::move(event.choice));
+                    if (decision==StoryDecision::Exit) {
+                        CloseMagicStory();
+                        return;
+                    }
+                    // Keep the local scene and the child's words across the close.
+                    StopStoryAudio();
+                    story_voice_ready_=false;
                     story_action_ms_=now;
-                    if (decision==StoryDecision::Exit) CloseMagicStory();
-                    else RefreshPlayGames();
+                    RefreshPlayGames();
                 } else if (!online || event.failed) {
                     StopStoryAudio();
                     magic_story_.Pause();
@@ -2001,7 +2046,9 @@ class EspenDisplay : public LcdDisplay {
             button_vision_failed_=false;
             button_vision_ready_ms_=0;
         }
-        SetTapVisionStatus(dock,"Robię zdjęcie i sprawdzam, co na nim jest…",true);
+        Hide(dock_vision_label_,true);
+        button_vision_thinking_=true;
+        button_vision_reply_ms_=0;
         if(xTaskCreate([](void* arg){
             auto* self=static_cast<EspenDisplay*>(arg);
             const auto epoch=self->button_vision_epoch_.load();
@@ -2046,10 +2093,17 @@ class EspenDisplay : public LcdDisplay {
         },"ala_vision",12288,this,3,nullptr)!=pdPASS) {
             EspenSetButtonCameraPreparing(false);
             button_vision_busy_.store(false,std::memory_order_release);
+            button_vision_thinking_=false;
             SetTapVisionStatus(dock,"Aparat jest chwilowo niedostępny.");
         }
     }
     void PumpButtonVision() {
+        if(button_vision_reply_ms_ &&
+           (EspenButtonCameraReplyStarted() || !EspenVision().CloudEnabled() ||
+            lv_tick_get()-button_vision_reply_ms_>=45000)) {
+            button_vision_reply_ms_=0;
+            button_vision_thinking_=false;
+        }
         if(button_vision_busy_.load(std::memory_order_acquire))return;
         auto& app=Application::GetInstance();
         std::string description;
@@ -2057,6 +2111,7 @@ class EspenDisplay : public LcdDisplay {
             std::lock_guard<std::mutex> lock(button_vision_mutex_);
             if(button_vision_failed_) {
                 button_vision_failed_=false;
+                button_vision_thinking_=false;
                 SetTapVisionStatus(button_vision_dock_,"Nie udało się przeanalizować zdjęcia.");
                 return;
             }
@@ -2066,6 +2121,7 @@ class EspenDisplay : public LcdDisplay {
                !EspenVision().CloudEnabled()) {
                 button_vision_description_.clear();
                 button_vision_ready_ms_=0;
+                button_vision_thinking_=false;
                 SetTapVisionStatus(button_vision_dock_,"Opis zdjęcia stracił ważność.");
                 return;
             }
@@ -2073,7 +2129,7 @@ class EspenDisplay : public LcdDisplay {
             description.swap(button_vision_description_);
             button_vision_ready_ms_=0;
         }
-        SetTapVisionStatus(button_vision_dock_,"Pobieram odpowiedź głosową…");
+        button_vision_reply_ms_=lv_tick_get();
         app.EspenRequestCameraDescription(description);
     }
     void RefreshCameraPanel(uint32_t now){
@@ -2753,10 +2809,6 @@ class EspenDisplay : public LcdDisplay {
         lv_label_set_text(robot_name_label_,espen::PhonePanel::Instance().Name().c_str());
         seen_robot_name_revision_=espen::PhonePanel::Instance().NameRevision();
         Passive(robot_name_label_);
-        camera_indicator_=lv_label_create(face_);
-        lv_obj_set_style_text_font(camera_indicator_,EspenUiFont(),0);
-        lv_obj_set_style_text_color(camera_indicator_,lv_color_hex(0xFFD66B),0);
-        lv_obj_set_pos(camera_indicator_,15,8);Passive(camera_indicator_);Hide(camera_indicator_,true);
         hold_progress_=lv_obj_create(face_);Solid(hold_progress_,0xFFD66B,3);
         lv_obj_set_pos(hold_progress_,16,257);lv_obj_set_size(hold_progress_,1,4);Hide(hold_progress_,true);
         lv_obj_add_flag(face_,LV_OBJ_FLAG_CLICKABLE);
@@ -2899,12 +2951,6 @@ class EspenDisplay : public LcdDisplay {
             const auto name=phone.Name();
             lv_label_set_text(robot_name_label_,name.c_str());
         }
-        const int vision_activity=EspenVision().Activity();
-        Hide(camera_indicator_,vision_activity==0);
-        if(vision_activity){
-            const char* message=vision_activity==1?"Kamera: patrzę":"Kamera: wysyłam zdjęcie";
-            if(strcmp(lv_label_get_text(camera_indicator_),message)!=0)lv_label_set_text(camera_indicator_,message);
-        }
         uint32_t seq=mood_seq_.load(std::memory_order_acquire);
         if(seq!=seen_mood_) {
             seen_mood_=seq;
@@ -2933,7 +2979,12 @@ class EspenDisplay : public LcdDisplay {
             engine_.SleepNow(now);
             behavior_.SleepRequested();
         }
-        if(state==kDeviceStateSpeaking||state==kDeviceStateNotifying) {
+        const bool waiting_for_story_audio=story_audio_==StoryAudio::Intro ||
+            story_audio_==StoryAudio::Chapter || magic_story_.Phase()==espen::MagicPhase::Generating;
+        const bool story_thinking=(waiting_for_story_audio && !magic_wire.audible.load()) ||
+            (story_audio_==StoryAudio::Voice && espen_turn_waiting.load());
+        if(button_vision_thinking_ || EspenVision().Activity()!=0 || story_thinking) phase=Phase::Thinking;
+        else if(state==kDeviceStateSpeaking||state==kDeviceStateNotifying) {
             phase=Phase::Speaking;waiting_answer_=false;last_audio_=now;
         } else if(state==kDeviceStateConnecting) phase=Phase::Wake;
         else if(state==kDeviceStateListening) phase=espen_turn_waiting.load(std::memory_order_relaxed)?Phase::Thinking:Phase::Listening;
@@ -3601,7 +3652,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.2.25 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.2.26 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();

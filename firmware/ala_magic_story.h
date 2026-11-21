@@ -51,7 +51,6 @@ inline StoryDecision ClassifyStorySpeech(std::string_view speech) {
     }
     if (words.back() != ' ') words += ' ';
     const auto has = [&](std::string_view phrase) { return words.find(phrase) != std::string::npos; };
-    const auto starts = [&](std::string_view phrase) { return words.compare(0, phrase.size(), phrase) == 0; };
     size_t count = 0;
     for (char c : words) count += c == ' ';
     if (count <= 7) {
@@ -63,9 +62,8 @@ inline StoryDecision ClassifyStorySpeech(std::string_view speech) {
             return StoryDecision::Repeat;
         if (has(" wymysl cos ") || has(" twoj pomysl ") || has(" zrobmy tak ") ||
             (count <= 4 && has(" nie wiem ")) ||
-            (count <= 4 && !has(" chce ") && !has(" ale ") &&
-             (starts(" tak ") || starts(" okej ") || starts(" dobrze ") ||
-              starts(" zgoda ") || starts(" jasne "))))
+            words == " tak " || words == " tak prosze " || words == " okej " ||
+            words == " dobrze " || words == " zgoda " || words == " jasne ")
             return StoryDecision::Accept;
         if (words == " nie " || words == " inaczej " || has(" mam inny pomysl ") ||
             has(" mam lepszy pomysl ") || words == " chce inaczej " ||
@@ -201,22 +199,12 @@ public:
         return true;
     }
     const char* ButtonPrompt() const {
-        if (decision_ == StoryDecision::Repeat) return "repeat";
-        if (decision_ == StoryDecision::End) return "end";
-        if (context_.fragment) return "continue";
+        if (context_.fragment) return "story_context";
         switch (context_.theme) {
             case StorySetting::Lake: return "lake";
             case StorySetting::Car: return "car";
             default: return "forest";
         }
-    }
-    StoryDecision AwaitSpokenReply(std::string choice) {
-        auto intent=ClassifyStorySpeech(choice);
-        if(intent==StoryDecision::Exit) return intent;
-        decision_=intent;
-        context_.child_decision=BoundStoryText(choice,700);
-        context_.state=MagicPhase::Generating;
-        return intent;
     }
     std::string Prompt() const {
         if (Phase() != MagicPhase::Generating) return {};

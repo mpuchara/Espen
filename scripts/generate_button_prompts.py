@@ -10,10 +10,8 @@ PROMPTS = {
     "forest": "Opowiedz dziecku początek magicznej przygody w zaczarowanym lesie. Mów po polsku. Na koniec zaproponuj jeden pomysł i poczekaj na wybór.",
     "lake": "Opowiedz dziecku początek magicznej przygody nad jeziorem. Mów po polsku. Na koniec zaproponuj jeden pomysł i poczekaj na wybór.",
     "car": "Opowiedz dziecku początek magicznej przygody w podróży samochodem z mamą. Mów po polsku. Na koniec zaproponuj jeden pomysł i poczekaj na wybór.",
-    "continue": "Tak, wybieram twój pomysł. Kontynuuj tę samą opowieść. Zaproponuj potem jeden kolejny pomysł i poczekaj na wybór.",
-    "repeat": "Powtórz tylko swój ostatni pomysł i pytanie. Jeszcze nie kontynuuj opowieści.",
-    "end": "Opowiedz krótkie zakończenie tej przygody i pożegnaj dziecko.",
     "camera": "Użyj teraz aparatu robota. Zrób jedno zdjęcie i opowiedz mi po polsku, co naprawdę widzisz na tym zdjęciu.",
+    "story_context": "Użyj narzędzia kontekst opowieści. Odczytaj scenę i wykonaj podane wskazówki po polsku.",
 }
 
 def main():

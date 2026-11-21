@@ -40,6 +40,8 @@ namespace {
 std::mutex button_reply_mutex;
 std::string button_reply;
 bool button_reply_active=false;
+std::atomic<bool> button_reply_playback_pending{false};
+std::atomic<bool> button_reply_started{false};
 std::atomic<bool> button_camera_preparing{false};
 
 const char* DescriptionText(const cJSON* item,unsigned depth=0) {
@@ -60,12 +62,22 @@ const char* DescriptionText(const cJSON* item,unsigned depth=0) {
 }
 }
 bool EspenButtonCameraPreparing(){return button_camera_preparing.load();}
-void EspenSetButtonCameraPreparing(bool preparing){button_camera_preparing.store(preparing);}
+void EspenSetButtonCameraPreparing(bool preparing){
+    if(preparing)button_reply_started.store(false);
+    button_camera_preparing.store(preparing);
+}
+bool EspenButtonCameraReplyStarted(){return button_reply_started.load();}
+void EspenButtonCameraPlayback(){
+    if(button_reply_playback_pending.load() && button_reply_playback_pending.exchange(false))
+        button_reply_started.store(true);
+}
 bool EspenActivateButtonCameraReply(const std::string& description){
     if(description.empty() || !EspenVision().CloudEnabled())return false;
     std::lock_guard<std::mutex> lock(button_reply_mutex);
     button_reply=description;
     button_reply_active=true;
+    button_reply_playback_pending.store(false);
+    button_reply_started.store(false);
     return true;
 }
 bool EspenButtonCameraReplyActive(){
@@ -75,7 +87,10 @@ bool EspenButtonCameraReplyActive(){
 bool EspenTakeButtonCameraReply(std::string& description){
     std::lock_guard<std::mutex> lock(button_reply_mutex);
     if(!button_reply_active)return false;
-    if(EspenVision().CloudEnabled())description.swap(button_reply);
+    if(EspenVision().CloudEnabled()){
+        description.swap(button_reply);
+        if(!description.empty())button_reply_playback_pending.store(true);
+    }
     else button_reply.clear();
     return true;
 }
@@ -84,6 +99,7 @@ void EspenRevokeButtonCamera(){
     std::lock_guard<std::mutex> lock(button_reply_mutex);
     button_reply.clear();
     button_reply_active=false;
+    button_reply_playback_pending.store(false);
 }
 bool EspenCamera::StartLocal(){
     auto e=hb_camera_start();

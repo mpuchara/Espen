@@ -6,6 +6,7 @@ using namespace espen;
 
 int main() {
     assert(ClassifyStorySpeech("Tak, zróbmy tak!") == StoryDecision::Accept);
+    assert(ClassifyStorySpeech("Tak, dodaj smoka!") == StoryDecision::Idea);
     assert(ClassifyStorySpeech("Nie wiem, wymyśl coś!") == StoryDecision::Accept);
     assert(ClassifyStorySpeech("Chyba mam lepszy pomysł!") == StoryDecision::Clarify);
     assert(ClassifyStorySpeech("Nie, nie chcę smoka, chcę dinozaura!") == StoryDecision::Idea);
@@ -41,8 +42,10 @@ int main() {
     assert(story.BeginVoiceChoice());
     const std::string idea = "Nie, chcę żeby z jeziora wynurzył się smok o imieniu „Iskra”.";
     assert(story.AcceptVoiceChoice(idea) == StoryDecision::Idea);
+    assert(std::string(story.ButtonPrompt()) == "story_context");
     assert(story.Prompt().find(idea) != std::string::npos);
     assert(story.Prompt().find("list od królowej") != std::string::npos);
+    assert(story.Prompt().find("Lilka i kot Kaj") != std::string::npos);
     assert(story.CompleteTurn("Iskra pomogła bohaterom znaleźć kryształ."));
     assert(story.BeginVoiceChoice());
     assert(story.AcceptVoiceChoice("Czy możesz powtórzyć?") == StoryDecision::Repeat);
