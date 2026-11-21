@@ -37,7 +37,9 @@ replace(header, '    void WakeWordInvoke(const std::string& wake_word);',
         '    void WakeWordInvoke(const std::string& wake_word);\n'
         '    void EspenSayText(const std::string& text, const std::string& robot_name);\n'
         '    void EspenAskText(const std::string& text, bool only_hello, const std::string& robot_name);\n'
-        '    void EspenNarrateGameText(const std::string& text, bool vision = false);')
+        '    void EspenNarrateGameText(const std::string& text, bool vision = false);\n'
+        '    void EspenGenerateMagicStory(const std::string& prompt);\n'
+        '    void EspenCancelMagicStory();')
 
 app = up / "main/application.cc"
 # Observe ONLY the existing, acknowledged Xiaozhi audio channel.
@@ -121,6 +123,45 @@ void Application::EspenNarrateGameText(const std::string& text, bool vision) {
     });
 }
 
+
+// Stage 12: dynamic story generation is a real Xiaozhi LLM request.
+// The model speaks the entire scene and two choices; the board parses the
+// identical incoming TTS subtitles. Never manufacture a local "AI" story.
+void Application::EspenGenerateMagicStory(const std::string& prompt) {
+    Schedule([this, prompt]() {
+        extern void EspenMagicStoryOutputFailed();
+        if (!protocol_ || GetDeviceState() != kDeviceStateIdle ||
+            EspenIsStandby() || prompt.empty() || prompt.size()>4200) {
+            EspenMagicStoryOutputFailed();return;
+        }
+        if (!SetDeviceState(kDeviceStateConnecting)) {
+            EspenMagicStoryOutputFailed();return;
+        }
+        Schedule([this, prompt]() {
+            extern void EspenMagicStoryOutputFailed();
+            if (GetDeviceState()!=kDeviceStateConnecting || EspenIsStandby() ||
+                !protocol_) {EspenMagicStoryOutputFailed();return;}
+            if (!protocol_->IsAudioChannelOpened() && !protocol_->OpenAudioChannel()) {
+                SetDeviceState(kDeviceStateIdle);
+                EspenMagicStoryOutputFailed();return;
+            }
+            extern void EspenMagicStoryBeginOutput();
+            EspenMagicStoryBeginOutput();
+            protocol_->SendWakeWordDetected(prompt);
+            play_popup_on_listening_ = false;
+            SetListeningMode(kListeningModeAutoStop);
+        });
+    });
+}
+void Application::EspenCancelMagicStory() {
+    Schedule([this]() {
+        if (!protocol_)return;
+        if (GetDeviceState()==kDeviceStateSpeaking)
+            protocol_->SendAbortSpeaking(kAbortReasonNone);
+        if (protocol_->IsAudioChannelOpened())protocol_->CloseAudioChannel();
+    });
+}
+
 void Application::EspenAskText(const std::string& text, bool only_hello, const std::string& robot_name) {
     // Unlike EspenSayText, this mode asks the cloud assistant to generate
     // a reply; a second tap asks it for one greeting word only.
@@ -147,6 +188,42 @@ void Application::EspenAskText(const std::string& text, bool only_hello, const s
 '''
 replace(app, 'void Application::WakeWordInvoke(const std::string& wake_word) {',
         speech_method + 'void Application::WakeWordInvoke(const std::string& wake_word) {')
+
+# Stage 12: only verified magic story replies enter the story inbox.
+# Hooks run on Xiaozhi's protocol callback; firmware mailbox has a mutex and
+# is consumed strictly by the existing LVGL timer.
+replace(app,
+    '                EspenVisualSentence(text->valuestring);',
+    '                EspenVisualSentence(text->valuestring);\n'
+    '                extern void EspenMagicStorySentence(const char*);\n'
+    '                EspenMagicStorySentence(text->valuestring);')
+replace(app,
+    '            } else if (strcmp(state->valuestring, "stop") == 0) {',
+    '            } else if (strcmp(state->valuestring, "stop") == 0) {\n'
+    '                extern void EspenMagicStoryOutputDone();\n'
+    '                EspenMagicStoryOutputDone();')
+replace(app,
+    '                EspenVisionQuestion(text->valuestring);',
+    '                EspenVisionQuestion(text->valuestring);\n'
+    '                extern bool EspenMagicStoryConsumeVoice(const char*);\n'
+    '                if (EspenMagicStoryConsumeVoice(text->valuestring)) {\n'
+    '                    Schedule([this]() {\n'
+    '                        if (protocol_ && protocol_->IsAudioChannelOpened())\n'
+    '                            protocol_->CloseAudioChannel();\n'
+    '                        SetDeviceState(kDeviceStateIdle);\n'
+    '                    });\n'
+    '                    return; // one recorded choice; no unrelated assistant answer\n'
+    '                }')
+replace(app,
+    '        } else if (strcmp(type->valuestring, "tts") == 0) {',
+    '        } else if (strcmp(type->valuestring, "tts") == 0) {\n'
+    '            extern bool EspenMagicStorySuppressStale();\n'
+    '            if(EspenMagicStorySuppressStale())return;')
+replace(app,
+    '    protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {',
+    '    protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {\n'
+    '        extern bool EspenMagicStorySuppressStale();\n'
+    '        if(EspenMagicStorySuppressStale())return;')
 
 source = board / "espen_board.cc"
 replace(source, '#include "face_engine.h"',
