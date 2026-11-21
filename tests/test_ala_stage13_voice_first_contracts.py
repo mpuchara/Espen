@@ -7,8 +7,8 @@ board=(root/"firmware/espen_board.cc").read_text(encoding="utf-8")
 phone=(root/"scripts/prepare_phone.py").read_text(encoding="utf-8")
 manifest=(root/"web/manifest-full.json").read_text(encoding="utf-8")
 build=(root/"scripts/build.sh").read_text(encoding="utf-8")
-assert '"version": "0.2.20"' in manifest
-assert '"Espen 0.2.20 boot:' in board
+assert '"version": "0.2.21"' in manifest
+assert '"Espen 0.2.21 boot:' in board
 assert "TYLKO JEDEN" in engine and "NIE tworz dwoch ani trzech opcji" in engine
 assert "Moze chcialbys, zeby historia potoczyla sie inaczej?" in engine
 assert "Opowiedz mi, co ma sie wydarzyc" in engine
@@ -37,7 +37,7 @@ assert "Pewnie! Możesz zmienić historię" in board
 assert "magical_magic_story" not in board
 assert "for(int i=0;i<2;++i)" in board
 assert "Hide(game_choices_[i],!(ready||listening) || i==2);" in board
-assert "now-magic_last_render_ms_>=650" in board
+assert "magic_story_.CompleteTurn(speech)" in board  # transcript parsed after audio, never rendered over face
 assert "ESPEN_MAGIC_STORY" not in board
 assert "pending_story_voice_=" in board
 assert "Cześć! Witaj w Magicznej Opowieści!" in board
