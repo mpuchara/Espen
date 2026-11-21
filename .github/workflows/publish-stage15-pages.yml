@@ -11,11 +11,8 @@ concurrency:
   group: ala-stage15-pages-preview
   cancel-in-progress: false
 jobs:
-  publish:
+  assemble:
     runs-on: ubuntu-latest
-    environment:
-      name: ala-stage15-preview
-      url: ${{ steps.deploy.outputs.page_url }}stage15/
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -52,5 +49,25 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
+  publish:
+    needs: assemble
+    runs-on: ubuntu-latest
+    environment:
+      name: ala-stage15-preview
+      url: ${{ steps.deploy.outputs.page_url }}stage15/
+    steps:
+      - name: Wait for the uploaded Pages artifact to be listed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in {1..12}; do
+            count=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" \
+              --jq '[.artifacts[] | select(.name == "github-pages" and (.expired | not))] | length')
+            if [[ "$count" == 1 ]]; then exit 0; fi
+            sleep 5
+          done
+          exit 1
       - uses: actions/deploy-pages@v4
         id: deploy
