@@ -731,6 +731,7 @@ class EspenDisplay : public LcdDisplay {
     bool magic_request_sent_=false, magic_auto_voice_pending_=false;
     bool magic_detail_prompt_sent_=false, magic_detail_speech_started_=false;
     lv_obj_t* game_panel_ = nullptr;
+    bool magic_face_layout_ = false; // transparent story HUD, never covers the animated face
     lv_obj_t* game_title_ = nullptr;
     lv_obj_t* game_progress_ = nullptr;
     lv_obj_t* game_prompt_ = nullptr;
@@ -2337,6 +2338,8 @@ class EspenDisplay : public LcdDisplay {
     int touch_distance_=0;
     lv_point_t touch_prev_{};
     lv_obj_t* face_=nullptr;
+    lv_obj_t* story_sparkles_[4] = {};
+    uint32_t story_spark_last_draw_ = 0;
     espen::HoldGate hold_gate_;
     lv_obj_t* hold_target_=nullptr;
     lv_obj_t* hold_progress_=nullptr;
@@ -2415,9 +2418,18 @@ class EspenDisplay : public LcdDisplay {
         g={x,y,w,h,angle};
     }
     bool OverlayVisible() const {
+        // Touch/hold gestures remain disabled while any game is open.
         for(auto* panel:{settings_,wake_panel_,cloud_,speech_diag_,speaker_panel_,camera_panel_,game_panel_})
             if(panel&&!lv_obj_has_flag(panel,LV_OBJ_FLAG_HIDDEN))return true;
         return false;
+    }
+    bool FaceMayRender() const {
+        // A Magic Story uses only a transparent HUD, so lip sync, blinks,
+        // emotional facial reactions and FaceEngine's 50ms tick MUST continue.
+        for(auto* panel:{settings_,wake_panel_,cloud_,speech_diag_,speaker_panel_,camera_panel_})
+            if(panel&&!lv_obj_has_flag(panel,LV_OBJ_FLAG_HIDDEN))return false;
+        return !game_panel_ || lv_obj_has_flag(game_panel_,LV_OBJ_FLAG_HIDDEN) ||
+               (magic_face_layout_ && magic_story_.Phase()!=espen::MagicPhase::Off);
     }
     void CancelHold(lv_obj_t* target) {
         if(hold_target_!=target)return;
@@ -2558,6 +2570,15 @@ class EspenDisplay : public LcdDisplay {
         for(int i=0;i<14;++i) {
             shapes_[i]=lv_obj_create(face_);Solid(shapes_[i],0x63E6FF,i<3?20:6);
             if(i>=3) Hide(shapes_[i],true);
+        }
+        // Four tiny face-side twinkles for the story; reuse objects each frame.
+        // No animation timers, heap churn, bitmaps or separate render pipeline.
+        for(int i=0;i<4;++i) {
+            story_sparkles_[i]=lv_obj_create(face_);
+            Solid(story_sparkles_[i],i%2?0xFFC979:0x83E7F2,2);
+            lv_obj_set_size(story_sparkles_[i],9,9);
+            lv_obj_set_style_transform_rotation(story_sparkles_[i],450,0);
+            Hide(story_sparkles_[i],true);
         }
         for(auto& symbol:symbols_) {
             symbol=lv_line_create(face_);Passive(symbol);
@@ -2735,7 +2756,25 @@ class EspenDisplay : public LcdDisplay {
         const auto social=espen::PhonePanel::Instance().TickSocial(
             static_cast<uint32_t>(esp_timer_get_time()/1000),social_standby,
             EspenNetworkAvailable());
-        if(!face_||OverlayVisible())return;
+        const bool story_face=magic_face_layout_ &&
+            magic_story_.Phase()!=espen::MagicPhase::Off && game_panel_ &&
+            !lv_obj_has_flag(game_panel_,LV_OBJ_FLAG_HIDDEN) && FaceMayRender();
+        for(auto* spark:story_sparkles_)if(spark)Hide(spark,!story_face);
+        if(!face_||!FaceMayRender())return;
+        if(story_face && (!story_spark_last_draw_ || now-story_spark_last_draw_>=180)) {
+            story_spark_last_draw_=now;
+            // Positions intentionally stay outside eyes and animated mouth.
+            static constexpr int xs[4]={31,339,43,331};
+            static constexpr int ys[4]={34,49,241,236};
+            for(int i=0;i<4;++i) {
+                const uint32_t wave=((now/180)+static_cast<uint32_t>(i*5))%20;
+                const int opacity=wave<10?90+wave*13:220-(wave-10)*13;
+                lv_obj_set_style_bg_opa(story_sparkles_[i],
+                     static_cast<lv_opa_t>(opacity),0);
+                lv_obj_set_pos(story_sparkles_[i],xs[i],
+                     ys[i]+static_cast<int>(wave/5)-2);
+            }
+        }
         // Local biometric result is only a benign visual event in the existing
         // arbiter. It never wakes Xiaozhi or overrides a persistent phone mood.
         std::string face_hello;
