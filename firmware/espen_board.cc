@@ -1081,6 +1081,161 @@ class EspenDisplay : public LcdDisplay {
         app.EspenNarrateGameText(sentence);
         if(game_voice_status_)lv_label_set_text(game_voice_status_,"Ala opowiada... Powtórz, aby usłyszeć ponownie.");
     }
+
+    // AI story has its own state; quiz and animal games remain unchanged.
+    void CancelMagicStory() {
+        const bool active=magic_story_.Phase()!=espen::MagicPhase::Off;
+        EspenMagicStoryArmVoice(false);
+        EspenMagicStoryResetWire();
+        if(active && (magic_request_sent_ ||
+           magic_story_.Phase()==espen::MagicPhase::Listening))
+            Application::GetInstance().EspenCancelMagicStory();
+        magic_story_.Reset();magic_request_sent_=false;
+        magic_live_text_.clear();pending_magic_prompt_.clear();
+        magic_sent_ms_=0;magic_voice_ms_=0;
+    }
+    void QueueMagicStoryTurn() {
+        pending_story_voice_.clear();
+        pending_magic_prompt_=magic_story_.Prompt();
+        magic_request_sent_=false;magic_sent_ms_=0;
+        magic_live_text_.clear();magic_rx_rev_=0;
+        RefreshPlayGames();
+    }
+    void AnimateMagicChoices() {
+        for(int i=0;i<3;++i) {
+            if(!game_choices_[i])continue;
+            lv_anim_t anim;
+            lv_anim_init(&anim);
+            lv_anim_set_var(&anim,game_choices_[i]);
+            lv_anim_set_exec_cb(&anim,[](void* obj,int32_t value){
+                lv_obj_set_style_translate_y(static_cast<lv_obj_t*>(obj),value,0);
+            });
+            lv_anim_set_values(&anim,34,0);
+            lv_anim_set_time(&anim,350);
+            lv_anim_set_delay(&anim,static_cast<uint32_t>(i*185));
+            lv_anim_set_path_cb(&anim,lv_anim_path_ease_out);
+            lv_anim_start(&anim);
+        }
+        lv_obj_scroll_to_view(game_choices_[0],LV_ANIM_ON);
+    }
+    void StartMagicVoiceChoice() {
+        auto& app=Application::GetInstance();
+        if(!EspenNetworkAvailable() || app.EspenIsStandby()) {
+            lv_label_set_text(game_voice_status_,"Potrzebuję Wi-Fi i Xiaozhi, żeby usłyszeć Twój pomysł.");
+            return;
+        }
+        if(!magic_story_.BeginVoiceChoice())return;
+        pending_story_voice_.clear();
+        EspenMagicStoryResetWire();
+        EspenMagicStoryArmVoice(true);
+        magic_voice_ms_=lv_tick_get();
+        RefreshPlayGames();
+        app.StartListening();
+    }
+    void RefreshMagicStory() {
+        if(!game_panel_)return;
+        auto phase=magic_story_.Phase();
+        lv_label_set_text(game_title_,"Magiczna opowieść");
+        lv_label_set_text_fmt(game_progress_,"Twoja przygoda • część %u",magic_story_.Turn()+1);
+        const std::string& text=magic_live_text_.empty()?magic_story_.Scene():magic_live_text_;
+        lv_label_set_text(game_prompt_,text.empty()?"Ala wymyśla magiczną przygodę...":text.c_str());
+        lv_obj_set_height(game_prompt_,113);
+        lv_obj_add_flag(game_prompt_,LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_scroll_dir(game_prompt_,LV_DIR_VER);
+        bool ready=phase==espen::MagicPhase::Ready;
+        for(int i=0;i<3;++i){
+            Hide(game_choices_[i],!ready);
+            if(ready) {
+                const char* label=i==2?LV_SYMBOL_AUDIO "  Powiem własny pomysł":
+                    magic_story_.Option(i).c_str();
+                lv_label_set_text(lv_obj_get_child(game_choices_[i],0),label);
+                lv_obj_set_height(game_choices_[i],54);
+            }
+        }
+        Hide(game_spacer_,true);
+        Hide(game_next_,true);
+        Hide(game_again_,true);
+        Hide(game_home_,false);
+        Hide(game_repeat_,phase==espen::MagicPhase::Generating ||
+                          phase==espen::MagicPhase::Listening);
+        Hide(game_voice_status_,false);
+        if(phase==espen::MagicPhase::Ready) {
+            lv_label_set_text(game_feedback_,"Wybierz 1, 2 lub powiedz własny pomysł.");
+            lv_label_set_text(game_voice_status_,"Możesz odsłuchać propozycje ponownie.");
+            lv_label_set_text(lv_obj_get_child(game_repeat_,0),"↻ Powtórz propozycje");
+        } else if(phase==espen::MagicPhase::Listening) {
+            lv_label_set_text(game_feedback_,"Wymyśl własny ciąg dalszy!");
+            lv_label_set_text(game_voice_status_,"🎤 Słucham — powiedz swój pomysł.");
+        } else if(phase==espen::MagicPhase::Error) {
+            lv_label_set_text(game_feedback_,"Nie udało się przygotować dwóch opcji.");
+            lv_label_set_text(game_voice_status_,"Sprawdź Xiaozhi i ponów tworzenie opowieści.");
+            lv_label_set_text(lv_obj_get_child(game_repeat_,0),"↻ Spróbuj ponownie");
+        } else {
+            lv_label_set_text(game_feedback_,"Ala tworzy dalszy ciąg według Twojego wyboru.");
+            lv_label_set_text(game_voice_status_,"✨ Słuchaj teraz opowieści Ali...");
+        }
+    }
+    void PumpMagicStory() {
+        if(magic_story_.Phase()==espen::MagicPhase::Off || !game_panel_ ||
+           lv_obj_has_flag(game_panel_,LV_OBJ_FLAG_HIDDEN))return;
+        auto& app=Application::GetInstance();
+        const uint32_t now=lv_tick_get();
+        std::string speech,choice;
+        bool done=false,failed=false,has_choice=false;
+        uint32_t rev=0;
+        MagicStoryWireSnapshot(speech,done,failed,choice,has_choice,rev);
+        if(magic_story_.Phase()==espen::MagicPhase::Listening) {
+            if(has_choice && magic_story_.AcceptVoiceChoice(std::move(choice))) {
+                QueueMagicStoryTurn();
+                return;
+            }
+            if(now-magic_voice_ms_>45000) {
+                EspenMagicStoryArmVoice(false);
+                magic_story_.CancelVoiceChoice();
+                if(app.GetDeviceState()==kDeviceStateListening)app.StopListening();
+                RefreshPlayGames();
+                lv_label_set_text(game_voice_status_,
+                    "Nie usłyszałam wyboru. Spróbuj trzeciej opcji ponownie.");
+            }
+            return;
+        }
+        if(magic_story_.Phase()!=espen::MagicPhase::Generating)return;
+        if(!pending_magic_prompt_.empty() && !magic_request_sent_) {
+            if(!EspenNetworkAvailable() || app.EspenIsStandby()) {
+                lv_label_set_text(game_voice_status_,"Połącz Wi-Fi i Xiaozhi, żeby usłyszeć opowieść.");
+                return;
+            }
+            if(app.GetDeviceState()!=kDeviceStateIdle)return;
+            EspenMagicStoryResetWire();
+            app.EspenGenerateMagicStory(pending_magic_prompt_);
+            pending_magic_prompt_.clear();
+            magic_request_sent_=true;magic_sent_ms_=now;
+            return;
+        }
+        if(!magic_request_sent_)return;
+        if(rev!=magic_rx_rev_ && !speech.empty()) {
+            magic_rx_rev_=rev;
+            auto a=speech.find("Opcja pierwsza:");
+            auto b=speech.find("Opcja 1:");
+            const size_t end=a!=std::string::npos?a:b;
+            magic_live_text_=speech.substr(0,end);
+            if(magic_live_text_.size()>1250)magic_live_text_.resize(1250);
+            RefreshMagicStory();
+        }
+        if(done || failed || (magic_sent_ms_ && now-magic_sent_ms_>55000)) {
+            magic_request_sent_=false;
+            EspenMagicStoryResetWire();
+            if(!failed && done && magic_story_.CompleteTurn(speech)) {
+                magic_live_text_.clear();
+                RefreshPlayGames();
+                AnimateMagicChoices();
+            } else {
+                magic_story_.Fail();
+                RefreshPlayGames();
+            }
+        }
+    }
+
     void RefreshPlayGames() {
         if (!game_panel_) return;
         if(magic_story_.Phase()!=espen::MagicPhase::Off) {
