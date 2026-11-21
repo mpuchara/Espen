@@ -1,0 +1,135 @@
+name: Publish Ala Stage 12 full installer (GitHub Pages)
+on:
+  push:
+    branches: [feature/ala-stage12-ai-magic-story]
+    paths:
+      - .github/workflows/publish-stage12-pages.yml
+  workflow_dispatch:
+permissions:
+  actions: read
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: ala-stage12-pages-preview
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/feature/ala-stage12-ai-magic-story'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: ala-stage12-preview
+      url: ${{ steps.deploy.outputs.page_url }}stage12/
+    steps:
+      - name: Checkout stable v0.2.17 site
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: stable
+      - name: Checkout Stage 11 v0.2.18 site
+        uses: actions/checkout@v4
+        with:
+          ref: feature/ala-stage11-tap-vision
+          path: stage11src
+      - name: Checkout Stage 12 v0.2.19 site
+        uses: actions/checkout@v4
+        with:
+          ref: feature/ala-stage12-ai-magic-story
+          path: stage12src
+      - name: Download approved stable full P4 image
+        uses: actions/download-artifact@v4
+        with:
+          name: espen-guition-p4
+          run-id: 44833709126
+          repository: mpuchara/Espen
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: dist
+      - name: Download approved Stage 11 full P4 image
+        uses: actions/download-artifact@v4
+        with:
+          name: ala-stage11-camera-vision-full-flash
+          run-id: 44840342163
+          repository: mpuchara/Espen
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: dist/stage11
+      - name: Download verified Stage 12 AI Magic Story full P4 image
+        uses: actions/download-artifact@v4
+        with:
+          name: ala-stage12-magic-story-full-flash
+          run-id: 44844038865
+          repository: mpuchara/Espen
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: dist/stage12
+      - name: Assemble version-isolated Pages deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp -a stable/web/. dist/
+          cp -a stage11src/web/. dist/stage11/
+          cp -a stage12src/web/. dist/stage12/
+          # Keep original installers working: root=0.2.17, /stage11/=0.2.18.
+          for dirname in dist dist/stage11 dist/stage12; do
+            mkdir -p "$dirname/pilot"
+            for file in espen.bin espen.bin.sha256 espen-app.bin espen-assets.bin espen-update.sha256; do
+              cp "$dirname/$file" "$dirname/pilot/$file"
+              test -s "$dirname/pilot/$file"
+            done
+            (cd "$dirname" && sha256sum --check espen.bin.sha256 && sha256sum --check espen-update.sha256)
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          for dirname,version in (('dist','0.2.17'),('dist/stage11','0.2.18'),
+                                  ('dist/stage12','0.2.19')):
+              base=Path(dirname)
+              m=json.loads((base/'manifest-full.json').read_text(encoding='utf-8'))
+              assert m['version']==version,(dirname,m['version'])
+              assert m['builds'][0]['chipFamily']=='ESP32-P4'
+              assert m['builds'][0]['parts']==[{'path':'espen.bin','offset':0}]
+              image=(base/'espen.bin').read_bytes()
+              app=(base/'espen-app.bin').read_bytes()
+              assert 0x800000<len(image)<=16*1024*1024
+              assert image[0x2000]==0xe9 and image[0x20000]==0xe9
+              assert image[0x20000:0x20000+len(app)]==app
+              index=(base/'index.html').read_text(encoding='utf-8')
+              assert f'0.2.{version[-2:]}' in index or version in index
+              assert 'manifest="manifest-full.json"' in index
+              assert 'id="full-installer"' in index
+              print(f'PASSED: {dirname} ({version}), full flash offset 0, SHA256 checked.')
+          home=Path('dist/index.html')
+          original=home.read_text(encoding='utf-8')
+          anchor='<h1>Espen.</h1>'
+          assert original.count(anchor)==1
+          latest=(
+              '<section style="border-color:#78e1cb;background:#102a32">'
+              '<h2>✨ Nowa Ala Stage 12 · 0.2.19 (testowa)</h2>'
+              '<p>Magiczna historia, którą Ala <b>opowiada na głos przez Xiaozhi</b>. '
+              'Ala proponuje dwa wybory, a trzeci wymyślasz i wypowiadasz sam. '
+              'Kolejny rozdział zależy od Twojego pomysłu.</p>'
+              '<a href="stage12/" style="font-size:1.2rem;font-weight:bold">'
+              '🚀 Otwórz pełny instalator Ali Stage 12</a>'
+              '<p style="margin-bottom:0"><a href="stage11/">Poprzednia wersja Stage 11 (0.2.18)</a></p>'
+              '</section>')
+          home.write_text(original.replace(anchor,anchor+latest,1),encoding='utf-8')
+          preview=Path('dist/stage12/index.html')
+          html=preview.read_text(encoding='utf-8')
+          assert html.count(anchor)==1
+          banner=(
+              '<p style="font-weight:bold;color:#78e1cb">ALA STAGE 12 · wersja testowa 0.2.19</p>'
+              '<p>Magiczna Opowieść AI: Ala <b>mówi kolejne sceny i dwie propozycje</b>. '
+              'Pojawiają się animowane karty, a przy trzeciej opcji robot słucha Twojego '
+              'własnego pomysłu. Następny rozdział powstaje na jego podstawie. '
+              'Do działania wymagane są Wi-Fi i serwer Xiaozhi. '
+              'Kompilacja została przetestowana automatycznie, a realna interakcja '
+              'głosowa musi zostać sprawdzona na robocie.</p>')
+          preview.write_text(html.replace(anchor,anchor+banner,1),encoding='utf-8')
+          PY
+      - uses: actions/configure-pages@v5
+      - name: Upload root + Stage 11 + Stage 12 complete web installers
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+      - name: Deploy Pages
+        id: deploy
+        uses: actions/deploy-pages@v4
