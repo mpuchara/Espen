@@ -1,0 +1,65 @@
+name: Ala Stage 12 - AI magic story, voice choice, full firmware
+on:
+  push:
+    branches: [feature/ala-stage12-ai-magic-story]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  magic-story-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test dynamic narrative, STT integration, and previous games
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/prepare_phone.py scripts/prepare.py
+          python3 tests/test_ala_stage12_magic_contracts.py
+          python3 tests/test_ala_stage11_vision_contracts.py
+          python3 tests/test_ala_play_games_contracts.py
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_magic_story.cc -o /tmp/ala-magic-story
+          /tmp/ala-magic-story
+          c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_play_games.cc -o /tmp/ala-game
+          /tmp/ala-game
+  full-esp32-p4-build:
+    needs: magic-story-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    container:
+      image: espressif/idf:v6.1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build full-flash Ala 0.2.19
+        shell: bash
+        run: |
+          set -euo pipefail
+          source "$IDF_PATH/export.sh"
+          bash scripts/build.sh
+          (cd dist && sha256sum --check espen.bin.sha256 && sha256sum --check espen-update.sha256)
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          d=Path('dist')
+          full=(d/'espen.bin').read_bytes()
+          app=(d/'espen-app.bin').read_bytes()
+          manifest=json.loads((d/'manifest-full.json').read_text())
+          assert manifest['version']=='0.2.19'
+          assert manifest['builds'][0]['parts']==[{'path':'espen.bin','offset':0}]
+          assert 0x800000<len(full)<=16*1024*1024
+          assert full[0x2000]==0xe9 and full[0x20000]==0xe9
+          assert full[0x20000:0x20000+len(app)]==app
+          print('Ala Stage 12: full P4 install OK')
+          PY
+      - name: Upload full firmware (not a delta)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ala-stage12-magic-story-full-flash
+          path: |
+            dist/espen.bin
+            dist/espen.bin.sha256
+            dist/espen-app.bin
+            dist/espen-assets.bin
+            dist/espen-update.sha256
+          if-no-files-found: error
