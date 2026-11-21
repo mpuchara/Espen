@@ -587,7 +587,7 @@ void EspenMagicStoryArmVoice(bool enabled) {
 bool EspenMagicStoryConsumeVoice(const char* text) {
     if(!text || !magic_wire.voice_armed.load(std::memory_order_acquire))return false;
     const size_t n=strlen(text);
-    if(n<3 || n>700)return false;
+    if(n<2 || n>700)return false;
     if(!magic_wire.voice_armed.exchange(false,std::memory_order_acq_rel))return false;
     std::lock_guard<std::mutex> l(magic_wire.mutex);
     // Keep complete UTF-8 codepoints; AlaMagicStory bounds the actual choice.
@@ -727,7 +727,9 @@ class EspenDisplay : public LcdDisplay {
     espen::AlaMagicStory magic_story_{};
     std::string pending_magic_prompt_, magic_live_text_;
     uint32_t magic_rx_rev_=0, magic_sent_ms_=0, magic_voice_ms_=0;
-    bool magic_request_sent_=false;
+    uint32_t magic_last_render_ms_=0, magic_detail_sent_ms_=0;
+    bool magic_request_sent_=false, magic_auto_voice_pending_=false;
+    bool magic_detail_prompt_sent_=false, magic_detail_speech_started_=false;
     lv_obj_t* game_panel_ = nullptr;
     lv_obj_t* game_title_ = nullptr;
     lv_obj_t* game_progress_ = nullptr;
