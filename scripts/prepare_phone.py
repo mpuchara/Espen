@@ -51,7 +51,11 @@ app = up / "main/application.cc"
 replace(header, '#include <cstdint>',
         '#include <cstdint>\n#include <atomic>')
 replace(header, '    std::mutex mutex_;',
-        '    std::atomic<bool> espen_xiaozhi_channel_open_{false};\n    std::mutex mutex_;')
+        '    std::atomic<bool> espen_xiaozhi_channel_open_{false};\n'
+        '    std::atomic<EspenMicMode> espen_mic_mode_{EspenMicMode::Keyword};\n'
+        '    std::atomic<unsigned> espen_story_epoch_{0};\n'
+        '    std::atomic<bool> espen_story_barge_{false};\n'
+        '    std::mutex mutex_;')
 replace(header,
         '    void EspenAskText(const std::string& text, bool only_hello, const std::string& robot_name);',
         '    void EspenAskText(const std::string& text, bool only_hello, const std::string& robot_name);\n'
