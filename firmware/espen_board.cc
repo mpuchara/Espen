@@ -1170,58 +1170,109 @@ class EspenDisplay : public LcdDisplay {
         RefreshPlayGames();
         app.EspenStartMagicVoiceListening();
     }
+    void SetMagicStoryFaceLayout(bool enabled) {
+        if(!game_panel_ || magic_face_layout_==enabled)return;
+        magic_face_layout_=enabled;
+        auto* head=lv_obj_get_parent(game_title_);
+        if(enabled) {
+            // The old opaque game panel obscured the entire robot. During a
+            // spoken story it becomes a transparent, non-scrolling HUD: title
+            // and status ABOVE the face, optional choices BELOW the face.
+            lv_obj_set_layout(game_panel_,LV_LAYOUT_NONE);
+            lv_obj_clear_flag(game_panel_,LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_set_scrollbar_mode(game_panel_,LV_SCROLLBAR_MODE_OFF);
+            lv_obj_set_style_pad_all(game_panel_,0,0);
+            lv_obj_set_style_bg_opa(game_panel_,LV_OPA_TRANSP,0);
+            lv_obj_set_style_border_width(game_panel_,0,0);
+            lv_obj_set_size(head,DISPLAY_WIDTH-16,42);
+            lv_obj_set_pos(head,8,3);
+            lv_obj_set_style_radius(head,12,0);
+            lv_obj_set_style_bg_color(head,lv_color_hex(0x07182A),0);
+            lv_obj_set_style_bg_opa(head,LV_OPA_80,0);
+            lv_obj_set_width(game_title_,325);
+            lv_obj_set_width(game_voice_status_,DISPLAY_WIDTH-24);
+            lv_obj_set_pos(game_voice_status_,12,48);
+            lv_obj_set_height(game_voice_status_,26);
+            for(int i=0;i<3;++i) {
+                lv_obj_set_width(game_choices_[i],(DISPLAY_WIDTH-22)/2);
+                lv_obj_set_height(game_choices_[i],52);
+                lv_obj_set_pos(game_choices_[i],
+                    i==0?6:i==1?(DISPLAY_WIDTH/2+1):6,
+                    DISPLAY_HEIGHT-76-58);
+                lv_obj_set_width(lv_obj_get_child(game_choices_[i],0),
+                                 (DISPLAY_WIDTH-22)/2-28);
+            }
+            lv_obj_set_width(game_repeat_,DISPLAY_WIDTH-20);
+            lv_obj_set_pos(game_repeat_,10,DISPLAY_HEIGHT-76-57);
+            lv_obj_set_height(game_repeat_,51);
+        } else {
+            // Restore the old scrolling games menu, quiz and animal layout.
+            lv_obj_set_style_bg_opa(game_panel_,LV_OPA_COVER,0);
+            lv_obj_set_style_bg_color(game_panel_,lv_color_hex(0x07182A),0);
+            lv_obj_set_style_pad_all(game_panel_,16,0);
+            lv_obj_set_style_pad_row(game_panel_,8,0);
+            lv_obj_set_flex_flow(game_panel_,LV_FLEX_FLOW_COLUMN);
+            lv_obj_set_scroll_dir(game_panel_,LV_DIR_VER);
+            lv_obj_add_flag(game_panel_,LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_set_scrollbar_mode(game_panel_,LV_SCROLLBAR_MODE_AUTO);
+            lv_obj_set_size(head,lv_pct(100),55);
+            lv_obj_set_style_bg_opa(head,LV_OPA_TRANSP,0);
+            lv_obj_set_width(game_title_,330);
+            lv_obj_set_width(game_voice_status_,lv_pct(100));
+            for(int i=0;i<3;++i) {
+                lv_obj_set_width(game_choices_[i],DISPLAY_WIDTH-38);
+                lv_obj_set_height(game_choices_[i],65);
+                lv_obj_set_width(lv_obj_get_child(game_choices_[i],0),DISPLAY_WIDTH-76);
+            }
+            lv_obj_set_width(game_repeat_,DISPLAY_WIDTH-38);
+            lv_obj_set_height(game_repeat_,65);
+        }
+    }
     void RefreshMagicStory() {
         if(!game_panel_)return;
+        SetMagicStoryFaceLayout(true);
         const auto phase=magic_story_.Phase();
         const bool ready=phase==espen::MagicPhase::Ready;
         const bool listening=phase==espen::MagicPhase::Listening;
-        lv_label_set_text(game_title_,"Magiczna opowieść");
-        lv_obj_set_height(lv_obj_get_parent(game_title_),42);
+        lv_label_set_text(game_title_,"✨ Magiczna opowieść");
         Hide(game_progress_,true);
-        const std::string& text=magic_live_text_.empty()?magic_story_.Scene():magic_live_text_;
-        lv_label_set_text(game_prompt_,text.empty()?
-            "Ala opowiada magiczną przygodę...":text.c_str());
-        lv_obj_set_height(game_prompt_,(ready||listening)?130:173);
-        lv_obj_add_flag(game_prompt_,LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_scroll_dir(game_prompt_,LV_DIR_VER);
-
+        // The full-face story is voice-first: do not render a 1500-byte cloud
+        // transcript across the eyes and mouth, or resize LVGL labels every
+        // time Xiaozhi sends another sentence. FaceEngine keeps running at 50ms.
+        Hide(game_prompt_,true);
+        Hide(game_feedback_,true);
+        Hide(game_voice_status_,false);
         for(int i=0;i<3;++i) {
             Hide(game_choices_[i],!(ready||listening) || i==2);
-            if(i<2 && (ready||listening)) {
+            if(i<2 && (ready||listening))
                 lv_label_set_text(lv_obj_get_child(game_choices_[i],0),
-                    i==0?LV_SYMBOL_OK "  Tak, propozycja Ali":
-                         LV_SYMBOL_AUDIO "  Opowiem inny pomysł");
-                lv_obj_set_height(game_choices_[i],56);
-            }
+                    i==0?LV_SYMBOL_OK "  Pomysł Ali":
+                         LV_SYMBOL_AUDIO "  Mój pomysł");
         }
         Hide(game_spacer_,true);
         Hide(game_next_,true);
         Hide(game_again_,true);
         Hide(game_home_,true);
         Hide(game_repeat_,phase!=espen::MagicPhase::Error);
-        Hide(game_feedback_,ready);
-        Hide(game_voice_status_,ready);
         if(ready) {
-            lv_label_set_text(game_feedback_,
-                              "Powiedz 'tak' albo opowiedz, co się wydarzy.");
+            lv_label_set_text(game_voice_status_,
+                "Powiedz «tak» albo opowiedz własny pomysł.");
         } else if(listening) {
-            lv_label_set_text(game_feedback_,"Teraz TY decydujesz, co się wydarzy!");
             lv_label_set_text(game_voice_status_,
-                              "Słucham. Powiedz 'tak' albo swoją wersję.");
+                "🎤 Słucham! Co ma się wydarzyć?");
         } else if(phase==espen::MagicPhase::Clarifying) {
-            lv_label_set_text(game_feedback_,"Opowiedz Ali swój własny pomysł.");
-            lv_label_set_text(game_voice_status_,"Ala dopytuje o szczegóły...");
-        } else if(phase==espen::MagicPhase::Error) {
-            lv_label_set_text(game_feedback_,"Ala nie usłyszała całej opowieści.");
             lv_label_set_text(game_voice_status_,
-                              "Spróbuj ponownie. Wymagane jest połączenie Xiaozhi.");
+                "Ala pyta, co ma się wydarzyć...");
+        } else if(phase==espen::MagicPhase::Error) {
+            lv_label_set_text(game_voice_status_,
+                "Nie udało się. Spróbuj ponownie.");
             lv_label_set_text(lv_obj_get_child(game_repeat_,0),"↻ Spróbuj ponownie");
         } else {
-            lv_label_set_text(game_feedback_,
-                              "Ala opowiada dalszy ciąg według Twojego wyboru.");
-            lv_label_set_text(game_voice_status_,"Słuchaj Ali...");
+            lv_label_set_text(game_voice_status_,
+                "✨ Ala opowiada... Spójrz na jej emocje!");
         }
     }
+
     void PumpMagicStory() {
         if(magic_story_.Phase()==espen::MagicPhase::Off || !game_panel_ ||
            lv_obj_has_flag(game_panel_,LV_OBJ_FLAG_HIDDEN))return;
@@ -1350,6 +1401,8 @@ class EspenDisplay : public LcdDisplay {
         if(magic_story_.Phase()!=espen::MagicPhase::Off) {
             RefreshMagicStory();return;
         }
+        SetMagicStoryFaceLayout(false);
+        Hide(game_prompt_,false);
         lv_obj_set_height(lv_obj_get_parent(game_title_),55);
         Hide(game_progress_,false);
         Hide(game_feedback_,false);
