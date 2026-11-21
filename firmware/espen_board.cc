@@ -1373,7 +1373,15 @@ class EspenDisplay : public LcdDisplay {
             }
             game_repeat_=MakeButton(game_panel_,"↻ Powtórz opcje",[](lv_event_t* e){
                 auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
-                self->QueueStoryNarration();
+                const auto phase=self->magic_story_.Phase();
+                if(phase==espen::MagicPhase::Ready) {
+                    self->pending_story_voice_=
+                        "Opcja pierwsza: "+self->magic_story_.Option(0)+
+                        ". Opcja druga: "+self->magic_story_.Option(1)+
+                        ". Możesz też wymyślić swoją własną opcję i powiedzieć ją Ali.";
+                } else if(phase==espen::MagicPhase::Error) {
+                    if(self->magic_story_.Retry())self->QueueMagicStoryTurn();
+                } else self->QueueStoryNarration();
             },this,DISPLAY_WIDTH-38);
             lv_obj_set_style_bg_color(game_repeat_,lv_color_hex(0x30566A),0);
             game_next_=MakeButton(game_panel_,"Dalej",[](lv_event_t* e){
@@ -1382,11 +1390,14 @@ class EspenDisplay : public LcdDisplay {
             },this,DISPLAY_WIDTH-38);
             game_again_=MakeButton(game_panel_,"Zagraj ponownie",[](lv_event_t* e){
                 auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
-                self->games_.Start(self->games_.View().mode,lv_tick_get()^static_cast<uint32_t>(esp_random()));
+                const auto mode=self->games_.View().mode;
+                self->CancelMagicStory();
+                self->games_.Start(mode,lv_tick_get()^static_cast<uint32_t>(esp_random()));
                 self->RefreshPlayGames();self->QueueStoryNarration();
             },this,DISPLAY_WIDTH-38);
             game_home_=MakeButton(game_panel_,"Inna gra / Wróć",[](lv_event_t* e){
                 auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                self->CancelMagicStory();
                 self->games_.Reset();self->RefreshPlayGames();self->QueueStoryNarration();
             },this,DISPLAY_WIDTH-38);
         }
