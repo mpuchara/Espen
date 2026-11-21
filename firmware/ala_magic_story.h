@@ -115,7 +115,7 @@ public:
         CommitChoice(voice);return true;
     }
     bool CancelVoiceChoice() {
-        if(phase_!=MagicPhase::Listening)return false;
+        if(phase_!=MagicPhase::Listening && phase_!=MagicPhase::Clarifying)return false;
         phase_=MagicPhase::Ready;return true;
     }
     bool Retry() {
