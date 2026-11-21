@@ -25,6 +25,7 @@ assert "lv_obj_set_layout(game_panel_,LV_LAYOUT_NONE);" in board
 assert "lv_obj_set_style_bg_opa(game_panel_,LV_OPA_COVER,0);" in board
 assert "lv_obj_set_flex_flow(game_panel_,LV_FLEX_FLOW_COLUMN);" in board
 assert "Hide(game_prompt_,true);" in board and "Hide(game_prompt_,false);" in board
+assert "magic_live_text_" not in board  # no on-screen transcript stealing memory and frames
 assert "lv_obj_set_pos(game_choices_[i]" in board
 assert "lv_obj_set_pos(game_voice_status_,12,48);" in board
 assert "Hide(game_choices_[i],!(ready||listening) || i==2);" in board
