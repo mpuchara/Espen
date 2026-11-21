@@ -1017,6 +1017,7 @@ class EspenDisplay : public LcdDisplay {
         auto* camera=MakeButton(bottom_dock_,LV_SYMBOL_IMAGE "  Aparat",[](lv_event_t* e){
             auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
             self->pending_story_voice_.clear();
+            self->CancelMagicStory();
             if(self->game_panel_)self->Hide(self->game_panel_,true);
             self->pending_vision_voice_.clear();
             auto& app=Application::GetInstance();
@@ -1027,7 +1028,12 @@ class EspenDisplay : public LcdDisplay {
         },this,142);
         auto* mic=MakeButton(bottom_dock_,LV_SYMBOL_AUDIO "  Mikrofon",[](lv_event_t* e){
             auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+            // The third choice keeps the game visible while Ala is listening.
+            if(self->magic_story_.Phase()==espen::MagicPhase::Listening) {
+                ConversationClick();return;
+            }
             self->pending_story_voice_.clear();
+            self->CancelMagicStory();
             if(self->game_panel_)self->Hide(self->game_panel_,true);
             self->pending_vision_voice_.clear();
             if(self->camera_panel_){self->StopCameraPreview();self->Hide(self->camera_panel_,true);}
@@ -1296,6 +1302,7 @@ class EspenDisplay : public LcdDisplay {
             lv_obj_set_style_text_color(game_title_,lv_color_hex(0x7EE9D2),0);
             MakeButton(head,"X",[](lv_event_t* e){
                 auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+                self->CancelMagicStory();
                 self->games_.Reset();
                 self->pending_story_voice_.clear();
                 self->Hide(self->game_panel_,true);
@@ -1368,6 +1375,7 @@ class EspenDisplay : public LcdDisplay {
                 self->games_.Reset();self->RefreshPlayGames();self->QueueStoryNarration();
             },this,DISPLAY_WIDTH-38);
         }
+        CancelMagicStory();
         games_.Reset();
         pending_story_voice_.clear();
         RefreshPlayGames();
