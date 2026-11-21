@@ -725,9 +725,8 @@ class EspenDisplay : public LcdDisplay {
     // Touch-only child-friendly games run entirely on the LVGL thread.
     espen::AlaPlayGames games_{};
     espen::AlaMagicStory magic_story_{};
-    std::string pending_magic_prompt_, magic_live_text_;
-    uint32_t magic_rx_rev_=0, magic_sent_ms_=0, magic_voice_ms_=0;
-    uint32_t magic_last_render_ms_=0, magic_detail_sent_ms_=0;
+    std::string pending_magic_prompt_;
+    uint32_t magic_sent_ms_=0, magic_voice_ms_=0, magic_detail_sent_ms_=0;
     bool magic_request_sent_=false, magic_auto_voice_pending_=false;
     bool magic_detail_prompt_sent_=false, magic_detail_speech_started_=false;
     lv_obj_t* game_panel_ = nullptr;
@@ -1115,19 +1114,17 @@ class EspenDisplay : public LcdDisplay {
         magic_story_.Reset();
         magic_request_sent_=false;magic_auto_voice_pending_=false;
         magic_detail_prompt_sent_=false;magic_detail_speech_started_=false;
-        magic_live_text_.clear();pending_magic_prompt_.clear();
-        magic_sent_ms_=0;magic_voice_ms_=0;magic_rx_rev_=0;
-        magic_detail_sent_ms_=0;magic_last_render_ms_=0;
+        pending_magic_prompt_.clear();
+        magic_sent_ms_=0;magic_voice_ms_=0;magic_detail_sent_ms_=0;
     }
     void QueueMagicStoryTurn() {
         // The previous cloud voice turn must close before starting another.
         EspenMagicStoryArmVoice(false);
         pending_story_voice_.clear();
         pending_magic_prompt_=magic_story_.Prompt();
-        magic_request_sent_=false;magic_sent_ms_=0;magic_rx_rev_=0;
+        magic_request_sent_=false;magic_sent_ms_=0;
         magic_auto_voice_pending_=false;magic_detail_prompt_sent_=false;
         magic_detail_speech_started_=false;
-        magic_live_text_.clear();magic_last_render_ms_=0;
         RefreshPlayGames();
     }
     void AnimateMagicChoices() {
@@ -1359,23 +1356,9 @@ class EspenDisplay : public LcdDisplay {
             return;
         }
         if(!magic_request_sent_)return;
-        // Incremental text is display-only. Updating at most twice per
-        // second prevents LVGL allocations from destabilizing the P4.
-        if(revision!=magic_rx_rev_ && !speech.empty() &&
-           now-magic_last_render_ms_>=650) {
-            magic_rx_rev_=revision;magic_last_render_ms_=now;
-            magic_live_text_=speech;
-            if(magic_live_text_.size()>1150) {
-                magic_live_text_.resize(1150);
-                while(!magic_live_text_.empty() &&
-                      (static_cast<unsigned char>(magic_live_text_.back())&0xc0)==0x80)
-                    magic_live_text_.pop_back();
-                if(!magic_live_text_.empty() &&
-                   (static_cast<unsigned char>(magic_live_text_.back())&0xc0)==0xc0)
-                    magic_live_text_.pop_back();
-            }
-            RefreshMagicStory();
-        }
+        // The story is intentionally spoken with the real animated face on
+        // screen. The cloud transcript stays in the bounded mailbox until
+        // TTS ends; avoid hidden LVGL label reallocations on each sentence.
         const bool timed_out=magic_sent_ms_ && now-magic_sent_ms_>78000;
         if(failed || timed_out ||
            (done && app.GetDeviceState()==kDeviceStateIdle &&
@@ -1385,7 +1368,6 @@ class EspenDisplay : public LcdDisplay {
             // A model response can be natural prose with no "option" labels.
             // That is valid: the spoken suggestion is in the story itself.
             if(!failed && (done || timed_out) && magic_story_.CompleteTurn(speech)) {
-                magic_live_text_.clear();
                 magic_auto_voice_pending_=!timed_out;
                 RefreshPlayGames();
                 AnimateMagicChoices();
