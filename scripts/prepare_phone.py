@@ -199,38 +199,42 @@ replace(app, 'void Application::WakeWordInvoke(const std::string& wake_word) {',
 # Stage 12: only verified magic story replies enter the story inbox.
 # Hooks run on Xiaozhi's protocol callback; firmware mailbox has a mutex and
 # is consumed strictly by the existing LVGL timer.
-replace(app,
-    '                EspenVisualSentence(text->valuestring);',
-    '                EspenVisualSentence(text->valuestring);\n'
-    '                extern void EspenMagicStorySentence(const char*);\n'
-    '                EspenMagicStorySentence(text->valuestring);')
-replace(app,
-    '            } else if (strcmp(state->valuestring, "stop") == 0) {',
-    '            } else if (strcmp(state->valuestring, "stop") == 0) {\n'
-    '                extern void EspenMagicStoryOutputDone();\n'
-    '                EspenMagicStoryOutputDone();')
-replace(app,
-    '                EspenVisionQuestion(text->valuestring);',
-    '                EspenVisionQuestion(text->valuestring);\n'
-    '                extern bool EspenMagicStoryConsumeVoice(const char*);\n'
-    '                if (EspenMagicStoryConsumeVoice(text->valuestring)) {\n'
-    '                    Schedule([this]() {\n'
-    '                        if (protocol_ && protocol_->IsAudioChannelOpened())\n'
-    '                            protocol_->CloseAudioChannel();\n'
-    '                        SetDeviceState(kDeviceStateIdle);\n'
-    '                    });\n'
-    '                    return; // one recorded choice; no unrelated assistant answer\n'
-    '                }')
-replace(app,
-    '        } else if (strcmp(type->valuestring, "tts") == 0) {',
-    '        } else if (strcmp(type->valuestring, "tts") == 0) {\n'
-    '            extern bool EspenMagicStorySuppressStale();\n'
-    '            if(EspenMagicStorySuppressStale())return;')
-replace(app,
-    '    protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {',
-    '    protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {\n'
-    '        extern bool EspenMagicStorySuppressStale();\n'
-    '        if(EspenMagicStorySuppressStale())return;')
+# The phone-panel host fixture has no Xiaozhi JSON callback. In the real
+# pinned firmware scripts/prepare.py added this symbol first; the hooks below
+# are mandatory there and are verified again after the overlay during build.
+if 'EspenVisualSentence(text->valuestring);' in app.read_text():
+    replace(app,
+        '                EspenVisualSentence(text->valuestring);',
+        '                EspenVisualSentence(text->valuestring);\n'
+        '                extern void EspenMagicStorySentence(const char*);\n'
+        '                EspenMagicStorySentence(text->valuestring);')
+    replace(app,
+        '            } else if (strcmp(state->valuestring, "stop") == 0) {',
+        '            } else if (strcmp(state->valuestring, "stop") == 0) {\n'
+        '                extern void EspenMagicStoryOutputDone();\n'
+        '                EspenMagicStoryOutputDone();')
+    replace(app,
+        '                EspenVisionQuestion(text->valuestring);',
+        '                EspenVisionQuestion(text->valuestring);\n'
+        '                extern bool EspenMagicStoryConsumeVoice(const char*);\n'
+        '                if (EspenMagicStoryConsumeVoice(text->valuestring)) {\n'
+        '                    Schedule([this]() {\n'
+        '                        if (protocol_ && protocol_->IsAudioChannelOpened())\n'
+        '                            protocol_->CloseAudioChannel();\n'
+        '                        SetDeviceState(kDeviceStateIdle);\n'
+        '                    });\n'
+        '                    return; // one recorded choice; no unrelated assistant answer\n'
+        '                }')
+    replace(app,
+        '        } else if (strcmp(type->valuestring, "tts") == 0) {',
+        '        } else if (strcmp(type->valuestring, "tts") == 0) {\n'
+        '            extern bool EspenMagicStorySuppressStale();\n'
+        '            if(EspenMagicStorySuppressStale())return;')
+    replace(app,
+        '    protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {',
+        '    protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {\n'
+        '        extern bool EspenMagicStorySuppressStale();\n'
+        '        if(EspenMagicStorySuppressStale())return;')
 
 source = board / "espen_board.cc"
 replace(source, '#include "face_engine.h"',
