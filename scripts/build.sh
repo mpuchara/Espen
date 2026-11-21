@@ -31,8 +31,9 @@ python3 tests/test_audio_cue_integration.py
 python3 tests/test_stage9_regression_contracts.py
 python3 tests/test_ala_play_games_contracts.py
 python3 tests/test_ala_stage12_magic_contracts.py
-c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_magic_story.cc -o /tmp/ala-stage12-magic-test
-/tmp/ala-stage12-magic-test
+python3 tests/test_ala_stage13_voice_first_contracts.py
+c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_magic_story.cc -o /tmp/ala-stage13-one-voice-story-test
+/tmp/ala-stage13-one-voice-story-test
 python3 tests/test_ala_stage11_vision_contracts.py
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_play_games.cc -o /tmp/ala-play-games-test
 /tmp/ala-play-games-test
