@@ -7,8 +7,8 @@ board=(root/"firmware/espen_board.cc").read_text(encoding="utf-8")
 phone=(root/"scripts/prepare_phone.py").read_text(encoding="utf-8")
 manifest=(root/"web/manifest-full.json").read_text(encoding="utf-8")
 build=(root/"scripts/build.sh").read_text(encoding="utf-8")
-assert '"version": "0.2.20"' in manifest
-assert '"Espen 0.2.20 boot:' in board
+assert '"version": "0.2.21"' in manifest
+assert '"Espen 0.2.21 boot:' in board
 assert "TYLKO JEDEN" in engine and "NIE tworz dwoch ani trzech opcji" in engine
 assert "Moze chcialbys, zeby historia potoczyla sie inaczej?" in engine
 assert "Opowiedz mi, co ma sie wydarzyc" in engine
