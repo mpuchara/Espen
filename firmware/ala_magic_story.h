@@ -56,7 +56,12 @@ class AlaMagicStory {
         const std::string previous=Bound(scene_,350);
         history_+="\nCzesc "+std::to_string(turn_+1)+": "+previous+
                   "\nGracz postanowil: "+Bound(selected,kChoiceMax);
-        if(history_.size()>kHistoryMax)history_.erase(0,history_.size()-kHistoryMax);
+        if(history_.size()>kHistoryMax) {
+            size_t first=history_.size()-kHistoryMax;
+            while(first<history_.size() &&
+                  (static_cast<unsigned char>(history_[first])&0xc0)==0x80)++first;
+            history_.erase(0,first); // never leave an invalid UTF-8 prefix
+        }
         last_choice_=selected;
         ++turn_;
         phase_=MagicPhase::Generating;
