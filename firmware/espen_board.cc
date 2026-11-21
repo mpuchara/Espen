@@ -2633,7 +2633,7 @@ class EspenDisplay : public LcdDisplay {
             ESP_LOGW(TAG,"TV guard v0.2.14: auto-speech disabled; wake phrase and touch remain");
         }
         engine_.SetPersona(static_cast<espen::Persona>(std::clamp<int32_t>(cfg.GetInt("persona",0),0,static_cast<int32_t>(espen::Persona::Count)-1)));
-        const int mic_mode=std::clamp(cfg.GetInt("dock_mic",cfg.GetBool("auto_speech",false)?0:1),0,2);
+        const int mic_mode=std::clamp<int32_t>(cfg.GetInt("dock_mic",cfg.GetBool("auto_speech",false)?0:1),0,2);
         auto_speech_=mic_mode==0;
         visual_enabled_=cfg.GetBool("visual_world",true);
         Application::GetInstance().EspenSetMicMode(static_cast<Application::EspenMicMode>(mic_mode));
