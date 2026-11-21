@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
-      name: github-pages
+      name: ala-stage11-preview
       url: ${{ steps.deploy.outputs.page_url }}stage11/
     steps:
       - name: Checkout current stable installer (preserve 0.2.17 root)
