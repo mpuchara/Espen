@@ -1063,8 +1063,17 @@ class EspenDisplay : public LcdDisplay {
         pending_story_voice_.clear();
         if(view.mode!=espen::PlayMode::Story || view.phase==espen::PlayPhase::Feedback ||
            magic_story_.Phase()!=espen::MagicPhase::Off)return;
-        pending_story_voice_=view.prompt;
-        if(view.phase==espen::PlayPhase::Choice && view.option_count>0) {
+        if(view.round==0) {
+            // The first moment inside Magic Story is spoken, not silent UI.
+            pending_story_voice_=
+                "Cześć! Witaj w Magicznej Opowieści! "
+                "Razem wymyślimy niezwykłą bajkę, a Ty zdecydujesz, "
+                "jak potoczy się przygoda. "
+                "Gdzie chcesz rozpocząć? W magicznym lesie, "
+                "nad jeziorem czy z mamą w samochodzie? "
+                "Wybierz miejsce na ekranie, a ja zacznę opowiadać.";
+        } else pending_story_voice_=view.prompt;
+        if(view.round!=0 && view.phase==espen::PlayPhase::Choice && view.option_count>0) {
             static constexpr const char* labels[]={"Opcja pierwsza: ","Opcja druga: ","Opcja trzecia: "};
             pending_story_voice_+=" Możesz wybrać. ";
             for(int i=0;i<view.option_count && i<3;++i) {
@@ -1445,10 +1454,24 @@ class EspenDisplay : public LcdDisplay {
                                 return;
                             }
                         } else if(view.mode==espen::PlayMode::Story &&
-                                  self->magic_story_.Phase()==espen::MagicPhase::Ready) {
-                            if(j==2)self->StartMagicVoiceChoice();
-                            else if(self->magic_story_.ChooseSuggestion(j))
-                                self->QueueMagicStoryTurn();
+                                  (self->magic_story_.Phase()==espen::MagicPhase::Ready ||
+                                   self->magic_story_.Phase()==espen::MagicPhase::Listening)) {
+                            if(j==1) {
+                                if(self->magic_story_.Phase()==espen::MagicPhase::Ready)
+                                    self->StartMagicVoiceChoice();
+                                else {
+                                    lv_label_set_text(self->game_voice_status_,
+                                        "Opowiedz mi, jak ma się potoczyć przygoda!");
+                                }
+                            } else if(j==0) {
+                                if(self->magic_story_.Phase()==espen::MagicPhase::Listening) {
+                                    EspenMagicStoryArmVoice(false);
+                                    EspenMagicStoryResetWire();
+                                    Application::GetInstance().EspenCancelMagicStory();
+                                }
+                                if(self->magic_story_.ChooseSuggestion(0))
+                                    self->QueueMagicStoryTurn();
+                            }
                             return;
                         } else self->games_.Choose(j);
                         self->RefreshPlayGames();
@@ -1471,13 +1494,13 @@ class EspenDisplay : public LcdDisplay {
             game_repeat_=MakeButton(game_panel_,"↻ Powtórz opcje",[](lv_event_t* e){
                 auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
                 const auto phase=self->magic_story_.Phase();
-                if(phase==espen::MagicPhase::Ready) {
-                    self->pending_story_voice_=
-                        "Opcja pierwsza: "+self->magic_story_.Option(0)+
-                        ". Opcja druga: "+self->magic_story_.Option(1)+
-                        ". Możesz też wymyślić swoją własną opcję i powiedzieć ją Ali.";
-                } else if(phase==espen::MagicPhase::Error) {
+                if(phase==espen::MagicPhase::Error) {
                     if(self->magic_story_.Retry())self->QueueMagicStoryTurn();
+                } else if(phase==espen::MagicPhase::Ready) {
+                    self->pending_story_voice_=
+                        "Może chciałbyś, żeby historia potoczyła się inaczej? "
+                        "Opowiedz mi, co ma się wydarzyć. "
+                        "Jeśli wybierasz mój pomysł, powiedz tak.";
                 } else self->QueueStoryNarration();
             },this,DISPLAY_WIDTH-38);
             lv_obj_set_style_bg_color(game_repeat_,lv_color_hex(0x30566A),0);
