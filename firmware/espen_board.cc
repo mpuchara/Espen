@@ -1335,10 +1335,25 @@ class EspenDisplay : public LcdDisplay {
                     auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
                     auto* target=static_cast<lv_obj_t*>(lv_event_get_current_target(e));
                     for(int j=0;j<3;++j)if(self->game_choices_[j]==target) {
-                        const auto mode=self->games_.View().mode;
-                        if(mode==espen::PlayMode::Menu)
-                            self->games_.Start(static_cast<espen::PlayMode>(j+1),lv_tick_get()^static_cast<uint32_t>(esp_random()));
-                        else self->games_.Choose(j);
+                        const auto view=self->games_.View();
+                        if(view.mode==espen::PlayMode::Menu) {
+                            self->CancelMagicStory();
+                            self->games_.Start(static_cast<espen::PlayMode>(j+1),
+                                lv_tick_get()^static_cast<uint32_t>(esp_random()));
+                        } else if(view.mode==espen::PlayMode::Story && view.round==0) {
+                            if(self->games_.Choose(j)) {
+                                self->magic_story_.Start(static_cast<espen::StorySetting>(j));
+                                self->QueueMagicStoryTurn();
+                                lv_obj_scroll_to_y(self->game_panel_,0,LV_ANIM_OFF);
+                                return;
+                            }
+                        } else if(view.mode==espen::PlayMode::Story &&
+                                  self->magic_story_.Phase()==espen::MagicPhase::Ready) {
+                            if(j==2)self->StartMagicVoiceChoice();
+                            else if(self->magic_story_.ChooseSuggestion(j))
+                                self->QueueMagicStoryTurn();
+                            return;
+                        } else self->games_.Choose(j);
                         self->RefreshPlayGames();
                         self->QueueStoryNarration();
                         lv_obj_scroll_to_y(self->game_panel_,0,LV_ANIM_OFF);
