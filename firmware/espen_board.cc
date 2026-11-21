@@ -1091,37 +1091,48 @@ class EspenDisplay : public LcdDisplay {
         if(game_voice_status_)lv_label_set_text(game_voice_status_,"Ala opowiada... Powtórz, aby usłyszeć ponownie.");
     }
 
-    // AI story has its own state; quiz and animal games remain unchanged.
+    // Voice-first Magic Story. Xiaozhi owns the single audio channel and
+    // speaks each complete scene and its ONE proposal aloud. Never parse
+    // multiple AI-labelled options or run the codec on the LVGL thread.
     void CancelMagicStory() {
-        const bool active=magic_story_.Phase()!=espen::MagicPhase::Off;
+        const auto phase=magic_story_.Phase();
         EspenMagicStoryArmVoice(false);
         EspenMagicStoryResetWire();
-        if(active && (magic_request_sent_ ||
-           magic_story_.Phase()==espen::MagicPhase::Listening))
+        if(phase!=espen::MagicPhase::Off &&
+           (magic_request_sent_ || phase==espen::MagicPhase::Listening ||
+            phase==espen::MagicPhase::Clarifying || magic_detail_prompt_sent_))
             Application::GetInstance().EspenCancelMagicStory();
-        magic_story_.Reset();magic_request_sent_=false;
+        magic_story_.Reset();
+        magic_request_sent_=false;magic_auto_voice_pending_=false;
+        magic_detail_prompt_sent_=false;magic_detail_speech_started_=false;
         magic_live_text_.clear();pending_magic_prompt_.clear();
-        magic_sent_ms_=0;magic_voice_ms_=0;
+        magic_sent_ms_=0;magic_voice_ms_=0;magic_rx_rev_=0;
+        magic_detail_sent_ms_=0;magic_last_render_ms_=0;
     }
     void QueueMagicStoryTurn() {
+        // The previous cloud voice turn must close before starting another.
+        EspenMagicStoryArmVoice(false);
         pending_story_voice_.clear();
         pending_magic_prompt_=magic_story_.Prompt();
-        magic_request_sent_=false;magic_sent_ms_=0;
-        magic_live_text_.clear();magic_rx_rev_=0;
+        magic_request_sent_=false;magic_sent_ms_=0;magic_rx_rev_=0;
+        magic_auto_voice_pending_=false;magic_detail_prompt_sent_=false;
+        magic_detail_speech_started_=false;
+        magic_live_text_.clear();magic_last_render_ms_=0;
         RefreshPlayGames();
     }
     void AnimateMagicChoices() {
-        for(int i=0;i<3;++i) {
-            if(!game_choices_[i])continue;
+        // Only two on-screen actions: accept Ala's spoken proposal, or speak a
+        // completely original turn. The AI never has to generate button labels.
+        for(int i=0;i<2;++i) {
             lv_anim_t anim;
             lv_anim_init(&anim);
             lv_anim_set_var(&anim,game_choices_[i]);
             lv_anim_set_exec_cb(&anim,[](void* obj,int32_t value){
                 lv_obj_set_style_translate_y(static_cast<lv_obj_t*>(obj),value,0);
             });
-            lv_anim_set_values(&anim,34,0);
-            lv_anim_set_time(&anim,350);
-            lv_anim_set_delay(&anim,static_cast<uint32_t>(i*185));
+            lv_anim_set_values(&anim,28,0);
+            lv_anim_set_time(&anim,320);
+            lv_anim_set_delay(&anim,static_cast<uint32_t>(i*160));
             lv_anim_set_path_cb(&anim,lv_anim_path_ease_out);
             lv_anim_start(&anim);
         }
@@ -1130,63 +1141,75 @@ class EspenDisplay : public LcdDisplay {
     void StartMagicVoiceChoice() {
         auto& app=Application::GetInstance();
         if(!EspenNetworkAvailable() || app.EspenIsStandby()) {
-            lv_label_set_text(game_voice_status_,"Potrzebuję Wi-Fi i Xiaozhi, żeby usłyszeć Twój pomysł.");
+            lv_label_set_text(game_voice_status_,
+                              "Połącz Wi-Fi i Xiaozhi, żeby Ala Cię usłyszała.");
+            return;
+        }
+        if(magic_story_.Phase()==espen::MagicPhase::Listening)return;
+        // Never interrupt an unfinished part of Ala's spoken story.
+        if(app.GetDeviceState()!=kDeviceStateIdle ||
+           !app.GetAudioService().IsPlaybackIdle()) {
+            magic_auto_voice_pending_=true;
             return;
         }
         if(!magic_story_.BeginVoiceChoice())return;
-        pending_story_voice_.clear();
         EspenMagicStoryResetWire();
         EspenMagicStoryArmVoice(true);
+        magic_auto_voice_pending_=false;
         magic_voice_ms_=lv_tick_get();
         RefreshPlayGames();
         app.EspenStartMagicVoiceListening();
     }
     void RefreshMagicStory() {
         if(!game_panel_)return;
-        auto phase=magic_story_.Phase();
+        const auto phase=magic_story_.Phase();
+        const bool ready=phase==espen::MagicPhase::Ready;
+        const bool listening=phase==espen::MagicPhase::Listening;
         lv_label_set_text(game_title_,"Magiczna opowieść");
-        // Keep all three options visible at the bottom on a 480px-high P4.
         lv_obj_set_height(lv_obj_get_parent(game_title_),42);
         Hide(game_progress_,true);
-        lv_label_set_text_fmt(game_progress_,"Twoja przygoda • część %u",magic_story_.Turn()+1);
         const std::string& text=magic_live_text_.empty()?magic_story_.Scene():magic_live_text_;
-        lv_label_set_text(game_prompt_,text.empty()?"Ala wymyśla magiczną przygodę...":text.c_str());
-        lv_obj_set_height(game_prompt_,phase==espen::MagicPhase::Ready?98:172);
+        lv_label_set_text(game_prompt_,text.empty()?
+            "Ala opowiada magiczną przygodę...":text.c_str());
+        lv_obj_set_height(game_prompt_,(ready||listening)?130:173);
         lv_obj_add_flag(game_prompt_,LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_scroll_dir(game_prompt_,LV_DIR_VER);
-        bool ready=phase==espen::MagicPhase::Ready;
-        for(int i=0;i<3;++i){
-            Hide(game_choices_[i],!ready);
-            if(ready) {
-                const char* label=i==2?LV_SYMBOL_AUDIO "  Powiem własny pomysł":
-                    magic_story_.Option(i).c_str();
-                lv_label_set_text(lv_obj_get_child(game_choices_[i],0),label);
-                lv_obj_set_height(game_choices_[i],50);
+
+        for(int i=0;i<3;++i) {
+            Hide(game_choices_[i],!(ready||listening) || i==2);
+            if(i<2 && (ready||listening)) {
+                lv_label_set_text(lv_obj_get_child(game_choices_[i],0),
+                    i==0?LV_SYMBOL_OK "  Tak, propozycja Ali":
+                         LV_SYMBOL_AUDIO "  Opowiem inny pomysł");
+                lv_obj_set_height(game_choices_[i],56);
             }
         }
         Hide(game_spacer_,true);
         Hide(game_next_,true);
         Hide(game_again_,true);
         Hide(game_home_,true);
+        Hide(game_repeat_,phase!=espen::MagicPhase::Error);
         Hide(game_feedback_,ready);
         Hide(game_voice_status_,ready);
-        lv_obj_set_height(game_repeat_,42);
-        Hide(game_repeat_,phase==espen::MagicPhase::Generating ||
-                          phase==espen::MagicPhase::Listening);
-        if(phase==espen::MagicPhase::Ready) {
-            lv_label_set_text(game_feedback_,"Wybierz 1, 2 lub powiedz własny pomysł.");
-            lv_label_set_text(game_voice_status_,"Możesz odsłuchać propozycje ponownie.");
-            lv_label_set_text(lv_obj_get_child(game_repeat_,0),"↻ Powtórz propozycje");
-        } else if(phase==espen::MagicPhase::Listening) {
-            lv_label_set_text(game_feedback_,"Wymyśl własny ciąg dalszy!");
-            lv_label_set_text(game_voice_status_,"🎤 Słucham — powiedz swój pomysł.");
+        if(ready) {
+            lv_label_set_text(game_feedback_,
+                              "Powiedz 'tak' albo opowiedz, co się wydarzy.");
+        } else if(listening) {
+            lv_label_set_text(game_feedback_,"Teraz TY decydujesz, co się wydarzy!");
+            lv_label_set_text(game_voice_status_,
+                              "Słucham. Powiedz 'tak' albo swoją wersję.");
+        } else if(phase==espen::MagicPhase::Clarifying) {
+            lv_label_set_text(game_feedback_,"Opowiedz Ali swój własny pomysł.");
+            lv_label_set_text(game_voice_status_,"Ala dopytuje o szczegóły...");
         } else if(phase==espen::MagicPhase::Error) {
-            lv_label_set_text(game_feedback_,"Nie udało się przygotować dwóch opcji.");
-            lv_label_set_text(game_voice_status_,"Sprawdź Xiaozhi i ponów tworzenie opowieści.");
+            lv_label_set_text(game_feedback_,"Ala nie usłyszała całej opowieści.");
+            lv_label_set_text(game_voice_status_,
+                              "Spróbuj ponownie. Wymagane jest połączenie Xiaozhi.");
             lv_label_set_text(lv_obj_get_child(game_repeat_,0),"↻ Spróbuj ponownie");
         } else {
-            lv_label_set_text(game_feedback_,"Ala tworzy dalszy ciąg według Twojego wyboru.");
-            lv_label_set_text(game_voice_status_,"✨ Słuchaj teraz opowieści Ali...");
+            lv_label_set_text(game_feedback_,
+                              "Ala opowiada dalszy ciąg według Twojego wyboru.");
+            lv_label_set_text(game_voice_status_,"Słuchaj Ali...");
         }
     }
     void PumpMagicStory() {
@@ -1196,45 +1219,93 @@ class EspenDisplay : public LcdDisplay {
         const uint32_t now=lv_tick_get();
         std::string speech,choice;
         bool done=false,failed=false,has_choice=false;
-        uint32_t rev=0;
-        MagicStoryWireSnapshot(speech,done,failed,choice,has_choice,rev);
-        if(magic_story_.Phase()==espen::MagicPhase::Listening) {
+        uint32_t revision=0;
+        MagicStoryWireSnapshot(speech,done,failed,choice,has_choice,revision);
+        const auto phase=magic_story_.Phase();
+        if(phase==espen::MagicPhase::Listening) {
             if(has_choice && magic_story_.AcceptVoiceChoice(std::move(choice))) {
-                QueueMagicStoryTurn();
+                EspenMagicStoryArmVoice(false);
+                EspenMagicStoryResetWire();
+                if(magic_story_.Phase()==espen::MagicPhase::Generating) {
+                    QueueMagicStoryTurn();
+                } else { // "Nie" or "inaczej" without the actual story idea.
+                    magic_detail_prompt_sent_=false;
+                    magic_detail_speech_started_=false;
+                    magic_detail_sent_ms_=0;
+                    RefreshPlayGames();
+                }
                 return;
             }
-            if(now-magic_voice_ms_>45000) {
+            // Brief one-shot listen, not permanent background recording.
+            if(now-magic_voice_ms_>28000) {
                 EspenMagicStoryArmVoice(false);
                 magic_story_.CancelVoiceChoice();
                 if(app.GetDeviceState()==kDeviceStateListening)app.StopListening();
                 RefreshPlayGames();
                 lv_label_set_text(game_voice_status_,
-                    "Nie usłyszałam wyboru. Spróbuj trzeciej opcji ponownie.");
+                    "Nie usłyszałam. Powiedz 'tak' albo dotknij mikrofonu.");
+                Hide(game_voice_status_,false);
             }
             return;
         }
-        if(magic_story_.Phase()!=espen::MagicPhase::Generating)return;
-        if(!pending_magic_prompt_.empty() && !magic_request_sent_) {
-            if(!EspenNetworkAvailable() || app.EspenIsStandby()) {
-                lv_label_set_text(game_voice_status_,"Połącz Wi-Fi i Xiaozhi, żeby usłyszeć opowieść.");
+        if(phase==espen::MagicPhase::Clarifying) {
+            if(!magic_detail_prompt_sent_) {
+                if(!EspenNetworkAvailable() || app.EspenIsStandby())return;
+                if(app.GetDeviceState()!=kDeviceStateIdle ||
+                   !app.GetAudioService().IsPlaybackIdle())return;
+                magic_detail_prompt_sent_=true;
+                magic_detail_sent_ms_=now;
+                app.EspenNarrateGameText(
+                    "Pewnie! Możesz zmienić historię. "
+                    "Opowiedz mi teraz dokładnie, co ma się wydarzyć.");
                 return;
             }
-            if(app.GetDeviceState()!=kDeviceStateIdle)return;
+            if(app.GetDeviceState()!=kDeviceStateIdle)
+                magic_detail_speech_started_=true;
+            if(magic_detail_speech_started_ &&
+               app.GetDeviceState()==kDeviceStateIdle &&
+               app.GetAudioService().IsPlaybackIdle()) {
+                magic_detail_prompt_sent_=false;
+                StartMagicVoiceChoice();
+            } else if(now-magic_detail_sent_ms_>35000) {
+                magic_story_.CancelVoiceChoice();
+                magic_detail_prompt_sent_=false;
+                RefreshPlayGames();
+            }
+            return;
+        }
+        if(phase==espen::MagicPhase::Ready) {
+            if(magic_auto_voice_pending_ &&
+               app.GetDeviceState()==kDeviceStateIdle &&
+               app.GetAudioService().IsPlaybackIdle())
+                StartMagicVoiceChoice();
+            return;
+        }
+        if(phase!=espen::MagicPhase::Generating)return;
+        if(!pending_magic_prompt_.empty() && !magic_request_sent_) {
+            if(!EspenNetworkAvailable() || app.EspenIsStandby()) {
+                lv_label_set_text(game_voice_status_,
+                    "Połącz Wi-Fi i Xiaozhi, aby Ala mogła opowiedzieć historię.");
+                return;
+            }
+            if(app.GetDeviceState()!=kDeviceStateIdle ||
+               !app.GetAudioService().IsPlaybackIdle())return;
             EspenMagicStoryResetWire();
             app.EspenGenerateMagicStory(pending_magic_prompt_);
             pending_magic_prompt_.clear();
-            magic_request_sent_=true;magic_sent_ms_=now;
+            magic_request_sent_=true;
+            magic_sent_ms_=now;
             return;
         }
         if(!magic_request_sent_)return;
-        if(rev!=magic_rx_rev_ && !speech.empty()) {
-            magic_rx_rev_=rev;
-            auto a=speech.find("Opcja pierwsza:");
-            auto b=speech.find("Opcja 1:");
-            const size_t end=a!=std::string::npos?a:b;
-            magic_live_text_=speech.substr(0,end);
-            if(magic_live_text_.size()>1250) {
-                magic_live_text_.resize(1250);
+        // Incremental text is display-only. Updating at most twice per
+        // second prevents LVGL allocations from destabilizing the P4.
+        if(revision!=magic_rx_rev_ && !speech.empty() &&
+           now-magic_last_render_ms_>=650) {
+            magic_rx_rev_=revision;magic_last_render_ms_=now;
+            magic_live_text_=speech;
+            if(magic_live_text_.size()>1150) {
+                magic_live_text_.resize(1150);
                 while(!magic_live_text_.empty() &&
                       (static_cast<unsigned char>(magic_live_text_.back())&0xc0)==0x80)
                     magic_live_text_.pop_back();
@@ -1244,11 +1315,17 @@ class EspenDisplay : public LcdDisplay {
             }
             RefreshMagicStory();
         }
-        if(done || failed || (magic_sent_ms_ && now-magic_sent_ms_>55000)) {
+        const bool timed_out=magic_sent_ms_ && now-magic_sent_ms_>78000;
+        if(failed || timed_out ||
+           (done && app.GetDeviceState()==kDeviceStateIdle &&
+            app.GetAudioService().IsPlaybackIdle())) {
             magic_request_sent_=false;
             EspenMagicStoryResetWire();
-            if(!failed && done && magic_story_.CompleteTurn(speech)) {
+            // A model response can be natural prose with no "option" labels.
+            // That is valid: the spoken suggestion is in the story itself.
+            if(!failed && (done || timed_out) && magic_story_.CompleteTurn(speech)) {
                 magic_live_text_.clear();
+                magic_auto_voice_pending_=!timed_out;
                 RefreshPlayGames();
                 AnimateMagicChoices();
             } else {
