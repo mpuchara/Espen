@@ -333,10 +333,10 @@ extern void EspenMagicStoryChannelClosed();
         '        EspenMagicStoryChannelClosed();\n'
         '        espen_xiaozhi_channel_open_.store(false, std::memory_order_release);')
     audio = up / "main/audio/audio_service.cc"
-    replace(audio, '            codec_->OutputData(task.pcm);',
-        '            codec_->OutputData(task.pcm);\n'
-        '            extern void EspenMagicStoryPlayback();\n'
-        '            if (task.espen_cue < 0) EspenMagicStoryPlayback();')
+    replace(audio, '        codec_->OutputData(task.pcm);',
+        '        codec_->OutputData(task.pcm);\n'
+        '        extern void EspenMagicStoryPlayback();\n'
+        '        if (task.espen_cue < 0) EspenMagicStoryPlayback();')
     replace(app,
         '                EspenVisualSentence(text->valuestring);',
         '                EspenVisualSentence(text->valuestring);\n'
