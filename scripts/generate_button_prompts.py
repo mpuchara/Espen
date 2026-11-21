@@ -2,15 +2,11 @@
 """Create fixed Polish button audio offline with eSpeak NG and FFmpeg."""
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 
 PROMPTS = {
-    "intro": "Cześć! Witaj w Magicznej Opowieści! Dzisiaj możemy przeżyć niezwykłą przygodę.",
-    "intro_forest": "Możemy wybrać się do zaczarowanego lasu.",
-    "intro_lake": "Możemy odkrywać tajemnice jeziora.",
-    "intro_car": "Możemy wyruszyć na przygodę samochodem z mamą.",
-    "intro_choice": "Wybierz miejsce, w którym zaczniemy naszą historię!",
-    "ask_idea": "Super! Opowiedz mi, co ma się wydarzyć dalej!",
+    "intro": "Powitaj dziecko po polsku. Zaproponuj trzy miejsca na bajkę. Magiczny las. Jezioro. Podróż samochodem z mamą. Zapytaj o wybór.",
     "forest": "Opowiedz dziecku początek magicznej przygody w zaczarowanym lesie. Mów po polsku. Na koniec zaproponuj jeden pomysł i poczekaj na wybór.",
     "lake": "Opowiedz dziecku początek magicznej przygody nad jeziorem. Mów po polsku. Na koniec zaproponuj jeden pomysł i poczekaj na wybór.",
     "car": "Opowiedz dziecku początek magicznej przygody w podróży samochodem z mamą. Mów po polsku. Na koniec zaproponuj jeden pomysł i poczekaj na wybór.",
@@ -25,7 +21,8 @@ def main():
     output.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory() as scratch:
         wav = Path(scratch) / "prompt.wav"
-        for name, prompt in PROMPTS.items():
+        for name in sys.argv[1:] or PROMPTS:
+            prompt = PROMPTS[name]
             subprocess.run(["espeak-ng", "-v", "pl", "-s", "148", "-w", str(wav), prompt], check=True)
             subprocess.run([
                 "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(wav),

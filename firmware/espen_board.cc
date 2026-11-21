@@ -82,7 +82,7 @@ static std::atomic<uint32_t> espen_playback_meter{0};
 // Protocol sentence mailbox: bounded immutable cues. Only the producer and
 // LVGL lookup use the mutex; audio output publishes a tag without locking.
 namespace {
-struct VisualEntry {uint32_t id=0;espen::Cue cue{};espen::ReplyBeat beat=espen::ReplyBeat::None;};
+struct VisualEntry {uint32_t id=0;espen::Cue cue{};espen::ReplyBeat beat=espen::ReplyBeat::None; int topic=-1;};
 std::mutex visual_mutex;
 espen::VisualContext visual_context;
 VisualEntry visual_entries[32]{};
@@ -112,7 +112,12 @@ void EspenVisualSentence(const char* text){
         pending_reply_beat.compare_exchange_strong(none,beat,std::memory_order_acq_rel);
     }
     if(++visual_next==0)++visual_next;
-    visual_entries[visual_next%32]={visual_next,cue,beat};
+    const std::string_view sentence(text?text:"");
+    int topic=-1;
+    if(sentence.find("las")!=std::string_view::npos) topic=0;
+    if(sentence.find("jezior")!=std::string_view::npos) topic=1;
+    if(sentence.find("samoch")!=std::string_view::npos || sentence.find("mamą")!=std::string_view::npos) topic=2;
+    visual_entries[visual_next%32]={visual_next,cue,beat,topic};
     visual_packet_tag.store(visual_next,std::memory_order_release);
     // Text normally arrives between TTS start and the first audio frame.
     // This is the earliest safe point for a reply-specific sound.
@@ -752,12 +757,12 @@ class EspenDisplay : public LcdDisplay {
     // Touch-only child-friendly games run entirely on the LVGL thread.
     espen::AlaPlayGames games_{};
     espen::AlaMagicStory magic_story_{};
-    enum class StoryAudio { None, Intro, Chapter, Question, Voice };
+    enum class StoryAudio { None, Intro, Chapter, Voice };
     StoryAudio story_audio_=StoryAudio::None;
     uint32_t story_action_ms_=0;
-    size_t story_intro_index_=0;
+    bool story_intro_pending_=false;
     int story_pulse_=-1;
-    bool story_auto_voice_=false, story_prompted_voice_=false;
+    bool story_voice_ready_=false;
     lv_obj_t* dock_mic_label_=nullptr;
     lv_obj_t* game_panel_=nullptr;
     bool magic_face_layout_ = false; // transparent story HUD, never covers the animated face
@@ -783,6 +788,13 @@ class EspenDisplay : public LcdDisplay {
     lv_obj_t* camera_analysis_label_=nullptr;
     lv_obj_t* dock_vision_label_=nullptr;
     uint32_t dock_vision_ms_=0;
+    std::mutex button_vision_mutex_;
+    std::string button_vision_description_;
+    uint32_t button_vision_ready_ms_=0;
+    std::atomic<bool> button_vision_busy_{false};
+    std::atomic<unsigned> button_vision_epoch_{0};
+    bool button_vision_dock_=true;
+    bool button_vision_failed_=false;
     lv_obj_t* camera_panel_=nullptr;
     lv_obj_t* camera_status_=nullptr;
     lv_obj_t* camera_cloud_label_=nullptr;
@@ -844,6 +856,7 @@ class EspenDisplay : public LcdDisplay {
             Hide(dock_vision_label_,true);
             dock_vision_ms_=0;
         }
+        PumpButtonVision();
         PumpMagicStory();
         std::string state, code;
         CloudSnapshot(state, code);
@@ -1051,6 +1064,13 @@ class EspenDisplay : public LcdDisplay {
         Hide(dock_vision_label_,true);
         auto* play=MakeButton(bottom_dock_,LV_SYMBOL_PLAY "  Gry",[](lv_event_t* e){
             auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
+            ++self->button_vision_epoch_;
+            {
+                std::lock_guard<std::mutex> lock(self->button_vision_mutex_);
+                self->button_vision_description_.clear();
+                self->button_vision_failed_=false;
+                self->button_vision_ready_ms_=0;
+            }
             EspenVision().RevokeOneTap();
             self->Hide(self->dock_vision_label_,true);
             if(self->camera_panel_){self->StopCameraPreview();self->Hide(self->camera_panel_,true);}
@@ -1071,6 +1091,13 @@ class EspenDisplay : public LcdDisplay {
         auto* mic=MakeButton(bottom_dock_,LV_SYMBOL_AUDIO "  Mikrofon",[](lv_event_t* e){
             auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
             self->CloseMagicStory();
+            ++self->button_vision_epoch_;
+            {
+                std::lock_guard<std::mutex> lock(self->button_vision_mutex_);
+                self->button_vision_description_.clear();
+                self->button_vision_failed_=false;
+                self->button_vision_ready_ms_=0;
+            }
             EspenVision().RevokeOneTap();
             self->Hide(self->dock_vision_label_,true);
             if(self->camera_panel_){self->StopCameraPreview();self->Hide(self->camera_panel_,true);}
@@ -1112,10 +1139,6 @@ class EspenDisplay : public LcdDisplay {
         lv_label_set_text(dock_mic_label_,labels[mode]);
     }
 
-    static constexpr const char* kStoryIntro[]={
-        "intro","intro_forest","intro_lake","intro_car","intro_choice"
-    };
-
     void PulseStoryTheme(int index, uint32_t now) {
         if (story_pulse_ >= 0 && story_pulse_ != index) {
             lv_obj_set_style_transform_width(game_choices_[story_pulse_],0,0);
@@ -1155,8 +1178,7 @@ class EspenDisplay : public LcdDisplay {
         StopStoryAudio();
         magic_wire.active.store(false);
         magic_story_.Reset();
-        story_auto_voice_=false;
-        story_prompted_voice_=false;
+        story_voice_ready_=false;
     }
     void CloseMagicStory() {
         CancelMagicStory();
@@ -1165,7 +1187,7 @@ class EspenDisplay : public LcdDisplay {
     }
     void OpenStoryThemes() {
         magic_story_.PresentThemes();
-        story_intro_index_=0;
+        story_intro_pending_=true;
         story_action_ms_=lv_tick_get();
         magic_wire.active.store(true);
         auto& app=Application::GetInstance();
@@ -1184,13 +1206,11 @@ class EspenDisplay : public LcdDisplay {
         EspenMagicStoryResetWire();
         story_audio_=kind;
         story_action_ms_=now;
-        ESP_LOGI(TAG,"Ala story audio start: kind=%d cue=%u chapter=%u",
-                 static_cast<int>(kind),static_cast<unsigned>(story_intro_index_),magic_story_.Turn());
+        ESP_LOGI(TAG,"Ala story audio start: kind=%d chapter=%u",
+                 static_cast<int>(kind),magic_story_.Turn());
         auto& app=Application::GetInstance();
         if (kind==StoryAudio::Voice) app.EspenStartMagicVoiceListening();
-        else if (kind==StoryAudio::Intro || kind==StoryAudio::Question)
-            app.EspenPlayStoryCue(prompt);
-        else app.EspenGenerateMagicStory(prompt);
+        else app.EspenGenerateMagicStory(prompt,kind==StoryAudio::Chapter);
     }
 
     void SetMagicStoryFaceLayout(bool enabled) {
@@ -1303,10 +1323,10 @@ class EspenDisplay : public LcdDisplay {
                 status="Wybierz, co ma się wydarzyć";
                 break;
             case MagicPhase::Listening:
-                status=LV_SYMBOL_AUDIO " Słucham…";
+                status=story_voice_ready_?LV_SYMBOL_AUDIO " Słucham…":"Uruchamiam mikrofon…";
                 break;
             case MagicPhase::Clarifying:
-                status="Ala prosi o Twój pomysł…";
+                status="Uruchamiam mikrofon…";
                 break;
             case MagicPhase::Paused:
                 status="Pauza. Dotknij przycisku, aby wrócić do historii";
@@ -1350,23 +1370,36 @@ class EspenDisplay : public LcdDisplay {
                 RefreshPlayGames();
             }
             if (story_audio_==StoryAudio::Voice) {
+                if (!story_voice_ready_ && app.GetAudioService().IsAudioProcessorRunning()) {
+                    story_voice_ready_=true;
+                    RefreshPlayGames();
+                }
                 if (!event.choice.empty()) {
                     const auto decision=magic_story_.AwaitSpokenReply(std::move(event.choice));
                     story_audio_=StoryAudio::Chapter;
                     story_action_ms_=now;
                     if (decision==StoryDecision::Exit) CloseMagicStory();
                     else RefreshPlayGames();
-                } else if (!online || event.failed || now-story_action_ms_>18000) {
+                } else if (!online || event.failed) {
                     StopStoryAudio();
+                    magic_story_.Pause();
+                    RefreshPlayGames();
+                } else if ((story_voice_ready_ && state==kDeviceStateIdle) ||
+                           (!story_voice_ready_ && now-story_action_ms_>12000)) {
+                    if(state==kDeviceStateIdle) {
+                        story_audio_=StoryAudio::None;
+                        EspenMagicStoryResetWire();
+                    } else StopStoryAudio();
+                    story_voice_ready_=false;
                     magic_story_.Pause();
                     RefreshPlayGames();
                 }
                 return;
             }
             if (kind==StoryAudio::Intro) {
-                const bool topic=story_intro_index_>=1 && story_intro_index_<=3;
-                PulseStoryTheme(topic && event.audible && !drained ?
-                    static_cast<int>(story_intro_index_)-1 : -1,now);
+                const auto tag=visual_played_tag.load(std::memory_order_acquire);
+                const auto played=EspenVisualLookup(tag);
+                PulseStoryTheme(event.audible && !drained?played.topic:-1,now);
             } else if (kind==StoryAudio::Chapter && event.audible && phase==MagicPhase::Generating) {
                 magic_story_.Speaking();
                 RefreshPlayGames();
@@ -1377,34 +1410,27 @@ class EspenDisplay : public LcdDisplay {
                 story_audio_=StoryAudio::None;
                 story_action_ms_=now;
                 PulseStoryTheme(-1,now);
-                if (kind==StoryAudio::Intro) ++story_intro_index_;
-                if (kind==StoryAudio::Question) {
-                    story_auto_voice_=true;
-                    story_prompted_voice_=true;
-                }
                 if (kind==StoryAudio::Chapter) {
-                    story_prompted_voice_=false;
                     magic_story_.CompleteTurn(event.speech);
-                    story_auto_voice_=false;
                     if (magic_story_.Phase()==MagicPhase::Finished) CloseMagicStory();
                 }
                 RefreshPlayGames();
                 if (kind==StoryAudio::Chapter && magic_story_.Phase()==MagicPhase::Ready)
                     RevealStoryChoices(2);
             } else if (!online || event.failed ||
-                       now-story_action_ms_>(kind==StoryAudio::Chapter?65000u:14000u)) {
+                       now-story_action_ms_>65000u) {
                 StopStoryAudio();
-                if (kind==StoryAudio::Intro) story_intro_index_=std::size(kStoryIntro);
-                else if (kind==StoryAudio::Question) magic_story_.Pause();
-                else magic_story_.Fail();
+                if (kind==StoryAudio::Chapter) magic_story_.Fail();
                 RefreshPlayGames();
             }
             return;
         }
 
         if (phase==MagicPhase::Themes) {
-            if (online && idle && story_intro_index_<std::size(kStoryIntro))
-                StartStoryAudio(StoryAudio::Intro,kStoryIntro[story_intro_index_],now);
+            if (online && idle && story_intro_pending_) {
+                story_intro_pending_=false;
+                StartStoryAudio(StoryAudio::Intro,"intro",now);
+            }
             return;
         }
         if (phase==MagicPhase::Generating) {
@@ -1414,25 +1440,15 @@ class EspenDisplay : public LcdDisplay {
             } else if (idle) StartStoryAudio(StoryAudio::Chapter,magic_story_.ButtonPrompt(),now);
             return;
         }
-        if (phase==MagicPhase::Clarifying && !story_auto_voice_) {
-            if (online && idle)
-                StartStoryAudio(StoryAudio::Question,
-                    "ask_idea",now);
-            else if (now-story_action_ms_>15000) {
-                magic_story_.Pause();
-                RefreshPlayGames();
-            }
-            return;
-        }
-        if (story_auto_voice_ && online && idle && app.EspenGetMicMode()!=Application::EspenMicMode::Off) {
-            story_auto_voice_=false;
+        if (phase==MagicPhase::Clarifying && online && idle &&
+            app.EspenGetMicMode()!=Application::EspenMicMode::Off) {
+            story_voice_ready_=false;
             if (magic_story_.BeginVoiceChoice()) {
                 StartStoryAudio(StoryAudio::Voice,{},now);
                 RefreshPlayGames();
             }
         } else if ((phase==MagicPhase::Ready || phase==MagicPhase::Clarifying) &&
                    now-story_action_ms_>18000) {
-            story_auto_voice_=false;
             magic_story_.Pause();
             RefreshPlayGames();
         }
@@ -1545,7 +1561,7 @@ class EspenDisplay : public LcdDisplay {
                         if(phase!=MagicPhase::Off) {
                             bool accepted=false;
                             if(j==0) accepted=self->magic_story_.ChooseSuggestion();
-                            if(j==1 && (phase!=MagicPhase::Listening || !self->story_prompted_voice_)) {
+                            if(j==1 && phase!=MagicPhase::Listening) {
                                 if(Application::GetInstance().EspenGetMicMode()==Application::EspenMicMode::Off) {
                                     lv_label_set_text(self->game_voice_status_,
                                         "Mikrofon jest wyłączony. Wybierz pomysł Ali");
@@ -1555,8 +1571,7 @@ class EspenDisplay : public LcdDisplay {
                             }
                             if(accepted) {
                                 self->StopStoryAudio();
-                                self->story_auto_voice_=false;
-                                self->story_prompted_voice_=false;
+                                self->story_voice_ready_=false;
                                 self->story_action_ms_=lv_tick_get();
                                 self->RefreshPlayGames();
                             }
@@ -1977,8 +1992,89 @@ class EspenDisplay : public LcdDisplay {
             SetTapVisionStatus(dock,"Włącz wysyłanie zdjęć w ustawieniach aparatu.");
             return;
         }
-        SetTapVisionStatus(dock,"Ala poprosi Xiaozhi o jedno zdjęcie i opis.");
-        Application::GetInstance().EspenRequestCameraDescription();
+        if(button_vision_busy_.exchange(true,std::memory_order_acq_rel))return;
+        EspenSetButtonCameraPreparing(true);
+        button_vision_dock_=dock;
+        {
+            std::lock_guard<std::mutex> lock(button_vision_mutex_);
+            button_vision_description_.clear();
+            button_vision_failed_=false;
+            button_vision_ready_ms_=0;
+        }
+        SetTapVisionStatus(dock,"Robię zdjęcie i sprawdzam, co na nim jest…",true);
+        if(xTaskCreate([](void* arg){
+            auto* self=static_cast<EspenDisplay*>(arg);
+            const auto epoch=self->button_vision_epoch_.load();
+            auto& camera=EspenVision();
+            auto& app=Application::GetInstance();
+            const auto begun=esp_timer_get_time();
+            const auto current=[&](){
+                return epoch==self->button_vision_epoch_.load() && camera.CloudEnabled();
+            };
+            const auto wait=[&](const auto& ready) {
+                while(current() && !ready() && esp_timer_get_time()-begun<12000000)
+                    vTaskDelay(pdMS_TO_TICKS(80));
+                return current()&&ready();
+            };
+            bool ready=wait([&](){return app.GetDeviceState()==kDeviceStateIdle;});
+            if(ready&&!camera.EndpointReady()) {
+                app.EspenPrepareCameraChannel(true);
+                ready=wait([&](){return camera.EndpointReady();});
+            }
+            if(ready) {
+                app.EspenPrepareCameraChannel(false);
+                ready=wait([&](){return !app.EspenXiaozhiChannelOpen();});
+            }
+            const bool captured=ready && camera.GrantOneTap() && camera.Capture();
+            std::string description;
+            if(captured && epoch==self->button_vision_epoch_.load()) {
+                auto result=camera.Explain(
+                    "Ala, co widzisz na tym zdjęciu? Opisz to dziecku po polsku, w dwóch lub trzech zdaniach.");
+                if(result)description=std::move(*result);
+                else ESP_LOGW(TAG,"Ala camera analysis failed: %s",result.error().c_str());
+            }
+            {
+                std::lock_guard<std::mutex> lock(self->button_vision_mutex_);
+                if(epoch==self->button_vision_epoch_.load()) {
+                    self->button_vision_failed_=description.empty();
+                    self->button_vision_description_=std::move(description);
+                }
+            }
+            EspenSetButtonCameraPreparing(false);
+            self->button_vision_busy_.store(false,std::memory_order_release);
+            vTaskDelete(nullptr);
+        },"ala_vision",12288,this,3,nullptr)!=pdPASS) {
+            EspenSetButtonCameraPreparing(false);
+            button_vision_busy_.store(false,std::memory_order_release);
+            SetTapVisionStatus(dock,"Aparat jest chwilowo niedostępny.");
+        }
+    }
+    void PumpButtonVision() {
+        if(button_vision_busy_.load(std::memory_order_acquire))return;
+        auto& app=Application::GetInstance();
+        std::string description;
+        {
+            std::lock_guard<std::mutex> lock(button_vision_mutex_);
+            if(button_vision_failed_) {
+                button_vision_failed_=false;
+                SetTapVisionStatus(button_vision_dock_,"Nie udało się przeanalizować zdjęcia.");
+                return;
+            }
+            if(button_vision_description_.empty())return;
+            if(button_vision_ready_ms_==0)button_vision_ready_ms_=lv_tick_get();
+            if(lv_tick_get()-button_vision_ready_ms_>20000 || EspenMagicStoryActive() ||
+               !EspenVision().CloudEnabled()) {
+                button_vision_description_.clear();
+                button_vision_ready_ms_=0;
+                SetTapVisionStatus(button_vision_dock_,"Opis zdjęcia stracił ważność.");
+                return;
+            }
+            if(app.GetDeviceState()!=kDeviceStateIdle || !app.GetAudioService().IsPlaybackIdle())return;
+            description.swap(button_vision_description_);
+            button_vision_ready_ms_=0;
+        }
+        SetTapVisionStatus(button_vision_dock_,"Pobieram odpowiedź głosową…");
+        app.EspenRequestCameraDescription(description);
     }
     void RefreshCameraPanel(uint32_t now){
         if(!camera_panel_||lv_obj_has_flag(camera_panel_,LV_OBJ_FLAG_HIDDEN))return;
@@ -2837,9 +2933,7 @@ class EspenDisplay : public LcdDisplay {
             engine_.SleepNow(now);
             behavior_.SleepRequested();
         }
-        const bool local_story_cue=(story_audio_==StoryAudio::Intro || story_audio_==StoryAudio::Question) &&
-                                   !Application::GetInstance().GetAudioService().IsPlaybackIdle();
-        if(state==kDeviceStateSpeaking||state==kDeviceStateNotifying||local_story_cue) {
+        if(state==kDeviceStateSpeaking||state==kDeviceStateNotifying) {
             phase=Phase::Speaking;waiting_answer_=false;last_audio_=now;
         } else if(state==kDeviceStateConnecting) phase=Phase::Wake;
         else if(state==kDeviceStateListening) phase=espen_turn_waiting.load(std::memory_order_relaxed)?Phase::Thinking:Phase::Listening;
@@ -3507,7 +3601,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.2.24 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.2.25 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();

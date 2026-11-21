@@ -5,7 +5,7 @@ board = (root / "firmware/espen_board.cc").read_text(encoding="utf-8")
 bridge = (root / "scripts/prepare_phone.py").read_text(encoding="utf-8")
 build = (root / "scripts/build.sh").read_text(encoding="utf-8")
 assert "AlaMagicStory magic_story_" in board
-assert "app.EspenGenerateMagicStory(prompt)" in board
+assert "app.EspenGenerateMagicStory(prompt,kind==StoryAudio::Chapter)" in board
 assert "app.EspenStartMagicVoiceListening()" in board
 assert "EspenMagicStoryConsumeVoice(text->valuestring)) return;" in bridge
 assert "EspenMagicStorySuppressStale()" in bridge

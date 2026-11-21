@@ -35,7 +35,7 @@ replace(cmake, '                    PRIV_REQUIRES\n',
 # Fixed button utterances are normal Opus microphone input to the official
 # Xiaozhi ASR endpoint. Embed the source clips in flash, with no runtime TTS.
 prompt_files = sorted((root / "firmware/button_prompts").glob("*.ogg"))
-if len(prompt_files) != 13:
+if len(prompt_files) != 8:
     raise RuntimeError("Missing Polish button prompt recordings")
 prompt_header = [ "#pragma once", "#include <string_view>", "namespace espen {" ]
 for clip in prompt_files:
@@ -59,8 +59,8 @@ replace(header, '    void WakeWordInvoke(const std::string& wake_word);',
         '    void EspenSayText(const std::string& text, const std::string& robot_name);\n'
         '    void EspenAskText(const std::string& text, bool only_hello, const std::string& robot_name);\n'
         '    void EspenGenerateMagicStory(const std::string& clip, bool allow_barge = true);\n'
-        '    void EspenPlayStoryCue(const std::string& clip);\n'
-        '    void EspenRequestCameraDescription();\n'
+        '    void EspenRequestCameraDescription(const std::string& description);\n'
+        '    void EspenPrepareCameraChannel(bool open);\n'
         '    enum class EspenMicMode : uint8_t { Conversation, Keyword, Off };\n'
         '    EspenMicMode EspenGetMicMode() const { return espen_mic_mode_.load(); }\n'
         '    void EspenSetMicMode(EspenMicMode mode);\n'
@@ -81,7 +81,7 @@ replace(header, '    std::mutex mutex_;',
         '    esp_timer_handle_t espen_button_timer_ = nullptr;\n'
         '    std::vector<std::vector<uint8_t>> espen_button_packets_;\n'
         '    size_t espen_button_index_ = 0;\n'
-        '    void EspenStartButtonInput(const std::string& clip, unsigned epoch);\n'
+        '    void EspenStartButtonInput(const std::string& clip, unsigned epoch, const std::string& description = {});\n'
         '    void EspenPumpButtonInput(unsigned epoch);\n'
         '    void EspenStopButtonInput();\n'
         '    std::mutex mutex_;')
@@ -107,7 +107,8 @@ replace(app, 'void Application::Reboot() {',
 speech_method = r'''
 extern bool EspenMagicStoryActive();
 extern bool EspenTextPromptsRejected();
-extern bool EspenGrantButtonCamera();
+extern bool EspenActivateButtonCameraReply(const std::string&);
+extern bool EspenButtonCameraReplyActive();
 extern void EspenRevokeButtonCamera();
 // Local phone text is sent to the SAME Xiaozhi agent as a detect event.
 // This is an experimental text-to-LLM-to-TTS path, not an offline TTS engine.
@@ -181,18 +182,6 @@ void Application::EspenStartMagicVoiceListening() {
         SetListeningMode(kListeningModeAutoStop);
     });
 }
-void Application::EspenPlayStoryCue(const std::string& clip) {
-    const auto epoch = espen_story_epoch_.load();
-    Schedule([this,clip,epoch]() {
-        if(epoch!=espen_story_epoch_.load() || !EspenMagicStoryActive()) return;
-        const auto sound=espen::ButtonAudio(clip);
-        if(sound.empty()) { EspenMagicStoryOutputFailed(); return; }
-        EspenMagicStoryBeginOutput();
-        audio_service_.PlaySound(sound);
-        extern void EspenMagicStoryOutputDone();
-        EspenMagicStoryOutputDone();
-    });
-}
 void Application::EspenGenerateMagicStory(const std::string& clip,bool allow_barge) {
     const auto epoch=espen_story_epoch_.load();
     Schedule([this,clip,allow_barge,epoch]() {
@@ -202,15 +191,23 @@ void Application::EspenGenerateMagicStory(const std::string& clip,bool allow_bar
         EspenStartButtonInput(clip,epoch);
     });
 }
-void Application::EspenRequestCameraDescription() {
-    const auto epoch=espen_story_epoch_.load();
-    Schedule([this,epoch]() {
-        if(epoch!=espen_story_epoch_.load() || EspenMagicStoryActive() ||
-           GetDeviceState()!=kDeviceStateIdle) return;
-        EspenStartButtonInput("camera",epoch);
+void Application::EspenPrepareCameraChannel(bool open) {
+    Schedule([this,open]() {
+        if(!protocol_ || EspenMagicStoryActive() || GetDeviceState()!=kDeviceStateIdle)return;
+        if(open && !protocol_->IsAudioChannelOpened())protocol_->OpenAudioChannel();
+        if(!open && protocol_->IsAudioChannelOpened())protocol_->CloseAudioChannel();
     });
 }
-void Application::EspenStartButtonInput(const std::string& clip,unsigned epoch) {
+void Application::EspenRequestCameraDescription(const std::string& description) {
+    const auto epoch=espen_story_epoch_.load();
+    Schedule([this,epoch,description]() {
+        if(epoch!=espen_story_epoch_.load() || EspenMagicStoryActive() ||
+           GetDeviceState()!=kDeviceStateIdle) return;
+        EspenStartButtonInput("camera",epoch,description);
+    });
+}
+void Application::EspenStartButtonInput(const std::string& clip,unsigned epoch,
+                                        const std::string& description) {
     auto fail=[this]() {
         EspenStopButtonInput();
         EspenRevokeButtonCamera();
@@ -225,7 +222,7 @@ void Application::EspenStartButtonInput(const std::string& clip,unsigned epoch) 
     const auto sound=espen::ButtonAudio(clip);
     if(sound.empty() || !SetDeviceState(kDeviceStateConnecting)) { fail(); return; }
     if(!protocol_->IsAudioChannelOpened() && !protocol_->OpenAudioChannel()) { fail(); return; }
-    if(epoch!=espen_story_epoch_.load() || (clip=="camera" && !EspenGrantButtonCamera())) { fail(); return; }
+    if(epoch!=espen_story_epoch_.load() || (clip=="camera" && !EspenActivateButtonCameraReply(description))) { fail(); return; }
 
     auto demuxer=std::make_unique<OggDemuxer>();
     espen_button_packets_.clear();
@@ -355,6 +352,16 @@ if 'EspenVisualSentence(text->valuestring);' in app.read_text(encoding="utf-8"):
         '    if (espen_button_timer_) esp_timer_delete(espen_button_timer_);')
     replace(app, 'void Application::ResetProtocol() {',
         'void Application::ResetProtocol() {\n    EspenStopButtonInput();')
+    mcp = up / "main/mcp_server.cc"
+    replace(mcp, '                    if (!camera->Capture()) {',
+        '                    extern bool EspenTakeButtonCameraReply(std::string&);\n'
+        '                    std::string prepared;\n'
+        '                    if (EspenTakeButtonCameraReply(prepared)) {\n'
+        '                        if (prepared.empty()) return std::unexpected("This photo description was already read");\n'
+        '                        ESP_LOGI(TAG, "Returning pre-analyzed button photo to Xiaozhi");\n'
+        '                        return prepared;\n'
+        '                    }\n'
+        '                    if (!camera->Capture()) {')
     protocol = up / "main/protocols/protocol.cc"
     old_detect = protocol.read_text(encoding="utf-8")
     detect_start = old_detect.index("void Protocol::SendWakeWordDetected(")
@@ -381,12 +388,14 @@ extern bool EspenMagicStorySuppressStale();
 extern void EspenMagicStoryBargeIn();
 extern void EspenMagicStoryChannelClosed();
 extern void EspenRevokeButtonCamera();
+extern bool EspenButtonCameraReplyActive();
+extern bool EspenButtonCameraPreparing();
 """
     replace(app, '#define TAG "Application"', '#define TAG "Application"\n\n' + helpers)
     replace(app,
         '    const bool allowed = state == kDeviceStateStarting || state == kDeviceStateActivating ||',
         '    EspenWake().SetAutoSpeech(EspenGetMicMode()==EspenMicMode::Conversation);\n'
-        '    if (EspenGetMicMode()==EspenMicMode::Off || EspenMagicStoryActive()) {\n'
+        '    if (EspenGetMicMode()==EspenMicMode::Off || EspenMagicStoryActive() || EspenButtonCameraPreparing()) {\n'
         '        if (audio_service_.IsWakeWordRunning()) audio_service_.EnableWakeWordDetection(false);\n'
         '        return;\n'
         '    }\n'
@@ -397,7 +406,7 @@ extern void EspenRevokeButtonCamera();
                       "void Application::HandleWakeWordDetectedEvent() {",
                       "void Application::ContinueWakeWordInvoke(const std::string& wake_word) {"):
         replace(app, signature, signature +
-                '\n    if (EspenGetMicMode()==EspenMicMode::Off || EspenMagicStoryActive()) return;')
+                '\n    if (EspenGetMicMode()==EspenMicMode::Off || EspenMagicStoryActive() || EspenButtonCameraPreparing()) return;')
     replace(app, '            while (auto packet = audio_service_.PopPacketFromSendQueue()) {',
         '            while (auto packet = audio_service_.PopPacketFromSendQueue()) {\n'
         '                if (EspenGetMicMode()==EspenMicMode::Off || EspenMagicStoryTextTurn() || espen_button_input_.load()) continue;')
@@ -427,6 +436,10 @@ extern void EspenRevokeButtonCamera();
         '            ESP_LOGI(TAG, "Espen TTS drained");\n'
         '            SetDeviceState(kDeviceStateIdle);\n'
         '            if (!EspenMagicStoryActive() && protocol_ && protocol_->IsAudioChannelOpened())')
+    replace(app,
+        '    if (listening_mode_ == kListeningModeAutoStop && espen_timeout_.EndOfSpeech(now)) {',
+        '    const uint32_t choice_pause_ms=EspenMagicStoryActive()?1750u:0u;\n'
+        '    if (listening_mode_ == kListeningModeAutoStop && espen_timeout_.EndOfSpeech(now,choice_pause_ms)) {')
     # Accept audio only after resetting the decoder. The separate MQTT media
     # callback sees Speaking before the asynchronous state-changed handler.
     replace(app, '                    aborted_ = false;\n                    SetDeviceState(kDeviceStateSpeaking);',
@@ -480,7 +493,7 @@ extern void EspenRevokeButtonCamera();
         '                EspenVisionQuestion(text->valuestring);',
         '                extern bool EspenMagicStoryConsumeVoice(const char*);\n'
         '                if (EspenMagicStoryConsumeVoice(text->valuestring)) return;\n'
-        '                if (!EspenMagicStoryActive()) EspenVisionQuestion(text->valuestring);')
+        '                if (!EspenMagicStoryActive() && !EspenButtonCameraReplyActive()) EspenVisionQuestion(text->valuestring);')
     replace(app,
         '        } else if (strcmp(type->valuestring, "tts") == 0) {',
         '        } else if (strcmp(type->valuestring, "tts") == 0) {\n'
