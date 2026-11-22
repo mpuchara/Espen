@@ -1,7 +1,6 @@
 name: Ala Robot — Android phone and Garett Essa
 on:
   push:
-    branches: [main]
     paths:
       - 'android/ala-robot/**'
       - '.github/workflows/build-ala-native.yml'

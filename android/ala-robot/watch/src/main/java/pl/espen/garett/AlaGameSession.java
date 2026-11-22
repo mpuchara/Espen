@@ -35,6 +35,7 @@ public final class AlaGameSession {
     private Phase phase=Phase.OFF;
     private String theme="", history="", lastSpoken="";
     private int round, score, storyTurn;
+    private Phase previousQuiz=Phase.QUIZ;
     public AlaGameSession(Ui ui){this.ui=ui;}
     public boolean isRunning(){return phase!=Phase.OFF;}
     public boolean isNarrating(){return phase==Phase.STORY_SPEAKING;}
@@ -42,7 +43,7 @@ public final class AlaGameSession {
         if(phase!=Phase.OFF)ui.stopSpeech();
         phase=Phase.MENU;
         ui.options("Gry Ali",MENU);
-        ui.sayLocally("Zagrajmy! Możesz wybrać Quiz Mistrza, Zgadnij zwierzę albo Magiczną opowieść.",MENU);
+        ui.sayLocally("Zagrajmy! Wybierz jedną z gier.",MENU);
     }
     public void close(){
         phase=Phase.OFF;history="";lastSpoken="";theme="";
@@ -55,9 +56,10 @@ public final class AlaGameSession {
                 if(index==2){
                     phase=Phase.THEMES;
                     ui.options("Temat opowieści",THEMES);
-                    ui.sayLocally("Wybierz temat. Magiczny las, przygoda nad jeziorem albo podróż z mamą w samochodzie.",THEMES);
+                    ui.sayLocally("Wybierz temat naszej magicznej przygody.",THEMES);
                 }else{
                     phase=index==0?Phase.QUIZ:Phase.ANIMALS;
+                    previousQuiz=phase;
                     round=0;score=0;askQuestion();
                 }
                 break;
@@ -81,7 +83,7 @@ public final class AlaGameSession {
                 }
                 break;
             case END:
-                if(index==0){phase=Phase.QUIZ;round=0;score=0;askQuestion();}
+                if(index==0){phase=previousQuiz;round=0;score=0;askQuestion();}
                 else if(index==1)open();
                 else close();
                 break;
@@ -109,7 +111,7 @@ public final class AlaGameSession {
         String[] q=(phase==Phase.QUIZ?QUIZ:ANIMALS)[round];
         String[] opts={q[1],q[2],q[3]};
         ui.options((phase==Phase.QUIZ?"Quiz":"Zwierzęta")+" · "+(round+1)+"/5 · "+score+"⭐",opts);
-        ui.sayLocally(prefix+q[0]+" "+String.join(", ",opts)+".",opts);
+        ui.sayLocally(prefix+q[0],opts);
     }
     public void onStorySentence(String text){
         if(phase!=Phase.STORY_SPEAKING||text==null)return;
