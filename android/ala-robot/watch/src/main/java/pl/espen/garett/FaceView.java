@@ -33,7 +33,7 @@ public final class FaceView extends View {
     private Actions actions;
     private AlaBehavior.Phase state=AlaBehavior.Phase.IDLE;
     private AlaBehavior.Mood previous=AlaBehavior.Mood.NEUTRAL,target=previous;
-    private String subtitle="",status="Dotknij mikrofonu",activationCode="",choiceTitle="";
+    private String subtitle="",status="Dotknij mikrofonu",activationCode="",activationLabel="",choiceTitle="";
     private String[] choices;
     private String[] titleLines={""};
     private int highlightedChoice=-1,micLevel,speakerLevel,hour;
@@ -116,22 +116,33 @@ public final class FaceView extends View {
     void userSpeech(String text){behavior.speech(text,SystemClock.uptimeMillis());invalidate();}
     void reaction(AlaBehavior.Mood mood){behavior.react(mood,SystemClock.uptimeMillis());invalidate();}
     void setStatus(String message,boolean error){
-        status=message==null?"":message;
+        status=watchLabel(message,40);
         statusError=error;
         invalidate();
     }
-    public void setSubtitle(String s) {
-        subtitle = s == null ? "" : s;
-        if (subtitle.length() > 90) subtitle = subtitle.substring(0, 90) + "…";
+    public void setSubtitle(String message){
+        subtitle=watchLabel(message,40);
         invalidate();
     }
-    public void setActivationCode(String c) { activationCode = c == null ? "" : c; invalidate(); }
+    public void setActivationCode(String code){
+        activationCode=code==null?"":code;
+        activationLabel="KOD XIAOZHI: "+activationCode;
+        invalidate();
+    }
+    private static String watchLabel(String value,int limit){
+        if (value==null) return "";
+        if (value.length()<=limit) return value;
+        int end=limit-1;
+        if (Character.isHighSurrogate(value.charAt(end-1))) end--;
+        return value.substring(0,end)+"…";
+    }
     public void setChoices(String title, String[] buttons) {
         choiceTitle=title==null?"":title;
         int split=choiceTitle.length()<=42 ? -1 : choiceTitle.lastIndexOf(' ',42);
         titleLines=split<=0 ? new String[]{choiceTitle}
             : new String[]{choiceTitle.substring(0,split),choiceTitle.substring(split+1)};
-        choices=buttons==null?null:buttons.clone();
+        choices=watch && buttons!=null?buttons.clone():null;
+        if (choices!=null) for (int i=0;i<choices.length;i++) choices[i]=watchLabel(choices[i],32);
         highlightedChoice=-1;
         invalidate();
     }
@@ -293,16 +304,13 @@ public final class FaceView extends View {
                 round(c,22,223+i*32,316,30,9,active?Color.argb((int)(157+98*glow),67,143,148):
                     choicesEnabled?(pressedChoice==i?0xff367585:0xff244452):0xff172936);
 
-                String label=choices[i]==null?"":choices[i];
-                if(label.length()>32)label=label.substring(0,31)+"…";
-                text(c,label,180,243+i*32,13,active?0xffefffff:choicesEnabled?0xffc6e4ed:0xff8094a0,false);
+                text(c,choices[i],180,243+i*32,13,active?0xffefffff:choicesEnabled?0xffc6e4ed:0xff8094a0,false);
             }
         }else if(activationCode.length()>0 && !statusError && state!=AlaBehavior.Phase.ERROR){
             round(c,18,278,324,51,13,0xff173041);
-            text(c,"KOD XIAOZHI: "+activationCode,180,310,19,0xffd8efff,true);
+            text(c,activationLabel,180,310,19,0xffd8efff,true);
         } else {
             String visible=state==AlaBehavior.Phase.SPEAKING && subtitle.length()>0?subtitle:status;
-            if(visible.length()>40) visible=visible.substring(0,39)+"…";
             text(c,visible,180,302,13,statusError || state==AlaBehavior.Phase.ERROR?0xffffa18e:0xffbed3dd,false);
         }
         c.save();
