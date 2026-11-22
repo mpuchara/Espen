@@ -42,6 +42,7 @@ public final class XiaozhiClient {
     public interface Events {
         void state(AlaBehavior.Phase state);
         void status(String text);
+        default void provisioning(String text){status(text);}
         void caption(String text);
         void emotion(String emotion);
         void level(int value, boolean microphone);
@@ -340,7 +341,7 @@ public final class XiaozhiClient {
         if(closed||!otaBusy.compareAndSet(false,true))return;
         worker.execute(()->{
             try{readOta();}
-            catch(Exception e){events.status("Xiaozhi OTA: "+brief(e));}
+            catch(Exception e){events.provisioning("Xiaozhi OTA: "+brief(e));}
             finally{otaBusy.set(false);}
         });
     }
@@ -377,7 +378,7 @@ public final class XiaozhiClient {
         if(activation!=null&&!activation.optString("code","").isEmpty()){
             String code=activation.optString("code");
             events.activation(code);
-            events.status("Dodaj to urządzenie do agenta Ala w Xiaozhi");
+            events.provisioning("Dodaj to urządzenie do agenta Ala w Xiaozhi");
             if(!activation.optString("challenge","").isEmpty())checkActivation(ota);
             scheduleOtaPoll();
             return;
@@ -393,7 +394,7 @@ public final class XiaozhiClient {
         int version=ws.optInt("version",1);
         if(version<1 || version>3)throw new IOException("Nieobsługiwana wersja protokołu: "+version);
         wsUrl=endpoint;wsToken=ws.optString("token","");wsVersion=version;
-        events.activation("");events.status("Gotowa. Dotknij mikrofonu!");
+        events.activation("");events.provisioning("Gotowa. Dotknij mikrofonu!");
     }
     private void checkActivation(String ota){
         try{
@@ -403,7 +404,7 @@ public final class XiaozhiClient {
                 .header("Activation-Version","1")
                 .post(RequestBody.create(JSON,"{}")).build();
             try(Response response=http.newCall(request).execute()){
-                if(response.code()==200)events.status("Sparowano! Odświeżam Xiaozhi…");
+                if(response.code()==200)events.provisioning("Sparowano! Odświeżam Xiaozhi…");
             }
         }catch(Exception ignored){ /* OTA poll will retry; no credentials in logs. */ }
     }

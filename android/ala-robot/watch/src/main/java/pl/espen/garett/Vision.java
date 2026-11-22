@@ -255,7 +255,7 @@ public final class Vision {
             },3500);
         } catch (Exception error) {
             releaseCamera(ticket);
-            if (valid(ticket)) callback.done(null,"Aparat niedostępny: "+error.getClass().getSimpleName());
+            if (valid(ticket)) callback.done(null,"Aparat jest niedostępny.");
         }
     }
 

@@ -115,6 +115,7 @@ public final class FaceView extends View {
     }
     void userSpeech(String text){behavior.speech(text,SystemClock.uptimeMillis());invalidate();}
     void reaction(AlaBehavior.Mood mood){behavior.react(mood,SystemClock.uptimeMillis());invalidate();}
+    boolean errorVisible(){return statusError || state==AlaBehavior.Phase.ERROR;}
     void setStatus(String message,boolean error){
         status=watchLabel(message,40);
         statusError=error;

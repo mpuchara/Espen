@@ -291,6 +291,9 @@ public final class WatchActivity extends Activity implements FaceView.Actions, X
     });}
 
     @Override public void status(String message){turnUi(()->showStatus(message,false));}
+    @Override public void provisioning(String message){turnUi(()->{
+        if (!xiaozhi.busy() && !games.protectedTurn() && !face.errorVisible()) showStatus(message,false);
+    });}
     @Override public void caption(String message){turnUi(()->{
         face.setSubtitle(message);
         face.userSpeech(message);
