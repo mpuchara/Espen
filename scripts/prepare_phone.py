@@ -375,6 +375,98 @@ if 'EspenVisualSentence(text->valuestring);' in app.read_text(encoding="utf-8"):
         '                    }\n'
         '                    if (!camera->Capture()) {')
     protocol = up / "main/protocols/protocol.cc"
+    transport_header = protocol.with_suffix(".h")
+    replace(transport_header, '    virtual bool IsAudioChannelOpened() const = 0;',
+        '    virtual bool IsAudioChannelOpened() const = 0;\n'
+        '    virtual void EspenPollAudio() {}\n'
+        '    virtual bool EspenHasPendingAudio() const { return false; }')
+    mqtt = protocol.with_name("mqtt_protocol.cc")
+    mqtt_header = mqtt.with_suffix(".h")
+    (mqtt.parent / "ala_udp_audio_order.h").write_bytes((root / "firmware/ala_udp_audio_order.h").read_bytes())
+    replace(mqtt_header, '#include "protocol.h"', '#include "protocol.h"\n#include "ala_udp_audio_order.h"')
+    replace(mqtt_header, '    uint32_t remote_sequence_;',
+        '    uint32_t espen_receive_epoch_ = 0;\n'
+        '    espen::AlaUdpAudioOrder<std::unique_ptr<AudioStreamPacket>> espen_receive_order_;')
+    replace(mqtt_header, '    bool IsAudioChannelOpened() const override;',
+        '    bool IsAudioChannelOpened() const override;\n'
+        '    void EspenPollAudio() override;\n'
+        '    bool EspenHasPendingAudio() const override;')
+    replace(mqtt, '        remote_sequence_ = 0;', '        espen_receive_order_.Reset();')
+    replace(mqtt, 'void MqttProtocol::CloseAudioChannel(bool send_goodbye) {\n'
+                  '    std::shared_ptr<Udp> udp;\n    {\n'
+                  '        std::lock_guard<std::mutex> lock(channel_mutex_);\n'
+                  '        udp = std::move(udp_);',
+        'void MqttProtocol::CloseAudioChannel(bool send_goodbye) {\n'
+        '    std::shared_ptr<Udp> udp;\n    {\n'
+        '        std::lock_guard<std::mutex> lock(channel_mutex_);\n'
+        '        ++espen_receive_epoch_;\n'
+        '        espen_receive_order_.Reset();\n'
+        '        udp = std::move(udp_);')
+    replace(mqtt, '    udp->OnMessage([this](const std::string& data) {',
+        '    const uint32_t receive_epoch = [this]() {\n'
+        '        std::lock_guard<std::mutex> lock(channel_mutex_);\n'
+        '        return ++espen_receive_epoch_;\n'
+        '    }();\n'
+        '    udp->OnMessage([this, receive_epoch](const std::string& data) {')
+    replace(mqtt, '''        {
+            std::lock_guard<std::mutex> lock(channel_mutex_);
+            if (sequence <= remote_sequence_) {
+                ESP_LOGW(TAG, "Received duplicate/old audio sequence: %lu, last: %lu", sequence,
+                         remote_sequence_);
+                return;
+            }
+            if (sequence != remote_sequence_ + 1) {
+                ESP_LOGW(TAG, "Received audio packet with wrong sequence: %lu, expected: %lu",
+                         sequence, remote_sequence_ + 1);
+            }
+        }
+
+''', '')
+    replace(mqtt, '''        {
+            std::lock_guard<std::mutex> lock(channel_mutex_);
+            if (sequence <= remote_sequence_) {
+                return;
+            }
+            remote_sequence_ = sequence;
+        }
+        last_incoming_time_ = std::chrono::steady_clock::now();
+        if (on_incoming_audio_ != nullptr) {
+            on_incoming_audio_(std::move(packet));
+        }
+''', '''        // Hold the lock through the nonblocking decoder-queue callback so
+        // a main-loop gap poll cannot deliver later audio before this batch.
+        std::lock_guard<std::mutex> lock(channel_mutex_);
+        if (receive_epoch != espen_receive_epoch_) return;
+        const auto held = espen_receive_order_.Reordered();
+        const auto missing = espen_receive_order_.Missing();
+        last_incoming_time_ = std::chrono::steady_clock::now();
+        espen_receive_order_.Push(sequence, esp_timer_get_time(), std::move(packet),
+            [this](std::unique_ptr<AudioStreamPacket> ready) {
+                if (on_incoming_audio_) on_incoming_audio_(std::move(ready));
+            });
+        if (espen_receive_order_.Reordered() != held && held % 16 == 0)
+            ESP_LOGI(TAG, "Ala UDP audio reordered: %lu", static_cast<unsigned long>(held + 1));
+        if (espen_receive_order_.Missing() != missing)
+            ESP_LOGW(TAG, "Ala UDP audio missing: %lu",
+                     static_cast<unsigned long>(espen_receive_order_.Missing()));
+''')
+    replace(mqtt, 'std::string MqttProtocol::GetHelloMessage() {', '''void MqttProtocol::EspenPollAudio() {
+    std::lock_guard<std::mutex> lock(channel_mutex_);
+    const auto missing = espen_receive_order_.Missing();
+    espen_receive_order_.Poll(esp_timer_get_time(), [this](std::unique_ptr<AudioStreamPacket> ready) {
+        if (on_incoming_audio_) on_incoming_audio_(std::move(ready));
+    });
+    if (espen_receive_order_.Missing() != missing)
+        ESP_LOGW(TAG, "Ala UDP audio missing: %lu",
+                 static_cast<unsigned long>(espen_receive_order_.Missing()));
+}
+
+bool MqttProtocol::EspenHasPendingAudio() const {
+    std::lock_guard<std::mutex> lock(channel_mutex_);
+    return espen_receive_order_.Pending();
+}
+
+std::string MqttProtocol::GetHelloMessage() {''')
     old_detect = protocol.read_text(encoding="utf-8")
     detect_start = old_detect.index("void Protocol::SendWakeWordDetected(")
     detect_end = old_detect.index("void Protocol::SendStartListening", detect_start)
@@ -406,6 +498,9 @@ extern bool EspenButtonCameraReplyActive();
 extern bool EspenButtonCameraPreparing();
 """
     replace(app, '#define TAG "Application"', '#define TAG "Application"\n\n' + helpers)
+    replace(app, '        auto bits = xEventGroupWaitBits(event_group_, ALL_EVENTS, pdTRUE, pdFALSE, pdMS_TO_TICKS(100));',
+        '        auto bits = xEventGroupWaitBits(event_group_, ALL_EVENTS, pdTRUE, pdFALSE, pdMS_TO_TICKS(100));\n'
+        '        if (protocol_) protocol_->EspenPollAudio();')
     replace(app,
         '    const bool allowed = state == kDeviceStateStarting || state == kDeviceStateActivating ||',
         '    EspenWake().SetAutoSpeech(EspenGetMicMode()==EspenMicMode::Conversation);\n'
@@ -450,6 +545,11 @@ extern bool EspenButtonCameraPreparing();
         '            ESP_LOGI(TAG, "Espen TTS drained");\n'
         '            SetDeviceState(kDeviceStateIdle);\n'
         '            if (!EspenMagicStoryActive() && protocol_ && protocol_->IsAudioChannelOpened())')
+    replace(app,
+        '        } else if (audio_service_.IsPlaybackIdle()) {\n'
+        '            espen_tv_turn_closing_ = false;',
+        '        } else if ((!protocol_ || !protocol_->EspenHasPendingAudio()) && audio_service_.IsPlaybackIdle()) {\n'
+        '            espen_tv_turn_closing_ = false;')
     replace(app,
         '    if (listening_mode_ == kListeningModeAutoStop && espen_timeout_.EndOfSpeech(now)) {',
         '    const uint32_t choice_pause_ms=EspenMagicStoryActive()?1750u:0u;\n'
