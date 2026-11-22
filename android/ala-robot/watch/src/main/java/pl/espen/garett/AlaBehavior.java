@@ -5,7 +5,7 @@ import java.util.Random;
 
 /** Visual policy shared by both APKs. Timings and poses follow the P4 0.2.28 policy. */
 final class AlaBehavior {
-    enum Phase { IDLE, CONNECTING, LISTENING, THINKING, SPEAKING, ERROR }
+    enum Phase { IDLE, CONNECTING, LISTENING, THINKING, CAPTURING, VISION_ANALYZING, SPEAKING, ERROR }
     enum Accent { NONE, HEART, STAR, TEAR, BLUSH, DOTS, SLEEP }
     enum Cue { LEFT, RIGHT, UP, DOWN, BLINK, SMILE, TILT, SQUINT, DOUBLE_BLINK, NONE }
 
@@ -101,12 +101,22 @@ final class AlaBehavior {
         afterglowUntil=now+14_000;
     }
 
+    private Mood reply=Mood.NEUTRAL;
+    private long replyUntil;
+
+    void reply(Mood mood,long now){
+        reply=mood;
+        replyUntil=now+1800;
+    }
+
     Mood mood(long now, int hour, boolean game) {
         if (phase == Phase.ERROR) return Mood.SAD;
         if (now < directUntil) return direct;
         if (social!=AlaSocial.Reaction.NONE && now-socialAt<2400)
             return now-socialAt<650 ? social.initial : social.afterglow;
-        if (phase == Phase.CONNECTING || phase == Phase.THINKING) return Mood.THINKING;
+        if (phase == Phase.CONNECTING || phase == Phase.THINKING || phase == Phase.VISION_ANALYZING) return Mood.THINKING;
+        if (now < cloudUntil && cloud != Mood.NEUTRAL && cloud != Mood.HAPPY) return cloud;
+        if (phase==Phase.SPEAKING && now<replyUntil && reply!=Mood.NEUTRAL) return reply;
         if (now < cloudUntil && cloud != Mood.NEUTRAL) return cloud;
         if (phase != Phase.IDLE || game) return Mood.NEUTRAL;
         if (now < afterglowUntil) return afterglow;

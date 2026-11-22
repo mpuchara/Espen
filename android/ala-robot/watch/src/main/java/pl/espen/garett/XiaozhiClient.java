@@ -49,6 +49,9 @@ public final class XiaozhiClient {
         void userIdea(String sentence);
         void turnFinished();
         void playedSentence(String sentence);
+        default void receivedSentence(String sentence){}
+        default void shutter(){}
+
     }
     public static final class Identity {
         public final String deviceId, clientId;
@@ -76,6 +79,11 @@ public final class XiaozhiClient {
     private volatile String sessionId="";
     private String buttonClip, storyContext, sentence="";
     private boolean contextRead, cameraAnswered, ttsStarted;
+    private boolean cameraCommand, cameraAnalyzing, cameraToolRequested;
+    private String preparedDescription;
+    private JSONObject earlyMcp;
+    private volatile boolean cameraCapture, cameraTurn;
+    private final java.util.concurrent.atomic.AtomicLong turn=new java.util.concurrent.atomic.AtomicLong();
     private volatile boolean foreground=true;
     private volatile boolean cancelled;
     private ScheduledFuture<?> deadline;
@@ -97,12 +105,7 @@ public final class XiaozhiClient {
         http=transport;
         activity=a;events=listener;identity=id(a);vision=new Vision(a,http);
         vision.setEnabled(prefs(a).getBoolean("vision",false)); // opt-in, never silently enable camera upload
-        audio=new WatchAudio(a,new WatchAudio.Reporter(){
-            @Override public void report(String message){events.status(message);}
-            @Override public void pcmLevel(int value){events.level(value,false);}
-            @Override public void started(){events.state(AlaBehavior.Phase.SPEAKING);}
-            @Override public void sentence(String value){events.playedSentence(value);}
-        });
+        audio=new WatchAudio(a);
     }
     private static SharedPreferences prefs(Context c){return c.getSharedPreferences("espen_watch_v1",Context.MODE_PRIVATE);}
     public static synchronized Identity id(Context c){
@@ -241,20 +244,31 @@ public final class XiaozhiClient {
             events.status("Najpierw zakończ obecną rozmowę");
             return;
         }
+        long owner=turn.incrementAndGet();
+        cameraCapture=true;
+        cameraTurn=true;
+        events.state(AlaBehavior.Phase.CAPTURING);
+        events.status("Robię zdjęcie…");
         vision.preview((message,error)->activity.runOnUiThread(()->{
-            if (!foreground || closed) return;
-            if (error!=null) { events.status(error); return; }
-            if (!vision.hasStagedPhoto()) return;
-            if (!playButton("camera","")) {
-                vision.cancel();
-                events.status("Ala jest zajęta. Dotknij aparatu ponownie.");
+            if (!foreground || closed || owner!=turn.get() || !cameraCapture) return;
+            cameraCapture=false;
+            if (error!=null || !vision.hasStagedPhoto()) {
+                cameraTurn=false;
+                events.status(error==null?"Zdjęcie straciło ważność. Spróbuj ponownie.":error);
+                events.state(AlaBehavior.Phase.ERROR);
+                return;
             }
+            startTurn("camera","",false);
+            events.shutter();
         }));
     }
 
     private boolean available(){
-        return foreground && !closed && !sessionStarting && socket==null && !diagnosticAudioBusy.get();
+        return foreground && !closed && !busy() && !diagnosticAudioBusy.get();
     }
+
+    long turnId(){return turn.get();}
+    boolean cameraActive(){return cameraTurn;}
 
     /** Sends the same recorded Polish commands as the P4 without opening the microphone. */
     public boolean playButton(String clip,String context){
@@ -263,16 +277,20 @@ public final class XiaozhiClient {
         return true;
     }
 
-    public void captureIdea(){
-        if (available()) startMicrophone(true);
-        else events.status("Ala jest zajęta");
+    public boolean captureIdea(){
+        if (!available() || activity.checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+            !=PackageManager.PERMISSION_GRANTED) return false;
+        startTurn(null,"",true);
+        return true;
     }
 
     private void startTurn(String clip,String context,boolean idea){
+        turn.incrementAndGet();
         cancelled=false;
         sessionStarting=true;
-        events.state(AlaBehavior.Phase.CONNECTING);
-        events.status("Łączę z Alą…");
+        cameraTurn="camera".equals(clip);
+        events.state(cameraTurn ? AlaBehavior.Phase.VISION_ANALYZING : AlaBehavior.Phase.CONNECTING);
+        events.status(cameraTurn ? "Łączę z usługą analizy zdjęć…" : "Łączę z Alą…");
         dispatch(()->{
             if (cancelled || !foreground) { finishSession(); return; }
             try {
@@ -284,6 +302,9 @@ public final class XiaozhiClient {
                 storyContext=context;
                 contextRead=false;
                 cameraAnswered=false;
+                cameraCommand=cameraAnalyzing=cameraToolRequested=false;
+                preparedDescription=null;
+                earlyMcp=null;
                 sentence="";
                 ttsStarted=false;
                 ttsStoppedAt=0;
@@ -311,7 +332,8 @@ public final class XiaozhiClient {
 
     private void armDeadline(long seconds,String message){
         if (deadline!=null) deadline.cancel(false);
-        deadline=worker.schedule(()->fail(message),seconds,TimeUnit.SECONDS);
+        long owner=turn.get();
+        deadline=worker.schedule(()->{if (turn.get()==owner && !cancelled) fail(message);},seconds,TimeUnit.SECONDS);
     }
 
     public void refreshConfig(){
@@ -465,6 +487,8 @@ public final class XiaozhiClient {
         if (index==buttonFrames.size()) {
             buttonFrames=null;
             sendListen("stop");
+            if (cameraTurn && !cameraAnswered && !cameraToolRequested)
+                armDeadline(22,"Xiaozhi nie wywołało narzędzia aparatu. Sprawdź obsługę Vision w agencie.");
             return;
         }
         if (!sender.send(WsAudio.encode(buttonFrames.get(index),wsVersion,SystemClock.elapsedRealtime()))) {
@@ -486,7 +510,11 @@ public final class XiaozhiClient {
         if (sender!=socket || closed || cancelled) return;
         try {
             JSONObject message=new JSONObject(text);
-            switch (message.optString("type")) {
+            String type=message.optString("type");
+            String wireSession=message.optString("session_id","");
+            if (sessionReady && !"hello".equals(type) && !wireSession.isEmpty()
+                && !wireSession.equals(sessionId)) return;
+            switch (type) {
                 case "hello":
                     if (sessionReady || !"websocket".equals(message.optString("transport")))
                         throw new IOException("Zły transport lub ponowne hello");
@@ -500,17 +528,32 @@ public final class XiaozhiClient {
                     sessionStarting=false;
                     sessionReady=true;
                     talking=false;
-                    armDeadline(buttonClip==null ? 32 : 65,"Xiaozhi nie zakończyło nagrywania lub odpowiedzi");
-                    sendListen("start");
-                    if (sender!=socket) return;
-                    if (buttonClip!=null) {
-                        events.state(AlaBehavior.Phase.THINKING);
-                        events.status("camera".equals(buttonClip) ? "Analizuję zdjęcie…" : "Ala przygotowuje opowieść…");
-                        pumpButton(sender,0);
+                    if (earlyMcp!=null) {
+                        handleMcp(earlyMcp);
+                        earlyMcp=null;
+                    }
+                    if (cameraTurn) {
+                        armDeadline(35,"Xiaozhi nie udostępniło opisu zdjęcia.");
+                        events.state(AlaBehavior.Phase.VISION_ANALYZING);
+                        events.status("Analizuję zdjęcie…");
+                        prepareCamera(sender);
+                        worker.schedule(()->{
+                            if (sender==socket && !cancelled && !cameraAnalyzing)
+                                startCameraCommand(sender);
+                        },1200,TimeUnit.MILLISECONDS);
                     } else {
-                        events.state(AlaBehavior.Phase.LISTENING);
-                        events.status("Słucham…");
-                        beginMic(sender);
+                        armDeadline(buttonClip==null ? 32 : 65,"Xiaozhi nie zakończyło nagrywania lub odpowiedzi");
+                        sendListen("start");
+                        if (sender!=socket) return;
+                        if (buttonClip!=null) {
+                            events.state(AlaBehavior.Phase.THINKING);
+                            events.status("Ala przygotowuje opowieść…");
+                            pumpButton(sender,0);
+                        } else {
+                            events.state(AlaBehavior.Phase.LISTENING);
+                            events.status("Słucham…");
+                            beginMic(sender);
+                        }
                     }
                     break;
                 case "stt":
@@ -543,9 +586,11 @@ public final class XiaozhiClient {
                         ttsStoppedAt=0;
                         sentence="";
                         endMic();
-                        armDeadline(65,"Xiaozhi nie zakończyło wypowiedzi");
+                        if (!cameraTurn || cameraAnswered)
+                            armDeadline(65,"Xiaozhi nie zakończyło wypowiedzi");
                     } else if ("sentence_start".equals(state) && talking && acceptOutput()) {
                         sentence=message.optString("text","");
+                        if (!sentence.trim().isEmpty()) events.receivedSentence(sentence);
                     } else if ("stop".equals(state) && ttsStarted && talking) {
                         talking=false;
                         if (!acceptOutput()) break;
@@ -555,7 +600,9 @@ public final class XiaozhiClient {
                     }
                     break;
                 case "mcp":
-                    if (sessionReady && !captureOnlyIdea) handleMcp(message.optJSONObject("payload"));
+                    JSONObject request=message.optJSONObject("payload");
+                    if (sessionReady && !captureOnlyIdea) handleMcp(request);
+                    else if (request!=null && "initialize".equals(request.optString("method"))) earlyMcp=request;
                     break;
                 case "alert":
                     events.status(message.optString("message","Informacja od Xiaozhi"));
@@ -678,7 +725,14 @@ public final class XiaozhiClient {
     private void ensureAudio(){
         if (audioActive) return;
         audioActive=true;
-        audio.start(outRate,recordThread,"story_context".equals(buttonClip) ? 12 : 1);
+        long owner=turn.get();
+        audio.start(outRate,recordThread,"story_context".equals(buttonClip) ? 12 : 1,new WatchAudio.Reporter(){
+            private boolean current(){return turn.get()==owner && !cancelled && !closed && audioActive;}
+            @Override public void report(String message){if (current()) events.status(message);}
+            @Override public void pcmLevel(int value){if (current()) events.level(value,false);}
+            @Override public void started(){if (current()) events.state(AlaBehavior.Phase.SPEAKING);}
+            @Override public void sentence(String value){if (current()) events.playedSentence(value);}
+        });
     }
 
     private void finishAfterAudio(WebSocket owner){
@@ -712,13 +766,16 @@ public final class XiaozhiClient {
         audio.stop();
         vision.cancel();
         sessionStarting=false;
+        cameraCapture=false;
+        cameraTurn=false;
+        preparedDescription=null;
         if (!closed) {
             events.state(AlaBehavior.Phase.IDLE);
             events.status("Dotknij mikrofonu, by porozmawiać");
         }
     }
 
-    public boolean busy(){ return sessionStarting || socket!=null; }
+    public boolean busy(){ return cameraCapture || sessionStarting || socket!=null; }
 
     public void foreground(boolean active){
         foreground=active;
@@ -726,8 +783,12 @@ public final class XiaozhiClient {
     }
 
     public void stop(){
-        boolean active=busy() && !cancelled;
+        boolean active=(sessionStarting || socket!=null) && !cancelled;
+        boolean capturing=cameraCapture;
+        cameraCapture=false;
+        if (capturing || active || !cancelled) turn.incrementAndGet();
         cancelled=true;
+        if (!active) cameraTurn=false;
         endMic();
         if (diagnosticSpeaker!=null) diagnosticSpeaker.interrupt();
         audio.stop();
@@ -740,6 +801,7 @@ public final class XiaozhiClient {
             }
             finishSession();
         });
+        else if (capturing && foreground && !closed) events.state(AlaBehavior.Phase.IDLE);
     }
 
     void afterStop(Runnable action){
@@ -750,9 +812,34 @@ public final class XiaozhiClient {
     }
 
     private void fail(String why){
+        long owner=turn.get();
+        boolean active=!cancelled;
         finishSession();
-        events.status(why);
-        events.state(AlaBehavior.Phase.ERROR);
+        if (active && owner==turn.get() && !cancelled) {
+            events.status(why);
+            events.state(AlaBehavior.Phase.ERROR);
+        }
+    }
+
+    private void prepareCamera(WebSocket owner){
+        if (!cameraTurn || !sessionReady || cameraCommand || cameraAnalyzing
+            || legacyVisionUrl==null || legacyVisionUrl.isEmpty()) return;
+        cameraAnalyzing=true;
+        vision.analyze("Opisz dziecku po polsku, co widać na tym zdjęciu.",
+            legacyVisionUrl,legacyVisionToken,(description,error)->dispatch(()->{
+                if (owner!=socket || cancelled) return;
+                if (error!=null) { fail(error); return; }
+                preparedDescription=description;
+                cameraAnalyzing=false;
+                startCameraCommand(owner);
+            }));
+    }
+
+    private void startCameraCommand(WebSocket owner){
+        if (owner!=socket || cancelled || cameraCommand || !cameraTurn) return;
+        cameraCommand=true;
+        sendListen("start");
+        if (owner==socket) pumpButton(owner,0);
     }
     private static String brief(Throwable t){
         String s=t.getMessage();if(s==null||s.length()==0)return t.getClass().getSimpleName();
@@ -781,6 +868,7 @@ public final class XiaozhiClient {
                     .put("serverInfo",serverInfo());
                 mcpResult(id,result,false);
             }
+            if (cameraTurn && socket!=null) prepareCamera(socket);
             return;
         }
         if(id==null||id==JSONObject.NULL)return;
@@ -837,14 +925,30 @@ public final class XiaozhiClient {
             return;
         }
         if("self.camera.take_photo".equals(tool)){
+            if (cameraTurn) {
+                if (!cameraCommand || cameraToolRequested) {
+                    mcpText(id,"Brak nowego zdjęcia do odczytania",true,modern);
+                    return;
+                }
+                cameraToolRequested=true;
+                armDeadline(28,"Xiaozhi nie wypowiedziało opisu zdjęcia.");
+                if (preparedDescription!=null) {
+                    cameraAnswered=true;
+                    mcpText(id,preparedDescription,false,modern);
+                    preparedDescription=null;
+                    return;
+                }
+            }
             String question=args.optString("question","Co widzisz?");
             String url=legacyVisionUrl,token=legacyVisionToken;
             if(modern&&meta!=null){
                 JSONObject capabilities=meta.optJSONObject("io.modelcontextprotocol/clientCapabilities");
                 JSONObject extensions=capabilities==null?null:capabilities.optJSONObject("extensions");
                 JSONObject extension=extensions==null?null:extensions.optJSONObject("me.xiaozhi/vision");
-                url=extension==null?"":extension.optString("url","");
-                token=extension==null?"":extension.optString("token","");
+                if (extension!=null && !extension.optString("url","").isEmpty()) {
+                    url=extension.optString("url","");
+                    token=extension.optString("token","");
+                }
             }
             WebSocket owner=socket;
             vision.analyze(question,url,token,(description,error)->dispatch(()->{
@@ -883,6 +987,7 @@ public final class XiaozhiClient {
     }
     public void shutdown(){
         closed=true;
+        turn.incrementAndGet();
         foreground=false;
         cancelled=true;
         endMic();

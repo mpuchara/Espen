@@ -8,8 +8,8 @@ android {
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         minSdk 26
         targetSdk 27 // Vendor Android 8.1, older package installer
-        versionCode 6
-        versionName '0.3.0-beta2'
+        versionCode 7
+        versionName '0.3.1-beta1'
     }
     signingConfigs {
         debug {

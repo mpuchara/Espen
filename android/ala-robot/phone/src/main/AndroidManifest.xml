@@ -16,7 +16,7 @@
         android:theme="@android:style/Theme.Material.NoActionBar"
         android:supportsRtl="true">
         <activity android:name="pl.espen.garett.WatchActivity"
-            android:screenOrientation="portrait" android:exported="true">
+            android:screenOrientation="portrait" android:windowSoftInputMode="adjustResize" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>

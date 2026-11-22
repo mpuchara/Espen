@@ -10,6 +10,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
+import static pl.espen.garett.AlaInteraction.Action;
 import android.view.WindowManager;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
@@ -27,6 +28,7 @@ public final class WatchActivity extends Activity implements FaceView.Actions, X
     private static final int PERM_MIC=10, PERM_CAMERA=11, PERM_IDEA=12, PERM_MIC_TEST=13;
     private final Handler main=new Handler(Looper.getMainLooper());
     private FaceView face;
+    private PhoneScreen phone;
     private XiaozhiClient xiaozhi;
     private AlaGameSession games;
     private TextToSpeech localVoice;
@@ -42,8 +44,14 @@ public final class WatchActivity extends Activity implements FaceView.Actions, X
         getWindow().setStatusBarColor(0xff000000);
         getWindow().setNavigationBarColor(0xff000000);
         immersive();
-        face=new FaceView(this);face.setActions(this);
-        setContentView(face);
+        boolean compact=getPackageName().equals("pl.espen.garett");
+        face=new FaceView(this,compact);
+        face.setActions(this);
+        if (compact) setContentView(face);
+        else {
+            phone=new PhoneScreen(this,face,this);
+            setContentView(phone);
+        }
         xiaozhi=new XiaozhiClient(this,this);
         games=new AlaGameSession(this);
         initLocalSpeech();
@@ -60,8 +68,21 @@ public final class WatchActivity extends Activity implements FaceView.Actions, X
         if (focused) immersive();
     }
 
+    private boolean allowed(Action action){
+        return AlaInteraction.allows(action,resumed,pendingPermission!=0,games.protectedTurn(),
+            xiaozhi.cameraActive(),xiaozhi.busy());
+    }
+
+    private void syncControls(){
+        face.setControls(allowed(Action.MICROPHONE),allowed(Action.CHOICE),allowed(Action.GAMES));
+        face.setStory(games.storyVisible());
+        if (phone!=null) phone.controls(allowed(Action.GAMES),allowed(Action.CAMERA),
+            allowed(Action.MICROPHONE),allowed(Action.CHOICE),allowed(Action.SETTINGS));
+    }
+
     @Override public void onMicrophone(){
-        if (games.wantsIdea() && !xiaozhi.busy()) { listenForIdea(); return; }
+        if (!allowed(Action.MICROPHONE)) return;
+        if (games.canStartIdea()) { listenForIdea(); return; }
         if (games.isRunning()) {
             games.close();
             return;
@@ -70,24 +91,34 @@ public final class WatchActivity extends Activity implements FaceView.Actions, X
     }
 
     private void requestAction(int code,String permission){
-        if (!resumed || pendingPermission!=0) return;
+        if (!allowed(actionFor(code))) return;
         if (checkSelfPermission(permission)==PackageManager.PERMISSION_GRANTED) {
             authorizedAction(code);
         } else {
             pendingPermission=code;
+            syncControls();
             requestPermissions(new String[]{permission},code);
         }
     }
 
+    private static Action actionFor(int code){
+        if (code==PERM_CAMERA) return Action.CAMERA;
+        return code==PERM_MIC_TEST ? Action.SETTINGS : Action.MICROPHONE;
+    }
+
     private void authorizedAction(int action){
+        if (!allowed(actionFor(action))) return;
         stopLocalSpeech();
         switch (action) {
             case PERM_MIC: xiaozhi.toggle(); break;
             case PERM_CAMERA: xiaozhi.previewCamera(); break;
-            case PERM_IDEA: if (games.wantsIdea()) xiaozhi.captureIdea(); break;
+            case PERM_IDEA:
+                if (games.beginIdea() && !xiaozhi.captureIdea()) games.onNarrationFailed();
+                break;
             case PERM_MIC_TEST: xiaozhi.testMicrophone(); break;
             default: break;
         }
+        syncControls();
     }
 
     private void initLocalSpeech(){
@@ -102,17 +133,17 @@ public final class WatchActivity extends Activity implements FaceView.Actions, X
                     ui(()->{
                         if (!id.startsWith(utterancePrefix) || !localSpeaking) return;
                         face.setState(AlaBehavior.Phase.SPEAKING);
-                        face.setHighlightedChoice(Integer.parseInt(id.substring(utterancePrefix.length())));
+                        highlight(Integer.parseInt(id.substring(utterancePrefix.length())));
                     });
                 }
                 @Override public void onDone(String id){
                     ui(()->{
                         if (!localSpeaking || !id.startsWith(utterancePrefix)) return;
-                        face.setHighlightedChoice(-1);
+                        highlight(-1);
                         if (id.equals(lastUtterance)) {
                             boolean listen=listenAfterLocalSpeech;
                             finishLocalSpeech();
-                            if (listen && games.wantsIdea()) listenForIdea();
+                            if (listen && games.canStartIdea()) listenForIdea();
                         }
                     });
                 }
@@ -124,24 +155,36 @@ public final class WatchActivity extends Activity implements FaceView.Actions, X
     }
 
     @Override public void onGames(){
+        if (!allowed(Action.GAMES)) return;
         if (games.isRunning()) games.close();
-        else if (xiaozhi.busy()) xiaozhi.afterStop(()->{if (resumed) games.open();});
         else games.open();
+        syncControls();
     }
-    @Override public void onChoice(int index){games.choose(index);}
+
+    @Override public void onChoice(int index){
+        if (!allowed(Action.CHOICE)) return;
+        games.choose(index);
+        syncControls();
+    }
+
     @Override public void onCamera(){
+        if (!allowed(Action.CAMERA)) return;
+        if (!xiaozhi.isVisionEnabled()) {
+            showStatus("Włącz analizę zdjęć w ustawieniach Ali.",true);
+            return;
+        }
         if (games.isRunning()) games.close();
-        if (xiaozhi.busy())
-            xiaozhi.afterStop(()->requestAction(PERM_CAMERA,Manifest.permission.CAMERA));
-        else requestAction(PERM_CAMERA,Manifest.permission.CAMERA);
+        requestAction(PERM_CAMERA,Manifest.permission.CAMERA);
     }
+
     @Override public void onSettings(){
+        if (!allowed(Action.SETTINGS)) return;
         ScrollView scroll=new ScrollView(this);
         LinearLayout form=new LinearLayout(this);form.setPadding(22,12,22,8);
         form.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(form);
         TextView info=new TextView(this);
-        info.setText("Ala Robot 0.3.0-beta2 / ESP32-P4 0.2.28\n" +
+        info.setText("Ala Robot 0.3.1-beta1 / ESP32-P4 0.2.28\n" +
             "Telefon i zegarek mają własną aktywację w Xiaozhi.\n" +
             "Mikrofon działa tylko podczas sesji. Gry: ikona z kontrolerem.\n");
         info.setTextSize(14);form.addView(info);
@@ -203,13 +246,15 @@ public final class WatchActivity extends Activity implements FaceView.Actions, X
         if (req!=pendingPermission) return;
         pendingPermission=0;
         if (result.length==0 || result[0]!=PackageManager.PERMISSION_GRANTED) {
-            face.setStatus("Nie udzielono wymaganej zgody");
+            showStatus(req==PERM_CAMERA ? "Brak zgody na aparat. Zdjęcie nie zostało zrobione."
+                : "Nie udzielono zgody na mikrofon.",true);
             if (req==PERM_IDEA) games.onNarrationFailed();
         } else if (resumed) {
             authorizedAction(req);
         } else {
             grantedAction=req;
         }
+        syncControls();
     }
 
     private void ui(Runnable action){
@@ -219,43 +264,90 @@ public final class WatchActivity extends Activity implements FaceView.Actions, X
         });
     }
 
-    @Override public void state(AlaBehavior.Phase phase){ui(()->{
+    private void turnUi(Runnable action){
+        long owner=xiaozhi.turnId(), generation=games.generation();
+        ui(()->{
+            if (xiaozhi.turnId()==owner && games.generation()==generation) action.run();
+        });
+    }
+
+    private void showStatus(String message,boolean error){
+        face.setStatus(message);
+        if (phone!=null) phone.status(message,error);
+    }
+
+    @Override public void state(AlaBehavior.Phase phase){turnUi(()->{
         if (localSpeaking && phase==AlaBehavior.Phase.IDLE) return;
         face.setState(phase);
-        if (phase==AlaBehavior.Phase.ERROR) games.onNarrationFailed();
-        if (phase==AlaBehavior.Phase.LISTENING || phase==AlaBehavior.Phase.CONNECTING
-            || phase==AlaBehavior.Phase.SPEAKING || phase==AlaBehavior.Phase.THINKING)
+        if (phase==AlaBehavior.Phase.ERROR) {
+            if (phone!=null) phone.markError();
+            games.onNarrationFailed();
+        }
+        if (phone!=null) phone.phase(phase);
+        syncControls();
+        if (phase!=AlaBehavior.Phase.IDLE && phase!=AlaBehavior.Phase.ERROR)
             getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     });}
-    @Override public void status(String message){ui(()->face.setStatus(message));}
-    @Override public void caption(String message){ui(()->{
+
+    @Override public void status(String message){turnUi(()->showStatus(message,false));}
+    @Override public void caption(String message){turnUi(()->{
         face.setSubtitle(message);
         face.userSpeech(message);
+        if (phone!=null) phone.message(xiaozhi.turnId(),true,message);
     });}
-    @Override public void emotion(String emotion){ui(()->face.setEmotion(emotion));}
-    @Override public void activation(String code){ui(()->face.setActivationCode(code));}
+    @Override public void emotion(String emotion){turnUi(()->face.setEmotion(emotion));}
+    @Override public void activation(String code){ui(()->{
+        face.setActivationCode(code);
+        if (phone!=null) phone.activation(code);
+    });}
     @Override public void level(int value,boolean microphone){
-        ui(()->{if (microphone) face.setMicLevel(value); else face.setSpeakerLevel(value);});
+        turnUi(()->{if (microphone) face.setMicLevel(value); else face.setSpeakerLevel(value);});
     }
-    @Override public void playedSentence(String sentence){ui(()->{
-        face.setSubtitle(sentence);
-        games.onPlayedSentence(sentence);
+    @Override public void receivedSentence(String sentence){turnUi(()->{
+        if (phone!=null) phone.message(xiaozhi.turnId(),false,sentence);
     });}
-    @Override public void userIdea(String sentence){ui(()->games.onVoiceIdea(sentence));}
-    @Override public void turnFinished(){ui(()->games.onTurnFinished());}
+    @Override public void shutter(){turnUi(face::shutter);}
+    @Override public void playedSentence(String sentence){
+        long generation=games.generation();
+        turnUi(()->{
+            face.setSubtitle(sentence);
+            if (games.isNarrating()) face.storySentence(sentence);
+            games.onPlayedSentence(generation,sentence);
+        });
+    }
+    @Override public void userIdea(String sentence){
+        long generation=games.generation();
+        turnUi(()->{
+            if (phone!=null) phone.message(xiaozhi.turnId(),true,sentence);
+            games.onVoiceIdea(generation,sentence);
+            syncControls();
+        });
+    }
+    @Override public void turnFinished(){
+        long generation=games.generation();
+        turnUi(()->{
+            games.onTurnFinished(generation);
+            syncControls();
+        });
+    }
     @Override public void options(String title,String[] choices){
         face.game(games.isRunning());
         face.setChoices(title,choices);
+        if (phone!=null) phone.options(title,choices);
+        syncControls();
     }
-    @Override public void highlight(int index){face.setHighlightedChoice(index);}
+    @Override public void highlight(int index){
+        face.setHighlightedChoice(index);
+        if (phone!=null) phone.highlight(index);
+    }
     @Override public void reaction(AlaBehavior.Mood mood){face.reaction(mood);}
 
     @Override public void sayLocally(String message,String[] choices){
         stopLocalSpeech();
         if (xiaozhi.busy()) return;
         if (localVoice==null || !voiceReady) {
-            face.setStatus("Polski głos do menu niedostępny");
+            showStatus("Polski głos do menu niedostępny",false);
             return;
         }
         utterancePrefix="ala-"+(++utterance)+":";
@@ -273,7 +365,7 @@ public final class WatchActivity extends Activity implements FaceView.Actions, X
     private void finishLocalSpeech(){
         localSpeaking=false;
         listenAfterLocalSpeech=false;
-        face.setHighlightedChoice(-1);
+        highlight(-1);
         face.setState(AlaBehavior.Phase.IDLE);
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     }
@@ -290,7 +382,7 @@ public final class WatchActivity extends Activity implements FaceView.Actions, X
     @Override public void sayIdeaPrompt(String message){
         sayLocally(message,null);
         listenAfterLocalSpeech=localSpeaking;
-        if (!listenAfterLocalSpeech) face.setStatus("Dotknij mikrofonu, aby podać swój pomysł");
+        if (!listenAfterLocalSpeech) showStatus("Dotknij mikrofonu, aby podać swój pomysł",false);
     }
     @Override public void listenForIdea(){requestAction(PERM_IDEA,Manifest.permission.RECORD_AUDIO);}
     @Override public void stopSpeech(){
@@ -303,6 +395,7 @@ public final class WatchActivity extends Activity implements FaceView.Actions, X
         resumed=true;
         xiaozhi.foreground(true);
         face.foreground(true);
+        syncControls();
         int action=grantedAction;
         grantedAction=0;
         if (action!=0) authorizedAction(action);
@@ -312,7 +405,7 @@ public final class WatchActivity extends Activity implements FaceView.Actions, X
         resumed=false;
         uiEpoch++;
         stopLocalSpeech();
-        if (pendingPermission==0 && games.isRunning()) games.close();
+        if (pendingPermission==0 && games.protectedTurn()) games.onNarrationFailed();
         xiaozhi.foreground(false);
         face.foreground(false);
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -320,9 +413,15 @@ public final class WatchActivity extends Activity implements FaceView.Actions, X
     }
 
     @Override public void onBackPressed(){
-        if (games.isRunning()) games.close();
+        if (games.protectedTurn() || xiaozhi.cameraActive()) {
+            xiaozhi.stop();
+            games.onNarrationFailed();
+            face.setState(AlaBehavior.Phase.IDLE);
+            showStatus("Przerwano. Możesz spróbować ponownie.",false);
+        } else if (games.isRunning()) games.close();
         else if (xiaozhi.busy()) xiaozhi.stop();
-        else super.onBackPressed();
+        else { super.onBackPressed(); return; }
+        syncControls();
     }
 
     @Override protected void onDestroy(){

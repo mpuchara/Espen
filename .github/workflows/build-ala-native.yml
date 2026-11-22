@@ -32,7 +32,7 @@ jobs:
           test -n "$sdkmanager_bin"
           "$sdkmanager_bin" --install "platforms;android-35" "build-tools;35.0.0"
       - name: Watch JVM tests and both APKs
-        run: gradle --no-daemon --stacktrace :watch:testDebugUnitTest :watch:assembleDebug :phone:assembleDebug :watch:assembleIntegrationAndroidTest
+        run: gradle --no-daemon --stacktrace :watch:testDebugUnitTest :watch:assembleDebug :phone:assembleDebug :watch:assembleIntegrationAndroidTest :phone:assembleDebugAndroidTest
       - name: Check APK signatures
         run: |
           apksigner_bin="$(find "$ANDROID_HOME/build-tools/35.0.0" -name apksigner -type f | head -n 1)"

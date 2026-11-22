@@ -40,11 +40,14 @@ public class XiaozhiSessionInstrumentedTest {
     private ActivityScenario<WatchActivity> activity;
     private XiaozhiClient client;
     private Context context;
+    private OkHttpClient transport;
+    private HandshakeCertificates trust;
+    private String latestStatus="";
 
     @Before public void setup() throws Exception {
         HeldCertificate certificate=new HeldCertificate.Builder().addSubjectAlternativeName("localhost").build();
         HandshakeCertificates serverKeys=new HandshakeCertificates.Builder().heldCertificate(certificate).build();
-        HandshakeCertificates trust=new HandshakeCertificates.Builder().addTrustedCertificate(certificate.certificate()).build();
+        trust=new HandshakeCertificates.Builder().addTrustedCertificate(certificate.certificate()).build();
         backend=new MockWebServer();
         backend.useHttps(serverKeys.sslSocketFactory(),false);
         backend.start();
@@ -52,12 +55,13 @@ public class XiaozhiSessionInstrumentedTest {
         context.getSharedPreferences("espen_watch_v1",0).edit().putString("ota","https://127.0.0.1:1/ota/").commit();
         activity=ActivityScenario.launch(WatchActivity.class);
         context.getSharedPreferences("espen_watch_v1",0).edit().putString("ota",backend.url("/ota/").toString()).commit();
+        transport=new OkHttpClient.Builder().sslSocketFactory(trust.sslSocketFactory(),trust.trustManager()).build();
         activity.onActivity(view->client=new XiaozhiClient(view,new XiaozhiClient.Events(){
             public void state(AlaBehavior.Phase phase){
                 states.add(phase);
                 if (phase==AlaBehavior.Phase.ERROR) results.add("error");
             }
-            public void status(String message){}
+            public void status(String message){latestStatus=message;}
             public void caption(String message){}
             public void emotion(String message){}
             public void level(int value,boolean microphone){}
@@ -65,7 +69,7 @@ public class XiaozhiSessionInstrumentedTest {
             public void playedSentence(String text){sentences.add(text);}
             public void userIdea(String text){results.add(text);}
             public void turnFinished(){results.add("complete");}
-        },new OkHttpClient.Builder().sslSocketFactory(trust.sslSocketFactory(),trust.trustManager()).build()));
+        },transport));
         backend.enqueue(new MockResponse().setBody(new JSONObject().put("websocket",new JSONObject()
             .put("url",backend.url("/ws").toString().replace("https:","wss:")).put("version",3)).toString()));
     }
@@ -180,9 +184,9 @@ public class XiaozhiSessionInstrumentedTest {
         grant(Manifest.permission.CAMERA);
         ByteString pcm=opus();
         enqueue(new Peer(){
-            @Override void started(WebSocket ws){
-                ws.send("{\"type\":\"mcp\",\"payload\":{\"jsonrpc\":\"2.0\",\"method\":\"initialize\",\"id\":4,"
-                    +"\"params\":{\"capabilities\":{\"vision\":{\"url\":\""+backend.url("/vision")+"\"}}}}}");
+            @Override void hello(WebSocket ws){
+                ws.send(initializes(backend.url("/vision").toString()));
+                super.hello(ws);
             }
             @Override void stopped(WebSocket ws){
                 ws.send("{\"type\":\"mcp\",\"payload\":{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"id\":5,"
@@ -192,7 +196,7 @@ public class XiaozhiSessionInstrumentedTest {
                 if (message.toString().contains("Symulowane zdjęcie")) reply(ws,pcm);
             }
         });
-        backend.enqueue(new MockResponse().setBody("Symulowane zdjęcie"));
+        backend.enqueue(new MockResponse().setBody("{\"success\":true,\"data\":{\"text\":\"Symulowane zdjęcie\"}}"));
         activity.onActivity(view->{
             client.setVisionEnabled(false);
             client.previewCamera();
@@ -207,7 +211,129 @@ public class XiaozhiSessionInstrumentedTest {
         assertNotNull(upload);
         assertEquals("/vision",upload.getPath());
         assertTrue(upload.getBodySize()>500);
+        assertEquals(3,backend.getRequestCount());
+        assertTrue(states.contains(AlaBehavior.Phase.CAPTURING));
+        assertTrue(states.contains(AlaBehavior.Phase.VISION_ANALYZING));
+        assertTrue(states.contains(AlaBehavior.Phase.SPEAKING));
         activity.onActivity(view->client.setVisionEnabled(false));
+    }
+
+    @Test public void legacyEndpointFailureEndsTurnBeforeSendingVoiceCommand() throws Exception {
+        grant(Manifest.permission.CAMERA);
+        Peer peer=new Peer(){
+            @Override void hello(WebSocket ws){
+                super.hello(ws);
+                ws.send(initializes(backend.url("/vision").toString()));
+            }
+        };
+        enqueue(peer);
+        backend.enqueue(new MockResponse().setResponseCode(503));
+        activity.onActivity(view->{
+            client.setVisionEnabled(true);
+            client.previewCamera();
+        });
+        assertEquals("error",results.poll(20,TimeUnit.SECONDS));
+        assertTrue(latestStatus,latestStatus.contains("HTTP 503"));
+        assertEquals(0,peer.frames);
+        assertFalse(client.busy());
+        assertFalse(states.contains(AlaBehavior.Phase.SPEAKING));
+    }
+
+    @Test public void cameraToolWithoutEndpointReportsSpecificError() throws Exception {
+        grant(Manifest.permission.CAMERA);
+        enqueue(new Peer(){
+            @Override void stopped(WebSocket ws){ws.send(cameraCall());}
+        });
+        activity.onActivity(view->{
+            client.setVisionEnabled(true);
+            client.previewCamera();
+        });
+        assertEquals("error",results.poll(25,TimeUnit.SECONDS));
+        assertTrue(latestStatus,latestStatus.contains("bezpiecznego adresu Vision"));
+        assertEquals(2,backend.getRequestCount());
+        assertFalse(client.busy());
+    }
+
+    @Test public void visionResponsesRejectErrorsAndMalformedBodies() throws Exception {
+        assertEquals("Czerwony samochód",Vision.description("{\"success\":true,\"result\":[{\"text\":\"Czerwony samochód\"}]}"));
+        assertEquals("Niebieski miś",Vision.description("\"Niebieski miś\""));
+        assertThrows(java.io.IOException.class,()->Vision.description("{\"success\":false,\"text\":\"błąd\"}"));
+        assertThrows(java.io.IOException.class,()->Vision.description("{\"description\":"));
+        assertThrows(java.io.IOException.class,()->Vision.description("<html>Błąd serwera</html>"));
+    }
+
+    @Test public void allActivityHandlersIgnoreRapidTouchesUntilStoryAudioDrains() throws Exception {
+        ByteString pcm=opus();
+        BlockingQueue<WebSocket> stopped=new LinkedBlockingQueue<>();
+        enqueue(new Peer(){
+            @Override void stopped(WebSocket ws){stopped.add(ws);}
+        });
+        AlaGameSession[] game={null};
+        activity.onActivity(view->{
+            try {
+                java.lang.reflect.Field clientField=WatchActivity.class.getDeclaredField("xiaozhi");
+                clientField.setAccessible(true);
+                ((XiaozhiClient)clientField.get(view)).shutdown();
+                client.shutdown();
+                client=new XiaozhiClient(view,view,new OkHttpClient.Builder()
+                    .sslSocketFactory(trust.sslSocketFactory(),trust.trustManager()).build());
+                clientField.set(view,client);
+                java.lang.reflect.Field gameField=WatchActivity.class.getDeclaredField("games");
+                gameField.setAccessible(true);
+                game[0]=(AlaGameSession)gameField.get(view);
+            } catch (ReflectiveOperationException error) { throw new AssertionError(error); }
+            view.onGames();
+            view.onChoice(2);
+            assertTrue(game[0].protectedTurn());
+            for (int touch=0;touch<20;touch++) {
+                view.onChoice(touch%3);
+                view.onGames();
+                view.onCamera();
+                view.onMicrophone();
+            }
+            assertTrue(game[0].protectedTurn());
+        });
+        WebSocket intro=stopped.poll(24,TimeUnit.SECONDS);
+        assertNotNull(intro);
+        assertEquals(2,backend.getRequestCount());
+        reply(intro,pcm);
+        waitIdle();
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+        activity.onActivity(view->{
+            assertFalse(game[0].protectedTurn());
+            assertFalse(game[0].isNarrating());
+        });
+        enqueue(new Peer(){
+            @Override void stopped(WebSocket ws){stopped.add(ws);}
+        });
+        activity.onActivity(view->{
+            view.onChoice(1);
+            assertTrue(game[0].isNarrating());
+            for (int touch=0;touch<20;touch++) {
+                view.onGames();view.onCamera();view.onMicrophone();view.onChoice(touch%3);
+            }
+            assertTrue(game[0].isNarrating());
+        });
+        WebSocket chapter=stopped.poll(24,TimeUnit.SECONDS);
+        assertNotNull(chapter);
+        assertEquals(3,backend.getRequestCount());
+        activity.onActivity(WatchActivity::onBackPressed);
+        reply(chapter,pcm);
+        waitIdle();
+        activity.onActivity(view->{
+            assertFalse(game[0].isNarrating());
+            assertTrue(game[0].isRunning());
+        });
+    }
+
+    private static String initializes(String endpoint){
+        return "{\"type\":\"mcp\",\"payload\":{\"jsonrpc\":\"2.0\",\"method\":\"initialize\",\"id\":4,"
+            +"\"params\":{\"capabilities\":{\"vision\":{\"url\":\""+endpoint+"\"}}}}}";
+    }
+
+    private static String cameraCall(){
+        return "{\"type\":\"mcp\",\"payload\":{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"id\":5,"
+            +"\"params\":{\"name\":\"self.camera.take_photo\"}}}";
     }
 
     private void grant(String permission) throws Exception{

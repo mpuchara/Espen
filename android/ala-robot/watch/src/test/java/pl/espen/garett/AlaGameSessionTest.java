@@ -40,18 +40,21 @@ public class AlaGameSessionTest {
         assertFalse(game.isRunning());
     }
 
-    @Test public void spokenTopicsQueueEarlyChoiceAndUsePlayedSentence(){
+    @Test public void spokenTopicsIgnoreEarlyChoicesAndUsePlayedSentence(){
         Stub ui=new Stub();
         AlaGameSession game=new AlaGameSession(ui);
         game.open();
         game.choose(2);
         assertEquals("intro",ui.clip);
-        game.onPlayedSentence("Może przeżyjemy przygodę nad jeziorem?");
+        game.onPlayedSentence(game.generation(),"Może przeżyjemy przygodę nad jeziorem?");
         assertEquals(1,ui.pulse);
-        game.choose(1);
-        assertEquals("intro",ui.clip);
-        game.onTurnFinished();
+        for (int i=0;i<20;i++) game.choose(i%3);
+        assertEquals(1,ui.cloud);
+        game.onTurnFinished(game.generation());
         assertEquals(-1,ui.pulse);
+        assertEquals("intro",ui.clip);
+        assertFalse(game.isNarrating());
+        game.choose(1);
         assertEquals("lake",ui.clip);
         assertTrue(game.isNarrating());
         assertNull(ui.options);
@@ -65,22 +68,23 @@ public class AlaGameSessionTest {
         assertTrue(ui.context.contains("Nad jeziorem"));
         assertTrue(ui.context.contains("mówiącego łabędzia"));
         assertTrue(ui.context.contains("ostatnią propozycję"));
-        game.onPlayedSentence("Na wyspie dzieci znalazły mapę.");
-        game.onTurnFinished();
+        game.onPlayedSentence(game.generation(),"Na wyspie dzieci znalazły mapę.");
+        game.onTurnFinished(game.generation());
         game.choose(1);
         assertEquals(0,ui.microphone);
         game.choose(0);
         assertEquals(1,ui.microphone);
-        game.onVoiceIdea("Chcę latającego smoka.");
+        assertTrue(game.beginIdea());
+        game.onVoiceIdea(game.generation(),"Chcę latającego smoka.");
         assertTrue(ui.context.contains("mówiącego łabędzia"));
         assertTrue(ui.context.contains("dzieci znalazły mapę"));
         assertTrue(ui.context.contains("latającego smoka"));
-        game.onPlayedSentence("Smok ląduje na wyspie.");
-        game.onTurnFinished();
+        game.onPlayedSentence(game.generation(),"Smok ląduje na wyspie.");
+        game.onTurnFinished(game.generation());
         game.choose(2);
         assertTrue(ui.context.contains("zakończenie"));
-        game.onPlayedSentence("Wszyscy bezpiecznie wrócili.");
-        game.onTurnFinished();
+        game.onPlayedSentence(game.generation(),"Wszyscy bezpiecznie wrócili.");
+        game.onTurnFinished(game.generation());
         assertFalse(game.isRunning());
     }
 
@@ -88,14 +92,15 @@ public class AlaGameSessionTest {
         Stub ui=new Stub();
         AlaGameSession game=ready(ui);
         game.choose(1);
-        game.onVoiceIdea("Wyspa odlatuje na księżyc.");
+        assertTrue(game.beginIdea());
+        game.onVoiceIdea(game.generation(),"Wyspa odlatuje na księżyc.");
         String original=ui.context;
-        game.onTurnFinished(); // No played sentence in this turn.
+        game.onTurnFinished(game.generation()); // No played sentence in this turn.
         assertEquals("Nie udało się opowiedzieć",ui.title);
         game.choose(0);
         assertEquals(original,ui.context);
         game.close();
-        game.onTurnFinished();
+        game.onTurnFinished(game.generation());
         assertFalse(game.isRunning());
     }
 
@@ -103,8 +108,10 @@ public class AlaGameSessionTest {
         Stub ui=new Stub();
         AlaGameSession game=ready(ui);
         game.choose(1);
-        game.onVoiceIdea("");
-        game.onVoiceIdea("Mam inny pomysł.");
+        assertTrue(game.beginIdea());
+        game.onVoiceIdea(game.generation(),"");
+        assertTrue(game.beginIdea());
+        game.onVoiceIdea(game.generation(),"Mam inny pomysł.");
         assertEquals("Twój pomysł",ui.title);
         assertEquals(2,ui.cloud);
     }
@@ -122,14 +129,48 @@ public class AlaGameSessionTest {
         assertEquals("Temat opowieści",ui.title);
     }
 
+    @Test public void tenChaptersRejectRacesAndRetainWorldAfterRetry(){
+        Stub ui=new Stub();
+        AlaGameSession game=ready(ui);
+        for (int chapter=1;chapter<=10;chapter++) {
+            game.choose(0);
+            long owner=game.generation();
+            int requests=ui.cloud;
+            for (int touch=0;touch<20;touch++) game.choose(touch%3);
+            assertEquals(requests,ui.cloud);
+            assertTrue(ui.context.contains("mówiącego łabędzia"));
+            if (chapter==5) {
+                game.onNarrationFailed();
+                game.choose(0);
+                game.onPlayedSentence(owner,"Spóźniony fragment");
+                game.onTurnFinished(owner);
+                assertTrue(game.isNarrating());
+                owner=game.generation();
+            }
+            game.onPlayedSentence(owner,"Rozdział "+chapter+" kończy się przygodą.");
+            game.onTurnFinished(owner);
+            assertEquals("Co dalej?",ui.title);
+            assertFalse(ui.context.contains("Spóźniony fragment"));
+        }
+    }
+
+    @Test public void protectedStoryAndCameraDisableEveryControl(){
+        for (AlaInteraction.Action action:AlaInteraction.Action.values()) {
+            assertFalse(AlaInteraction.allows(action,true,false,true,false,false));
+            assertFalse(AlaInteraction.allows(action,true,false,false,true,true));
+            assertFalse(AlaInteraction.allows(action,true,true,false,false,false));
+            assertTrue(AlaInteraction.allows(action,true,false,false,false,false));
+        }
+    }
+
     private AlaGameSession ready(Stub ui){
         AlaGameSession game=new AlaGameSession(ui);
         game.open();
         game.choose(2);
-        game.onTurnFinished();
+        game.onTurnFinished(game.generation());
         game.choose(1);
-        game.onPlayedSentence("Ala spotkała mówiącego łabędzia.");
-        game.onTurnFinished();
+        game.onPlayedSentence(game.generation(),"Ala spotkała mówiącego łabędzia.");
+        game.onTurnFinished(game.generation());
         assertEquals("Co dalej?",ui.title);
         return game;
     }

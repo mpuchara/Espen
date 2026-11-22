@@ -47,12 +47,14 @@ final class WatchAudio {
         final ArrayBlockingQueue<Frame> frames=new ArrayBlockingQueue<>(160);
         final Thread thread=new Thread(this,"ala-audio-output");
         final int preferredRate,preroll;
+        final Reporter reporter;
         final Thread microphone;
         volatile boolean cancelled,failed,inFlight,sealed;
         volatile long received,written,heard,dropped;
         volatile String route="uruchamianie";
 
-        Playback(int preferredRate,Thread microphone,int preroll){
+        Playback(int preferredRate,Thread microphone,int preroll,Reporter reporter){
+            this.reporter=reporter;
             this.preferredRate=preferredRate;
             this.microphone=microphone;
             this.preroll=preroll;
@@ -132,12 +134,12 @@ final class WatchAudio {
                 long head=track.getPlaybackHeadPosition()&0xffffffffL;
                 while (!markers.isEmpty() && head>=markers.peek().end) {
                     Marker finished=markers.remove();
-                    heard++;
                     if (!started) { started=true; reporter.started(); }
                     if (!spoken.equals(finished.sentence)) {
                         spoken=finished.sentence;
                         reporter.sentence(spoken);
                     }
+                    heard++;
                 }
                 Marker active=markers.peek();
                 int level=active!=null && head>active.start ? active.level : 0;
@@ -168,6 +170,11 @@ final class WatchAudio {
                             Marker at=markers.peek();
                             while (at!=null && playing>=at.end) {
                                 markers.remove();
+                                if (!started) { started=true; reporter.started(); }
+                                if (!spoken.equals(at.sentence)) {
+                                    spoken=at.sentence;
+                                    reporter.sentence(spoken);
+                                }
                                 heard++;
                                 at=markers.peek();
                             }
@@ -193,16 +200,15 @@ final class WatchAudio {
     }
 
     private final Activity activity;
-    private final Reporter reporter;
     private final Object outputLock=new Object();
     private volatile Playback current;
 
-    WatchAudio(Activity activity,Reporter reporter){this.activity=activity;this.reporter=reporter;}
+    WatchAudio(Activity activity){this.activity=activity;}
 
     void resetSession(){ stop(); current=null; }
-    synchronized void start(int preferredRate,Thread microphone,int preroll){
+    synchronized void start(int preferredRate,Thread microphone,int preroll,Reporter reporter){
         stop();
-        current=new Playback(preferredRate,microphone,preroll);
+        current=new Playback(preferredRate,microphone,preroll,reporter);
         current.thread.start();
     }
     void offer(byte[] opus,String sentence){

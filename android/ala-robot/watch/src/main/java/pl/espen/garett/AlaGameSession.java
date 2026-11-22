@@ -17,7 +17,7 @@ final class AlaGameSession {
         void highlight(int index);
     }
 
-    private enum Phase { OFF, MENU, THEMES, QUIZ, ANIMALS, END, INTRO, CHAPTER, CHOICE, IDEA, ERROR }
+    private enum Phase { OFF, MENU, THEMES, QUIZ, ANIMALS, END, INTRO, CHAPTER, CHOICE, IDEA, IDEA_CAPTURE, ERROR }
     private enum Decision { START, ACCEPT, IDEA, REPEAT, END }
     private static final String[] MENU={"Quiz Mistrza","Zgadnij zwierzę","Magiczna opowieść"};
     private static final String[] THEMES={"Magiczny las","Nad jeziorem","Z mamą w samochodzie"};
@@ -60,13 +60,27 @@ final class AlaGameSession {
     private Phase phase=Phase.OFF,previousGame=Phase.QUIZ;
     private Decision decision=Decision.START;
     private String world="",lastChapter="",idea="";
-    private int theme,queuedTheme=-1,seed,round,score;
+    private int theme,seed,round,score;
+    private boolean retryIntro;
+    private volatile long generation;
 
     AlaGameSession(Ui ui){this(ui,new Random());}
     AlaGameSession(Ui ui,Random random){this.ui=ui;this.random=random;}
     boolean isRunning(){return phase!=Phase.OFF;}
     boolean isNarrating(){return phase==Phase.CHAPTER;}
-    boolean wantsIdea(){return phase==Phase.IDEA;}
+    boolean wantsIdea(){return phase==Phase.IDEA || phase==Phase.IDEA_CAPTURE;}
+    boolean canStartIdea(){return phase==Phase.IDEA;}
+    boolean protectedTurn(){return phase==Phase.INTRO || phase==Phase.CHAPTER || phase==Phase.IDEA_CAPTURE;}
+    boolean storyVisible(){return protectedTurn() || phase==Phase.THEMES || phase==Phase.CHOICE || phase==Phase.IDEA || phase==Phase.ERROR;}
+    long generation(){return generation;}
+
+    boolean beginIdea(){
+        if (!canStartIdea()) return false;
+        generation++;
+        phase=Phase.IDEA_CAPTURE;
+        ui.options("Słucham Twojego pomysłu",IDEA);
+        return true;
+    }
 
     void open(){
         if (phase!=Phase.OFF) close();
@@ -80,20 +94,17 @@ final class AlaGameSession {
         earlier.clear();
         speech.setLength(0);
         world=lastChapter=idea="";
-        queuedTheme=-1;
+        generation++;
         ui.stopSpeech();
         ui.options("",null);
     }
 
     void choose(int index){
-        if (index<0 || index>2) return;
+        if (index<0 || index>2 || protectedTurn()) return;
         switch (phase) {
             case MENU:
                 if (index==2) introduceStory();
                 else startQuiz(index==0 ? Phase.QUIZ : Phase.ANIMALS);
-                break;
-            case INTRO:
-                queuedTheme=index;
                 break;
             case THEMES:
                 theme=index;
@@ -119,7 +130,7 @@ final class AlaGameSession {
                 break;
             case ERROR:
                 if (index==0) {
-                    if (lastChapter.isEmpty() && queuedTheme==-2) introduceStory();
+                    if (retryIntro) introduceStory();
                     else narrate(decision);
                 } else if (index==1) open();
                 else close();
@@ -130,7 +141,8 @@ final class AlaGameSession {
 
     private void introduceStory(){
         phase=Phase.INTRO;
-        queuedTheme=-1;
+        generation++;
+        retryIntro=false;
         ui.options("Temat opowieści",THEMES);
         if (!ui.playButton("intro","")) onNarrationFailed();
     }
@@ -171,7 +183,8 @@ final class AlaGameSession {
         ui.sayLocally(feedback+q[0],opts);
     }
 
-    void onPlayedSentence(String text){
+    void onPlayedSentence(long owner,String text){
+        if (owner!=generation) return;
         if (phase==Phase.INTRO) {
             String normalized=AlaSocial.words(text);
             if (normalized.contains(" samochod")) ui.highlight(2);
@@ -184,11 +197,12 @@ final class AlaGameSession {
         }
     }
 
-    void onTurnFinished(){
+    void onTurnFinished(long owner){
+        if (owner!=generation) return;
         if (phase==Phase.INTRO) {
             ui.highlight(-1);
             phase=Phase.THEMES;
-            if (queuedTheme>=0) choose(queuedTheme);
+            ui.options("Temat opowieści",THEMES);
             return;
         }
         if (phase!=Phase.CHAPTER) return;
@@ -223,16 +237,21 @@ final class AlaGameSession {
 
     void onNarrationFailed(){
         if (phase==Phase.INTRO || phase==Phase.CHAPTER) {
-            if (phase==Phase.INTRO) queuedTheme=-2;
+            retryIntro=phase==Phase.INTRO;
+            generation++;
             phase=Phase.ERROR;
             ui.options("Nie udało się opowiedzieć",new String[]{"Spróbuj ponownie","Wróć do gier","Zamknij"});
-        } else if (phase==Phase.IDEA) {
+        } else if (wantsIdea()) {
+            generation++;
+            phase=Phase.IDEA;
             ui.options("Spróbuj powiedzieć jeszcze raz",IDEA);
         }
     }
 
-    void onVoiceIdea(String spoken){
-        if (phase!=Phase.IDEA) return;
+    void onVoiceIdea(long owner,String spoken){
+        if (owner!=generation) return;
+        if (phase!=Phase.IDEA_CAPTURE) return;
+        phase=Phase.IDEA;
         String words=AlaSocial.words(spoken);
         if (words.equals(" ")) { ui.status("Nie rozpoznałam pomysłu. Spróbuj jeszcze raz."); return; }
         if (words.equals(" koniec gry ") || words.equals(" zamknij gre ")) { close(); return; }
@@ -245,6 +264,7 @@ final class AlaGameSession {
     }
 
     private void narrate(Decision next){
+        generation++;
         decision=next;
         phase=Phase.CHAPTER;
         speech.setLength(0);
