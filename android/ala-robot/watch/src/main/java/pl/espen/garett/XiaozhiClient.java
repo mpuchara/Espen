@@ -46,6 +46,9 @@ public final class XiaozhiClient {
         void emotion(String emotion);
         void level(int value, boolean microphone);
         void activation(String code);
+        void ttsSentence(String sentence);
+        void userIdea(String sentence);
+        void turnFinished();
     }
     public static final class Identity {
         public final String deviceId, clientId;
@@ -72,6 +75,8 @@ public final class XiaozhiClient {
     private volatile int peakMicRms, sttResponses, ttsResponses;
     private volatile String micStage="idle";
     private volatile String sessionId="";
+    private volatile String pendingPrompt=null;
+    private volatile boolean captureOnlyIdea=false;
     private String wsUrl, wsToken, legacyVisionUrl, legacyVisionToken;
     private int wsVersion=1, outRate=24000;
     private long ttsStoppedAt=0;
@@ -79,7 +84,7 @@ public final class XiaozhiClient {
 
     public XiaozhiClient(Activity a, Events listener) {
         activity=a;events=listener;identity=id(a);vision=new Vision(a,http);
-        vision.setEnabled(prefs(a).getBoolean("vision",true)); // enabled by default, explicit voice request required before upload
+        vision.setEnabled(prefs(a).getBoolean("vision",false)); // opt-in, never silently enable camera upload
         audio=new WatchAudio(a,new WatchAudio.Reporter(){
             @Override public void report(String message){events.status(message);}
             @Override public void pcmLevel(int value){events.level(value,false);}
@@ -195,9 +200,38 @@ public final class XiaozhiClient {
             ", odtworzone: "+audio.packetsPlayed()+", pominięte: "+audio.packetsDropped();
     }
     public void previewCamera(){
+        // Camera icon is an explicit action. A staged photo is kept in RAM until the
+        // Xiaozhi MCP camera tool requests it, and only over the allowed HTTPS URL.
         vision.preview((message,error)->{
-            if(error!=null)events.status(error);else events.status(message);
+            if(error!=null){events.status(error);return;}
+            events.status("Zdjęcie zrobione. Pytam Alę, co widzi…");
+            if(!speakPrompt("Ala, opisz po polsku, co widzisz na właśnie zrobionym zdjęciu. " +
+                "Wywołaj self.camera.take_photo, aby pobrać zdjęcie, a potem odpowiedz dziecku."))
+                events.status("Zdjęcie gotowe, ale Ala jest zajęta. Spróbuj ponownie.");
         });
+    }
+    /** Text-to-AI-to-voice turn, no microphone required. Backend support must be tested. */
+    public boolean speakPrompt(String prompt){
+        if(closed||sessionStarting||socket!=null||prompt==null||
+            prompt.isEmpty()||prompt.length()>2600)return false;
+        pendingPrompt=prompt;captureOnlyIdea=false;sessionStarting=true;
+        events.state(FaceView.State.CONNECTING);events.status("Ala przygotowuje opowieść…");
+        worker.execute(()->{
+            try{
+                if(wsUrl==null)readOta();
+                if(wsUrl==null||closed){pendingPrompt=null;sessionStarting=false;return;}
+                openSocket();
+            }catch(Exception e){
+                pendingPrompt=null;sessionStarting=false;
+                events.state(FaceView.State.ERROR);events.status("Xiaozhi: "+brief(e));
+            }
+        });
+        return true;
+    }
+    /** Use Xiaozhi STT only to capture a child's alternate story idea. */
+    public void captureIdea(){
+        if(closed||sessionStarting||socket!=null){events.status("Ala jest zajęta");return;}
+        captureOnlyIdea=true;toggle();
     }
     public void refreshConfig(){
         if(closed||!otaBusy.compareAndSet(false,true))return;
@@ -280,10 +314,10 @@ public final class XiaozhiClient {
         worker.execute(()->{
             try {
                 if(wsUrl==null)readOta();
-                if(wsUrl==null){sessionStarting=false;events.state(FaceView.State.IDLE);return;}
+                if(wsUrl==null){pendingPrompt=null;sessionStarting=false;events.state(FaceView.State.IDLE);return;}
                 if(closed){sessionStarting=false;return;}
                 openSocket();
-            }catch(Exception e){sessionStarting=false;events.state(FaceView.State.ERROR);events.status("Połączenie: "+brief(e));}
+            }catch(Exception e){pendingPrompt=null;sessionStarting=false;events.state(FaceView.State.ERROR);events.status("Połączenie: "+brief(e));}
         });
     }
     private void openSocket(){
@@ -317,10 +351,10 @@ public final class XiaozhiClient {
                 });
             }
             @Override public void onFailure(WebSocket webSocket,Throwable t,Response response){
-                if(webSocket==socket){socket=null;sessionStarting=false;endMic();events.state(FaceView.State.ERROR);events.status("Xiaozhi: "+brief(t));closeAudio();}
+                if(webSocket==socket){socket=null;pendingPrompt=null;captureOnlyIdea=false;sessionStarting=false;endMic();events.state(FaceView.State.ERROR);events.status("Xiaozhi: "+brief(t));closeAudio();}
             }
             @Override public void onClosed(WebSocket webSocket,int code,String reason){
-                if(webSocket==socket){socket=null;sessionStarting=false;endMic();events.state(FaceView.State.IDLE);closeAudio();}
+                if(webSocket==socket){socket=null;pendingPrompt=null;captureOnlyIdea=false;sessionStarting=false;endMic();events.state(FaceView.State.IDLE);closeAudio();}
             }
         });
     }
@@ -341,9 +375,18 @@ public final class XiaozhiClient {
                     // AudioTrack while AudioRecord is active. Wait for actual TTS.
                     audio.resetSession();audioActive=false;
                     sessionStarting=false;sessionReady=true;talking=false;
-                    events.state(FaceView.State.LISTENING);events.status("Słucham…");
-                    send(new JSONObject().put("type","listen").put("state","start").put("mode","manual"));
-                    beginMic();
+                    String injected=pendingPrompt;
+                    pendingPrompt=null;
+                    if(injected!=null){
+                        events.state(FaceView.State.THINKING);
+                        events.status("Ala opowiada…");
+                        send(new JSONObject().put("type","listen").put("state","detect")
+                            .put("text",injected));
+                    }else{
+                        events.state(FaceView.State.LISTENING);events.status("Słucham…");
+                        send(new JSONObject().put("type","listen").put("state","start").put("mode","manual"));
+                        beginMic();
+                    }
                     // Bounded one-turn session: no perpetual listening/CPU drain
                     // if the cloud never returns a TTS response.
                     worker.schedule(()->{
@@ -358,6 +401,11 @@ public final class XiaozhiClient {
                     String phrase=o.optString("text","");
                     vision.noteUserSpeech(phrase);
                     events.caption(phrase);
+                    if(captureOnlyIdea){
+                        finishSession();
+                        events.userIdea(phrase);
+                        break;
+                    }
                     events.state(FaceView.State.THINKING);
                     events.status("Xiaozhi rozpoznało wypowiedź");
                     break;
@@ -378,7 +426,11 @@ public final class XiaozhiClient {
                         events.state(FaceView.State.SPEAKING);
                         events.status("Odbieram odpowiedź głosową…");
                     }
-                    else if("sentence_start".equals(state))events.caption(o.optString("text",""));
+                    else if("sentence_start".equals(state)){
+                        String sentence=o.optString("text","");
+                        events.caption(sentence);
+                        events.ttsSentence(sentence);
+                    }
                     else if("stop".equals(state)){
                         talking=false;ttsStoppedAt=SystemClock.elapsedRealtime();
                         worker.schedule(this::finishAfterAudio,1200,TimeUnit.MILLISECONDS);
@@ -495,12 +547,14 @@ public final class XiaozhiClient {
         }
         if(audio.packetsReceived()==0)
             events.status("Xiaozhi zakończyło TTS bez ramek audio; sprawdź usługę");
+        boolean completed=ttsResponses>0;
         finishSession();
+        if(completed)events.turnFinished();
     }
     private void finishSession(){
         if(closed)return;
         WebSocket s=socket;socket=null;sessionReady=false;sessionStarting=false;
-        endMic();
+        endMic();pendingPrompt=null;captureOnlyIdea=false;
         if(s!=null)s.close(1000,"Done");
         closeAudio();
         events.state(FaceView.State.IDLE);
