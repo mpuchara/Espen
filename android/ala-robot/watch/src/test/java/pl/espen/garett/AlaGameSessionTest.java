@@ -1,38 +1,177 @@
 package pl.espen.garett;
+
 import static org.junit.Assert.*;
+import java.util.Random;
 import org.junit.Test;
+
 public class AlaGameSessionTest {
-    static class Stub implements AlaGameSession.Ui{
-        String title="",lastCloud="";String[] options;int local,cloud;
-        public void options(String t,String[] o){title=t;options=o;}
-        public void sayLocally(String m,String[] o){local++;}
-        public boolean sayWithAla(String p){cloud++;lastCloud=p;return true;}
-        public void listenForIdea(){}
+    static class Stub implements AlaGameSession.Ui {
+        String title="", context="", clip="";
+        String[] options;
+        int cloud, microphone, pulse=-1, reactions;
+        boolean available=true;
+        public void options(String title,String[] options){this.title=title;this.options=options;}
+        public void sayLocally(String message,String[] options){}
+        public boolean playButton(String clip,String context){
+            cloud++;this.clip=clip;this.context=context;
+            return available;
+        }
+        public void listenForIdea(){microphone++;}
+        public void sayIdeaPrompt(String message){}
         public void stopSpeech(){}
-        public void status(String s){}
+        public void status(String message){}
+        public void reaction(AlaBehavior.Mood mood){reactions++;}
+        public void highlight(int index){pulse=index;}
     }
-    @Test public void quizThenClose(){
-        Stub stub=new Stub();AlaGameSession g=new AlaGameSession(stub);
-        g.open();assertEquals(3,stub.options.length);
-        g.choose(0);assertEquals("15",stub.options[0]);
-        for(int i=0;i<5;i++)g.choose(0);
-        assertTrue(stub.title.startsWith("Wynik:"));assertEquals(3,stub.options.length);
-        g.choose(2);assertFalse(g.isRunning());
+
+    @Test public void quizUsesFirmwareBankAndFiveScoredRounds(){
+        Stub ui=new Stub();
+        AlaGameSession game=new AlaGameSession(ui,new Random(){
+            @Override public int nextInt(int bound){return 0;}
+        });
+        game.open();
+        assertEquals(3,ui.options.length);
+        game.choose(0);
+        assertEquals("15",ui.options[0]);
+        for (int choice:new int[]{0,2,1,0,1}) game.choose(choice);
+        assertEquals("Wynik: 40/50",ui.title);
+        assertEquals(5,ui.reactions);
+        game.choose(2);
+        assertFalse(game.isRunning());
     }
-    @Test public void topicAndVoiceIdeaPreserveContext(){
-        Stub stub=new Stub();AlaGameSession g=new AlaGameSession(stub);
-        g.open();g.choose(2);assertEquals("Temat opowieści",stub.title);
-        g.choose(1);assertTrue(g.isNarrating());assertTrue(stub.lastCloud.contains("Nad jeziorem"));
-        g.onStorySentence("Ala spotkała mówiącego łabędzia.");g.onTurnFinished();
-        assertEquals("Co dalej?",stub.title);
-        g.choose(1);g.onVoiceIdea("Chcę latającego smoka.");
-        assertTrue(stub.lastCloud.contains("mówiącego łabędzia"));
-        assertTrue(stub.lastCloud.contains("latającego smoka"));
-        assertEquals(2,stub.cloud);
+
+    @Test public void spokenTopicsIgnoreEarlyChoicesAndUsePlayedSentence(){
+        Stub ui=new Stub();
+        AlaGameSession game=new AlaGameSession(ui);
+        game.open();
+        game.choose(2);
+        assertEquals("intro",ui.clip);
+        game.onPlayedSentence(game.generation(),"Może przeżyjemy przygodę nad jeziorem?");
+        assertEquals(1,ui.pulse);
+        for (int i=0;i<20;i++) game.choose(i%3);
+        assertEquals(1,ui.cloud);
+        game.onTurnFinished(game.generation());
+        assertEquals(-1,ui.pulse);
+        assertEquals("intro",ui.clip);
+        assertFalse(game.isNarrating());
+        game.choose(1);
+        assertEquals("lake",ui.clip);
+        assertTrue(game.isNarrating());
+        assertNull(ui.options);
     }
-    @Test public void emptyIdeaDoesNotStartNewStory(){
-        Stub s=new Stub();AlaGameSession g=new AlaGameSession(s);
-        g.open();g.choose(2);g.choose(0);g.onTurnFinished();g.choose(1);g.onVoiceIdea("");
-        assertEquals(1,s.cloud);
+
+    @Test public void narrationContinuesWithAcceptanceAndChildsOwnIdea(){
+        Stub ui=new Stub();
+        AlaGameSession game=ready(ui);
+        game.choose(0);
+        assertEquals("story_context",ui.clip);
+        assertTrue(ui.context.contains("Nad jeziorem"));
+        assertTrue(ui.context.contains("mówiącego łabędzia"));
+        assertTrue(ui.context.contains("ostatnią propozycję"));
+        game.onPlayedSentence(game.generation(),"Na wyspie dzieci znalazły mapę.");
+        game.onTurnFinished(game.generation());
+        game.choose(1);
+        assertEquals(0,ui.microphone);
+        game.choose(0);
+        assertEquals(1,ui.microphone);
+        assertTrue(game.beginIdea());
+        game.onVoiceIdea(game.generation(),"Chcę latającego smoka.");
+        assertTrue(ui.context.contains("mówiącego łabędzia"));
+        assertTrue(ui.context.contains("dzieci znalazły mapę"));
+        assertTrue(ui.context.contains("latającego smoka"));
+        game.onPlayedSentence(game.generation(),"Smok ląduje na wyspie.");
+        game.onTurnFinished(game.generation());
+        game.choose(2);
+        assertTrue(ui.context.contains("zakończenie"));
+        game.onPlayedSentence(game.generation(),"Wszyscy bezpiecznie wrócili.");
+        game.onTurnFinished(game.generation());
+        assertFalse(game.isRunning());
+    }
+
+    @Test public void failedContinuationRetriesSameContextAndChildDecision(){
+        Stub ui=new Stub();
+        AlaGameSession game=ready(ui);
+        game.choose(1);
+        assertTrue(game.beginIdea());
+        game.onVoiceIdea(game.generation(),"Wyspa odlatuje na księżyc.");
+        String original=ui.context;
+        game.onTurnFinished(game.generation()); // No played sentence in this turn.
+        assertEquals("Nie udało się opowiedzieć",ui.title);
+        game.choose(0);
+        assertEquals(original,ui.context);
+        game.close();
+        game.onTurnFinished(game.generation());
+        assertFalse(game.isRunning());
+    }
+
+    @Test public void emptyOrClarificationIdeaDoesNotGenerateChapter(){
+        Stub ui=new Stub();
+        AlaGameSession game=ready(ui);
+        game.choose(1);
+        assertTrue(game.beginIdea());
+        game.onVoiceIdea(game.generation(),"");
+        assertTrue(game.beginIdea());
+        game.onVoiceIdea(game.generation(),"Mam inny pomysł.");
+        assertEquals("Twój pomysł",ui.title);
+        assertEquals(2,ui.cloud);
+    }
+
+    @Test public void unavailableIntroCanBeRetried(){
+        Stub ui=new Stub();
+        AlaGameSession game=new AlaGameSession(ui);
+        ui.available=false;
+        game.open();
+        game.choose(2);
+        assertEquals("Nie udało się opowiedzieć",ui.title);
+        ui.available=true;
+        game.choose(0);
+        assertEquals("intro",ui.clip);
+        assertEquals("Temat opowieści",ui.title);
+    }
+
+    @Test public void tenChaptersRejectRacesAndRetainWorldAfterRetry(){
+        Stub ui=new Stub();
+        AlaGameSession game=ready(ui);
+        for (int chapter=1;chapter<=10;chapter++) {
+            game.choose(0);
+            long owner=game.generation();
+            int requests=ui.cloud;
+            for (int touch=0;touch<20;touch++) game.choose(touch%3);
+            assertEquals(requests,ui.cloud);
+            assertTrue(ui.context.contains("mówiącego łabędzia"));
+            if (chapter==5) {
+                game.onNarrationFailed();
+                game.choose(0);
+                game.onPlayedSentence(owner,"Spóźniony fragment");
+                game.onTurnFinished(owner);
+                assertTrue(game.isNarrating());
+                owner=game.generation();
+            }
+            game.onPlayedSentence(owner,"Rozdział "+chapter+" kończy się przygodą.");
+            game.onTurnFinished(owner);
+            assertEquals("Co dalej?",ui.title);
+            assertFalse(ui.context.contains("Spóźniony fragment"));
+        }
+    }
+
+    @Test public void protectedStoryAndCameraDisableEveryControl(){
+        for (AlaInteraction.Action action:AlaInteraction.Action.values()) {
+            assertFalse(AlaInteraction.allows(action,true,false,true,false,false));
+            assertFalse(AlaInteraction.allows(action,true,false,false,true,true));
+            assertFalse(AlaInteraction.allows(action,true,true,false,false,false));
+            assertTrue(AlaInteraction.allows(action,true,false,false,false,false));
+        }
+    }
+
+    private AlaGameSession ready(Stub ui){
+        AlaGameSession game=new AlaGameSession(ui);
+        game.open();
+        game.choose(2);
+        game.onTurnFinished(game.generation());
+        game.choose(1);
+        game.onPlayedSentence(game.generation(),"Ala spotkała mówiącego łabędzia.");
+        game.onTurnFinished(game.generation());
+        assertEquals("Co dalej?",ui.title);
+        return game;
     }
 }

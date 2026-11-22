@@ -1,174 +1,303 @@
 package pl.espen.garett;
 
-/**
- * Platform-neutral, foreground-only Ala game state. The same contract powers phone and Essa.
- * All callbacks are invoked by the Android UI thread; no networking is done here.
- */
-public final class AlaGameSession {
-    public interface Ui {
-        void options(String title, String[] choices);
-        void sayLocally(String message, String[] choices);
-        boolean sayWithAla(String prompt);
+import java.util.ArrayDeque;
+import java.util.Random;
+
+/** Game and foreground story decisions shared by Android phone and Garett. */
+final class AlaGameSession {
+    interface Ui {
+        void options(String title,String[] choices);
+        void sayLocally(String message,String[] choices);
+        boolean playButton(String clip,String context);
         void listenForIdea();
+        void sayIdeaPrompt(String message);
         void stopSpeech();
         void status(String message);
+        void reaction(AlaBehavior.Mood mood);
+        void highlight(int index);
     }
-    private enum Phase { OFF, MENU, THEMES, QUIZ, ANIMALS, END, STORY_SPEAKING, STORY_CHOICE, STORY_IDEA, STORY_ERROR }
+
+    private enum Phase { OFF, MENU, THEMES, QUIZ, ANIMALS, END, INTRO, CHAPTER, CHOICE, IDEA, IDEA_CAPTURE, ERROR }
+    private enum Decision { START, ACCEPT, IDEA, REPEAT, END }
     private static final String[] MENU={"Quiz Mistrza","Zgadnij zwierzę","Magiczna opowieść"};
     private static final String[] THEMES={"Magiczny las","Nad jeziorem","Z mamą w samochodzie"};
-    private static final String[] STORY_DECISIONS={"Podoba mi się","Mam inny pomysł","Koniec opowieści"};
+    private static final String[] CLIPS={"forest","lake","car"};
+    private static final String[] CHOICES={"Podoba mi się","Mam inny pomysł","Koniec opowieści"};
+    private static final String[] IDEA={"Powiedz do mikrofonu","Wróć do pomysłów","Zamknij"};
+    private static final int ROUNDS=5;
+
+    // Question order and scoring policy from firmware/ala_play_games.h, c5e0040.
     private static final String[][] QUIZ={
-        {"Ile to siedem plus osiem?","15","14","16","0"},
+        {"Ile to 7 + 8?","15","14","16","0"},
         {"Która planeta jest najbliżej Słońca?","Mars","Merkury","Neptun","1"},
         {"Ile nóg ma pająk?","6","8","10","1"},
-        {"Co wyrasta z nasionka?","Roślina","Kamień","Chmura","0"},
+        {"Co rośnie z nasionka?","Roślina","Kamień","Chmura","0"},
+        {"Które zwierzę jest ssakiem?","Żaba","Delfin","Rekin","1"},
         {"Ile minut ma godzina?","100","30","60","2"},
+        {"Jaki kolor powstanie z niebieskiego i żółtego?","Zielony","Czerwony","Biały","0"},
+        {"Który kontynent jest największy?","Europa","Azja","Australia","1"},
+        {"Ile boków ma trójkąt?","4","6","3","2"},
+        {"Co przyciąga magnes?","Żelazo","Drewno","Papier","0"},
+        {"Jaki narząd pompuje krew?","Płuca","Serce","Żołądek","1"},
+        {"Ile to 9 razy 3?","18","24","27","2"}
     };
     private static final String[][] ANIMALS={
         {"Mam długą szyję i jem liście z drzew. Kim jestem?","Żyrafa","Lis","Pingwin","0"},
-        {"Jestem ogromny, szary i mam trąbę. Kim jestem?","Słoń","Hipopotam","Nosorożec","0"},
         {"Mam czarno-białe pasy i mieszkam w Afryce.","Koń","Zebra","Tygrys","1"},
-        {"Nie latam, ale pływam w zimnym morzu.","Wróbel","Pingwin","Sokół","1"},
-        {"Mam osiem ramion i mieszkam w morzu.","Krab","Ośmiornica","Meduza","1"},
+        {"Skaczę, mam torbę na brzuchu i mieszkam w Australii.","Kangur","Niedźwiedź","Koala","0"},
+        {"Jestem ogromny, szary i mam trąbę.","Słoń","Hipopotam","Nosorożec","0"},
+        {"Potrafię zmieniać kolor skóry i mam długi język.","Kameleon","Bóbr","Orzeł","0"},
+        {"Jestem ptakiem, ale nie latam. Pływam w zimnej wodzie.","Wróbel","Pingwin","Sokół","1"},
+        {"Niosę domek na plecach i poruszam się powoli.","Ślimak","Mrówka","Żuk","0"},
+        {"Świecę nocą nad łąką jak mała latarenka.","Motyl","Biedronka","Świetlik","2"},
+        {"Mam osiem ramion i mieszkam w morzu.","Krab","Ośmiornica","Meduza","1"}
     };
+
     private final Ui ui;
-    private Phase phase=Phase.OFF;
-    private String theme="", history="", lastSpoken="";
-    private int round, score, storyTurn;
-    private Phase previousQuiz=Phase.QUIZ;
-    public AlaGameSession(Ui ui){this.ui=ui;}
-    public boolean isRunning(){return phase!=Phase.OFF;}
-    public boolean isNarrating(){return phase==Phase.STORY_SPEAKING;}
-    public void open(){
-        if(phase!=Phase.OFF)ui.stopSpeech();
+    private final Random random;
+    private final ArrayDeque<String> earlier=new ArrayDeque<>();
+    private final StringBuilder speech=new StringBuilder();
+    private Phase phase=Phase.OFF,previousGame=Phase.QUIZ;
+    private Decision decision=Decision.START;
+    private String world="",lastChapter="",idea="";
+    private int theme,seed,round,score;
+    private boolean retryIntro;
+    private volatile long generation;
+
+    AlaGameSession(Ui ui){this(ui,new Random());}
+    AlaGameSession(Ui ui,Random random){this.ui=ui;this.random=random;}
+    boolean isRunning(){return phase!=Phase.OFF;}
+    boolean isNarrating(){return phase==Phase.CHAPTER;}
+    boolean wantsIdea(){return phase==Phase.IDEA || phase==Phase.IDEA_CAPTURE;}
+    boolean canStartIdea(){return phase==Phase.IDEA;}
+    boolean protectedTurn(){return phase==Phase.INTRO || phase==Phase.CHAPTER || phase==Phase.IDEA_CAPTURE;}
+    boolean storyVisible(){return protectedTurn() || phase==Phase.THEMES || phase==Phase.CHOICE || phase==Phase.IDEA || phase==Phase.ERROR;}
+    long generation(){return generation;}
+
+    boolean beginIdea(){
+        if (!canStartIdea()) return false;
+        generation++;
+        phase=Phase.IDEA_CAPTURE;
+        ui.options("Słucham Twojego pomysłu",IDEA);
+        return true;
+    }
+
+    void open(){
+        if (phase!=Phase.OFF) close();
         phase=Phase.MENU;
         ui.options("Gry Ali",MENU);
         ui.sayLocally("Zagrajmy! Wybierz jedną z gier.",MENU);
     }
-    public void close(){
-        phase=Phase.OFF;history="";lastSpoken="";theme="";
-        ui.stopSpeech();ui.options("",null);
+
+    void close(){
+        phase=Phase.OFF;
+        earlier.clear();
+        speech.setLength(0);
+        world=lastChapter=idea="";
+        generation++;
+        ui.stopSpeech();
+        ui.options("",null);
     }
-    public void choose(int index){
-        if(index<0||index>2)return;
-        switch(phase){
+
+    void choose(int index){
+        if (index<0 || index>2 || protectedTurn()) return;
+        switch (phase) {
             case MENU:
-                if(index==2){
-                    phase=Phase.THEMES;
-                    ui.options("Temat opowieści",THEMES);
-                    ui.sayLocally("Wybierz temat naszej magicznej przygody.",THEMES);
-                }else{
-                    phase=index==0?Phase.QUIZ:Phase.ANIMALS;
-                    previousQuiz=phase;
-                    round=0;score=0;askQuestion();
-                }
+                if (index==2) introduceStory();
+                else startQuiz(index==0 ? Phase.QUIZ : Phase.ANIMALS);
                 break;
             case THEMES:
-                theme=THEMES[index];storyTurn=0;history="";lastSpoken="";
-                continueStory("");
+                theme=index;
+                narrate(Decision.START);
                 break;
             case QUIZ: case ANIMALS:
-                String[][] questions=phase==Phase.QUIZ?QUIZ:ANIMALS;
-                boolean good=index==Integer.parseInt(questions[round][4]);
-                if(good)score+=10;
-                round++;
-                if(round==questions.length){
-                    phase=Phase.END;
-                    ui.options("Wynik: "+score+"/"+(questions.length*10),
-                        new String[]{"Jeszcze raz","Gry","Zamknij"});
-                    ui.sayLocally(good?"Brawo! Zakończyliśmy grę.":"To była dobra zabawa! Koniec gry.",
-                        new String[]{"Jeszcze raz","Gry","Zamknij"});
-                }else{
-                    askQuestion(good?"Brawo, poprawna odpowiedź! ":"Spróbujemy dalej. ");
-                }
+                answerQuiz(index);
                 break;
             case END:
-                if(index==0){phase=previousQuiz;round=0;score=0;askQuestion();}
-                else if(index==1)open();
+                if (index==0) startQuiz(previousGame);
+                else if (index==1) open();
                 else close();
                 break;
-            case STORY_CHOICE:
-                if(index==0)continueStory("Dziecko akceptuje ostatni pomysł Ali. Zrealizuj go.");
-                else if(index==1){
-                    phase=Phase.STORY_IDEA;
-                    ui.options("Twój pomysł",new String[]{"Powiedz do mikrofonu","Wróć do pomysłów","Zamknij"});
-                    ui.sayLocally("Opowiedz mi, co ma się wydarzyć! Dotknij pierwszej opcji i powiedz swój pomysł.",null);
-                }else{
-                    close();
-                    ui.status("Do zobaczenia w następnej przygodzie!");
-                }
+            case CHOICE:
+                if (index==0) narrate(Decision.ACCEPT);
+                else if (index==1) promptIdea();
+                else narrate(Decision.END);
                 break;
-            case STORY_ERROR:
-                if(index==0)continueStory("Ponów poprzedni fragment historii, bez zmiany bohaterów.");
-                else if(index==1)open();
+            case IDEA:
+                if (index==0) ui.listenForIdea();
+                else if (index==1) showDecisions();
                 else close();
                 break;
-            case STORY_IDEA:
-                if(index==0)ui.listenForIdea();
-                else if(index==1){phase=Phase.STORY_CHOICE;ui.options("Co dalej?",STORY_DECISIONS);}
+            case ERROR:
+                if (index==0) {
+                    if (retryIntro) introduceStory();
+                    else narrate(decision);
+                } else if (index==1) open();
                 else close();
                 break;
-            default:break;
+            default: break;
         }
     }
-    private void askQuestion(){askQuestion("");}
-    private void askQuestion(String prefix){
-        String[] q=(phase==Phase.QUIZ?QUIZ:ANIMALS)[round];
+
+    private void introduceStory(){
+        phase=Phase.INTRO;
+        generation++;
+        retryIntro=false;
+        ui.options("Temat opowieści",THEMES);
+        if (!ui.playButton("intro","")) onNarrationFailed();
+    }
+
+    private void startQuiz(Phase mode){
+        phase=previousGame=mode;
+        round=score=0;
+        seed=random.nextInt(108);
+        askQuestion("");
+    }
+
+    private String[] item(){
+        String[][] questions=phase==Phase.QUIZ ? QUIZ : ANIMALS;
+        return questions[(seed+round*5)%questions.length];
+    }
+
+    private void answerQuiz(int index){
+        String[] q=item();
+        int correct=Integer.parseInt(q[4]);
+        boolean good=index==correct;
+        if (good) score+=10;
+        ui.reaction(good ? AlaBehavior.Mood.HAPPY : AlaBehavior.Mood.THINKING);
+        String feedback=good ? "Brawo! " : "Poprawna odpowiedź to "+q[1+correct]+". ";
+        if (++round<ROUNDS) {
+            askQuestion(feedback);
+        } else {
+            phase=Phase.END;
+            String[] buttons={"Jeszcze raz","Gry","Zamknij"};
+            ui.options("Wynik: "+score+"/50",buttons);
+            ui.sayLocally(feedback+"Koniec gry. Twój wynik to "+score+" punktów.",buttons);
+        }
+    }
+
+    private void askQuestion(String feedback){
+        String[] q=item();
         String[] opts={q[1],q[2],q[3]};
-        ui.options((phase==Phase.QUIZ?"Quiz":"Zwierzęta")+" · "+(round+1)+"/5 · "+score+"⭐",opts);
-        ui.sayLocally(prefix+q[0],opts);
+        ui.options(q[0],opts);
+        ui.sayLocally(feedback+q[0],opts);
     }
-    public void onStorySentence(String text){
-        if(phase!=Phase.STORY_SPEAKING||text==null)return;
-        if(lastSpoken.length()<1600)lastSpoken+=bounded(text,260)+" ";
-    }
-    public void onTurnFinished(){
-        if(phase!=Phase.STORY_SPEAKING)return;
-        if(!lastSpoken.isEmpty()){
-            history=bounded(history+" "+lastSpoken,1300);
-        }
-        phase=Phase.STORY_CHOICE;
-        ui.options("Co dalej?",STORY_DECISIONS);
-        // The closing spoken question already explains the options; no overlapping local TTS.
-    }
-    public void onNarrationFailed(){
-        if(phase==Phase.STORY_SPEAKING){
-            phase=Phase.STORY_ERROR;
-            ui.options("Nie udało się opowiedzieć",new String[]{"Spróbuj ponownie","Wróć do gier","Zamknij"});
+
+    void onPlayedSentence(long owner,String text){
+        if (owner!=generation) return;
+        if (phase==Phase.INTRO) {
+            String normalized=AlaSocial.words(text);
+            if (normalized.contains(" samochod")) ui.highlight(2);
+            else if (normalized.contains(" jezior")) ui.highlight(1);
+            else if (normalized.contains(" las") || normalized.contains(" lesie")) ui.highlight(0);
+            else ui.highlight(-1);
+        } else if (phase==Phase.CHAPTER && text!=null && !text.trim().isEmpty() && speech.length()<1500) {
+            if (speech.length()>0) speech.append(' ');
+            speech.append(bound(text,1500-speech.length()));
         }
     }
-    public void onVoiceIdea(String spoken){
-        if(phase!=Phase.STORY_IDEA)return;
-        String idea=bounded(spoken,220);
-        if(idea.trim().isEmpty()){
-            ui.status("Nie rozpoznałam pomysłu. Spróbuj jeszcze raz.");
+
+    void onTurnFinished(long owner){
+        if (owner!=generation) return;
+        if (phase==Phase.INTRO) {
+            ui.highlight(-1);
+            phase=Phase.THEMES;
+            ui.options("Temat opowieści",THEMES);
             return;
         }
-        continueStory("Dziecko wybrało własny dalszy bieg wydarzeń: «"+idea+"». " +
-            "W kolejnej części przedstaw jego pomysł jako główną przyczynę wydarzeń.");
+        if (phase!=Phase.CHAPTER) return;
+        if (speech.length()==0) { onNarrationFailed(); return; }
+        if (decision==Decision.END) {
+            close();
+            ui.status("Do zobaczenia w następnej przygodzie!");
+            return;
+        }
+        if (decision!=Decision.REPEAT) {
+            if (lastChapter.isEmpty()) world=bound(speech.toString(),500);
+            else {
+                String[] first=lastChapter.split("[.!?]",2);
+                earlier.add(bound(first[0],170));
+                if (earlier.size()>5) earlier.removeFirst();
+            }
+            lastChapter=speech.toString();
+        }
+        showDecisions();
     }
-    private void continueStory(String decision){
-        phase=Phase.STORY_SPEAKING;storyTurn++;lastSpoken="";
-        ui.options("",null); // full animated eyes and mouth while Xiaozhi speaks
-        StringBuilder p=new StringBuilder("Jesteś Alą, ciepłą narratorką zabawnej Magicznej Opowieści dla dziecka. ")
-          .append("Mów wyłącznie po polsku, w pierwszej osobie, bez list i technicznych komentarzy. ")
-          .append("Miejsce: ").append(theme).append(". ");
-        if(theme.equals(THEMES[2]))p.append("Mama jest bezpiecznym kierowcą i zatrzymuje się przed wspólną zabawą. ");
-        if(storyTurn==1)p.append("Przedstaw bohaterów, świat i pierwszą niezwykłą przygodę. ");
-        else p.append("Kontynuuj tę samą historię, zachowaj postacie i kontekst: «")
-            .append(bounded(history,1250)).append("». ").append(decision).append(" ");
-        p.append("Opowiedz 5 do 8 krótkich zdań. Wybierz jeden ciekawy następny krok fabuły i zapytaj na głos: ")
-         .append("„Podoba ci się mój pomysł, czy wolisz wymyślić coś zupełnie innego?” ")
-         .append("Po pytaniu zakończ wypowiedź, aby dziecko mogło zdecydować.");
-        if(!ui.sayWithAla(p.toString())){
-            phase=Phase.STORY_CHOICE;
-            ui.options("Spróbuj ponownie",STORY_DECISIONS);
-            ui.status("Nie udało się rozpocząć narracji Xiaozhi.");
+
+    private void showDecisions(){
+        phase=Phase.CHOICE;
+        ui.options("Co dalej?",CHOICES);
+    }
+
+    private void promptIdea(){
+        phase=Phase.IDEA;
+        ui.options("Twój pomysł",IDEA);
+        ui.sayIdeaPrompt("Opowiedz mi, co ma się wydarzyć.");
+    }
+
+    void onNarrationFailed(){
+        if (phase==Phase.INTRO || phase==Phase.CHAPTER) {
+            retryIntro=phase==Phase.INTRO;
+            generation++;
+            phase=Phase.ERROR;
+            ui.options("Nie udało się opowiedzieć",new String[]{"Spróbuj ponownie","Wróć do gier","Zamknij"});
+        } else if (wantsIdea()) {
+            generation++;
+            phase=Phase.IDEA;
+            ui.options("Spróbuj powiedzieć jeszcze raz",IDEA);
         }
     }
-    private static String bounded(String value,int max){
-        if(value==null)return "";
-        String clean=value.replaceAll("[\\p{Cntrl}]+"," ").trim();
-        return clean.length()<=max?clean:clean.substring(clean.length()-max);
+
+    void onVoiceIdea(long owner,String spoken){
+        if (owner!=generation) return;
+        if (phase!=Phase.IDEA_CAPTURE) return;
+        phase=Phase.IDEA;
+        String words=AlaSocial.words(spoken);
+        if (words.equals(" ")) { ui.status("Nie rozpoznałam pomysłu. Spróbuj jeszcze raz."); return; }
+        if (words.equals(" koniec gry ") || words.equals(" zamknij gre ")) { close(); return; }
+        if (words.equals(" tak ") || words.equals(" dobrze ") || words.equals(" twoj pomysl ")
+            || words.equals(" zrobmy tak ") || words.equals(" nie wiem ")) narrate(Decision.ACCEPT);
+        else if (words.equals(" nie ") || words.equals(" inaczej ") || words.equals(" mam inny pomysl ")) promptIdea();
+        else if (words.equals(" powtorz ") || words.equals(" jeszcze raz ")) narrate(Decision.REPEAT);
+        else if (words.equals(" zakoncz ") || words.equals(" skonczmy ") || words.equals(" zakonczmy ")) narrate(Decision.END);
+        else { idea=bound(spoken,700); narrate(Decision.IDEA); }
+    }
+
+    private void narrate(Decision next){
+        generation++;
+        decision=next;
+        phase=Phase.CHAPTER;
+        speech.setLength(0);
+        ui.options("",null);
+        boolean first=lastChapter.isEmpty();
+        if (!ui.playButton(first ? CLIPS[theme] : "story_context",first ? "" : continuation()))
+            onNarrationFailed();
+    }
+
+    private String continuation(){
+        String request;
+        switch (decision) {
+            case ACCEPT: request="Dziecko akceptuje. Zrealizuj ostatnią propozycję Ali zawartą w ostatnim fragmencie."; break;
+            case IDEA: request="Pomysł dziecka: «"+idea+"». Rozwiń fabułę zgodnie z nim."; break;
+            case REPEAT: request="Powtórz tylko ostatnią propozycję i pytanie. Bez nowego fragmentu."; break;
+            case END: request="Opowiedz krótkie zakończenie i pożegnaj dziecko."; break;
+            default: throw new IllegalStateException("Rozdział bez decyzji");
+        }
+        String prompt="Jesteś Alą, przyjazną narratorką Magicznej Opowieści dla dziecka. Mów po polsku, ciepło i naturalnie. "
+            +"Temat: "+THEMES[theme]+". Zachowaj bohaterów i ciągłość tej samej przygody.\n"
+            +"Początek, bohaterowie i świat: "+world+"\n"
+            +"Wcześniejsze wydarzenia: "+String.join("; ",earlier)+"\n"
+            +"Ostatni fragment: "+lastChapter+"\n"+request;
+        if (decision==Decision.END || decision==Decision.REPEAT) return prompt;
+        return prompt+" Opowiedz około 5–8 zdań. Zaproponuj jeden dalszy krok i zapytaj: "
+            +"„Podoba ci się mój pomysł, czy chcesz wymyślić coś zupełnie innego?”";
+    }
+
+    private static String bound(String value,int max){
+        String text=value.replaceAll("[\\p{Cntrl}]+"," ").trim();
+        if (text.length()<=max) return text;
+        int end=max;
+        if (end>0 && Character.isHighSurrogate(text.charAt(end-1))) end--;
+        return text.substring(0,end);
     }
 }

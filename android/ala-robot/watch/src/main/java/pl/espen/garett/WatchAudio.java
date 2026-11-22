@@ -2,8 +2,6 @@ package pl.espen.garett;
 
 import android.app.Activity;
 import android.content.Context;
-import android.content.SharedPreferences;
-import android.media.AudioAttributes;
 import android.media.AudioFormat;
 import android.media.AudioManager;
 import android.media.AudioTrack;
@@ -12,8 +10,6 @@ import android.os.SystemClock;
 import android.util.Log;
 
 import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.github.jaredmdobson.concentus.OpusDecoder;
 
@@ -25,157 +21,243 @@ import io.github.jaredmdobson.concentus.OpusDecoder;
 @SuppressWarnings("deprecation")
 final class WatchAudio {
     private static final String TAG = "AlaAudio";
-    interface Reporter { void report(String message); void pcmLevel(int level); }
-    private final Activity activity;
-    private final Reporter reporter;
-    private final ArrayBlockingQueue<byte[]> frames = new ArrayBlockingQueue<>(24);
-    private final AtomicBoolean running = new AtomicBoolean();
-    private volatile Thread player;
-    private volatile long lastWrittenMs, received, played, dropped;
-    private volatile boolean soundConfigured;
-    private volatile String route = "";
-    private volatile int playbackHz = 48000;
-    private volatile boolean diagnostic;
-    private AudioManager manager;
-    private int savedMode, savedVolume, savedSpeaker;
-    private boolean focus;
-
-    WatchAudio(Activity a, Reporter r) { activity=a; reporter=r; }
-
-    void resetSession(){
-        stop();frames.clear();
-        received=played=dropped=0;lastWrittenMs=0;
-        soundConfigured=false;route="nie uruchomiony";
-    }
-    void start() {
-        stop();
-        frames.clear();
-        received=played=dropped=0;
-        lastWrittenMs=0;
-        diagnostic=false;
-        running.set(true);
-        Thread t=new Thread(this::playLoop, "ala-audio-output");
-        t.setDaemon(true);player=t;t.start();
+    interface Reporter {
+        void report(String message);
+        void pcmLevel(int level);
+        default void started(){}
+        default void sentence(String value){}
     }
 
-    void offer(byte[] packet) {
-        if(!running.get()||packet.length==0)return;
-        received++;
-        if(!frames.offer(packet)) {
-            // Drop oldest for bounded memory, rather than accumulating unbounded
-            // WebSocket callbacks and getting killed by low-memory Android 8.1.
-            frames.poll();
-            if(!frames.offer(packet))dropped++;
-            else dropped++;
-            if(dropped==1 || dropped%20==0)
-                reporter.report("Dźwięk: wolny dekoder ("+dropped+" pominiętych ramek)");
+    private static final class Frame {
+        final byte[] opus;
+        final String sentence;
+        Frame(byte[] opus,String sentence){this.opus=opus;this.sentence=sentence;}
+    }
+
+    private static final class Marker {
+        final long start,end;
+        final int level;
+        final String sentence;
+        Marker(long start,long end,int level,String sentence){
+            this.start=start;this.end=end;this.level=level;this.sentence=sentence;
         }
     }
 
-    long packetsReceived(){ return received; }
-    long packetsPlayed(){ return played; }
-    long packetsDropped(){ return dropped; }
-    boolean ready(){return soundConfigured;}
-    String route(){return route;}
-    boolean drained(){
-        // A short last-buffer guard covers AudioTrack's hardware buffering.
-        return frames.isEmpty() && (lastWrittenMs==0 || SystemClock.elapsedRealtime()-lastWrittenMs>850);
-    }
-    void stop(){
-        running.set(false);frames.clear();
-        Thread t=player;
-        if(t!=null)t.interrupt();
-        player=null;
-    }
-    private void playLoop(){
-        android.os.Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO);
-        AudioTrack track=null;
-        try{
-            manager=(AudioManager)activity.getSystemService(Context.AUDIO_SERVICE);
-            if(manager!=null){
-                savedMode=manager.getMode();
-                savedVolume=manager.getStreamVolume(AudioManager.STREAM_MUSIC);
-                savedSpeaker=manager.isSpeakerphoneOn()?1:0;
-                manager.requestAudioFocus(null, AudioManager.STREAM_MUSIC,
-                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT);
-                focus=true;
-                // On phone-watch firmware voice is frequently routed to
-                // an earpiece unless communication speakerphone is requested.
-                manager.setMode(AudioManager.MODE_IN_COMMUNICATION);
-                manager.setSpeakerphoneOn(true);
-                if(savedVolume==0){
-                    int max=manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
-                    manager.setStreamVolume(AudioManager.STREAM_MUSIC,Math.max(1,max*3/5),0);
-                    reporter.report("Głośność multimediów była 0 – ustawiono 60%");
+    private final class Playback implements Runnable {
+        final ArrayBlockingQueue<Frame> frames=new ArrayBlockingQueue<>(160);
+        final Thread thread=new Thread(this,"ala-audio-output");
+        final int preferredRate,preroll;
+        final Reporter reporter;
+        final Thread microphone;
+        volatile boolean cancelled,failed,inFlight,sealed;
+        volatile long received,written,heard,dropped;
+        volatile String route="uruchamianie";
+
+        Playback(int preferredRate,Thread microphone,int preroll,Reporter reporter){
+            this.reporter=reporter;
+            this.preferredRate=preferredRate;
+            this.microphone=microphone;
+            this.preroll=preroll;
+            thread.setDaemon(true);
+        }
+
+        @Override public void run(){
+            AudioTrack track=null;
+            AudioManager manager=null;
+            int savedMode=0;
+            boolean savedSpeaker=false,focus=false,routeChanged=false;
+            try {
+                android.os.Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO);
+                if (microphone!=null && microphone.isAlive()) {
+                    microphone.join(1500);
+                    if (microphone.isAlive()) throw new IllegalStateException("Mikrofon zajęty");
                 }
+                synchronized(outputLock) {
+                    if (cancelled) return;
+                    try {
+                        manager=(AudioManager)activity.getSystemService(Context.AUDIO_SERVICE);
+                        if (manager!=null) {
+                            savedMode=manager.getMode();
+                            savedSpeaker=manager.isSpeakerphoneOn();
+                            focus=manager.requestAudioFocus(null,AudioManager.STREAM_MUSIC,
+                                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)==AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+                            if (activity.getPackageName().equals("pl.espen.garett")) {
+                                routeChanged=true;
+                                manager.setMode(AudioManager.MODE_IN_COMMUNICATION);
+                                manager.setSpeakerphoneOn(true);
+                            }
+                        }
+                        track=openTrack(preferredRate);
+                        if (track==null) throw new IllegalStateException("Brak wyjścia audio");
+                        route="Głośnik: "+track.getSampleRate()+" Hz";
+                        play(track);
+                    } finally {
+                        if (track!=null) {
+                            try { track.pause(); track.flush(); } catch (RuntimeException ignored) {}
+                            track.release();
+                        }
+                        if (manager!=null) {
+                            if (routeChanged) {
+                                manager.setSpeakerphoneOn(savedSpeaker);
+                                manager.setMode(savedMode);
+                            }
+                            if (focus) manager.abandonAudioFocus(null);
+                        }
+                    }
+                }
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            } catch (Exception error) {
+                failed=true;
+                Log.e(TAG,"Audio pipeline failed",error);
+                if (current==this && !cancelled) reporter.report("Błąd głośnika: "+error.getClass().getSimpleName());
+            } finally {
+                if (current==this && !cancelled) reporter.pcmLevel(0);
             }
-            // Decoding Opus at 48 kHz is supported even if Xiaozhi announces 24 kHz:
-            // the decoded PCM duration is unchanged; avoids unsupported 24k audio HALs.
-            int[] choices={24000,48000,16000};
-            int stream=AudioManager.STREAM_MUSIC;
-            for(int hz:choices){
-                try{
-                    int minimum=AudioTrack.getMinBufferSize(hz,
-                        AudioFormat.CHANNEL_OUT_MONO,AudioFormat.ENCODING_PCM_16BIT);
-                    if(minimum<=0)continue;
-                    AudioTrack candidate=new AudioTrack(stream,hz,
-                        AudioFormat.CHANNEL_OUT_MONO,AudioFormat.ENCODING_PCM_16BIT,
-                        Math.max(minimum,hz/2),AudioTrack.MODE_STREAM);
-                    if(candidate.getState()!=AudioTrack.STATE_INITIALIZED){candidate.release();continue;}
-                    track=candidate;playbackHz=hz;route="Głośnik: "+hz+" Hz / media / speaker ON";
-                    break;
-                }catch(RuntimeException ex){Log.w(TAG,"AudioTrack "+hz+" Hz",ex);}
-            }
-            if(track==null)throw new IllegalStateException("Brak wyjścia audio Android 8.1");
-            final OpusDecoder decoder=new OpusDecoder(playbackHz,1);
+        }
+
+        private void play(AudioTrack track) throws Exception {
+            int rate=track.getSampleRate();
+            OpusDecoder decoder=new OpusDecoder(rate,1);
+            java.util.ArrayDeque<Marker> markers=new java.util.ArrayDeque<>();
+            short[] pcm=new short[rate/5];
+            long queuedSamples=0;
+            String spoken="";
+            int shownLevel=0;
+            boolean started=false;
+            long bufferUntil=SystemClock.elapsedRealtime()+800;
+            while (!cancelled && !sealed && frames.size()<preroll &&
+                SystemClock.elapsedRealtime()<bufferUntil) Thread.sleep(15);
+            if (cancelled) return;
             track.play();
-            soundConfigured=true;
-            reporter.report("Głośnik gotowy ("+playbackHz+" Hz)");
-            short[] pcm=new short[playbackHz/5];
-            while(running.get()){
-                byte[] frame=frames.poll(250,TimeUnit.MILLISECONDS);
-                if(frame==null)continue;
-                // Concentus is CPU-heavy on small watches. Keep every packet's
-                // decoding and audio write off the UI and Xiaozhi control thread.
-                int count=decoder.decode(frame,0,frame.length,pcm,0,pcm.length,false);
-                if(count<=0)continue;
-                long sum=0;for(int i=0;i<count;i++)sum+=(long)pcm[i]*pcm[i];
-                reporter.pcmLevel(Math.min(100,(int)(Math.sqrt(sum/(double)count)/95)));
-                int offset=0;
-                while(offset<count&&running.get()){
-                    int wrote=track.write(pcm,offset,count-offset,AudioTrack.WRITE_BLOCKING);
-                    if(wrote<=0)throw new IllegalStateException("AudioTrack.write="+wrote);
-                    offset+=wrote;
+            while (!cancelled) {
+                long head=track.getPlaybackHeadPosition()&0xffffffffL;
+                while (!markers.isEmpty() && head>=markers.peek().end) {
+                    Marker finished=markers.remove();
+                    if (!started) { started=true; reporter.started(); }
+                    if (!spoken.equals(finished.sentence)) {
+                        spoken=finished.sentence;
+                        reporter.sentence(spoken);
+                    }
+                    heard++;
                 }
-                if(offset==count){played++;lastWrittenMs=SystemClock.elapsedRealtime();}
-                if(played==1)reporter.report("Ala mówi przez głośnik");
+                Marker active=markers.peek();
+                int level=active!=null && head>active.start ? active.level : 0;
+                if (active!=null && head>active.start) {
+                    if (!started) { started=true; reporter.started(); }
+                    if (!spoken.equals(active.sentence)) {
+                        spoken=active.sentence;
+                        reporter.sentence(spoken);
+                    }
+                }
+                if (level!=shownLevel) { shownLevel=level; reporter.pcmLevel(level); }
+                inFlight=true;
+                Frame frame=frames.poll();
+                if (frame!=null) {
+                    int count=decoder.decode(frame.opus,0,frame.opus.length,pcm,0,pcm.length,false);
+                    if (count<=0) throw new IllegalStateException("Nie można zdekodować Opus");
+                    long sum=0;
+                    for (int i=0;i<count;i++) sum+=(long)pcm[i]*pcm[i];
+                    int power=Math.min(100,(int)(Math.sqrt(sum/(double)count)/95));
+                    markers.add(new Marker(queuedSamples,queuedSamples+count,power,frame.sentence));
+                    int offset=0;
+                    while (offset<count && !cancelled) {
+                        int n=track.write(pcm,offset,count-offset,AudioTrack.WRITE_NON_BLOCKING);
+                        if (n<0) throw new IllegalStateException("AudioTrack.write="+n);
+                        if (n==0) {
+                            // Sample the actual playhead even while the device buffer is full.
+                            long playing=track.getPlaybackHeadPosition()&0xffffffffL;
+                            Marker at=markers.peek();
+                            while (at!=null && playing>=at.end) {
+                                markers.remove();
+                                if (!started) { started=true; reporter.started(); }
+                                if (!spoken.equals(at.sentence)) {
+                                    spoken=at.sentence;
+                                    reporter.sentence(spoken);
+                                }
+                                heard++;
+                                at=markers.peek();
+                            }
+                            if (at!=null && playing>at.start) {
+                                if (!started) { started=true; reporter.started(); }
+                                if (!spoken.equals(at.sentence)) {
+                                    spoken=at.sentence;
+                                    reporter.sentence(spoken);
+                                }
+                                if (at.level!=shownLevel) { shownLevel=at.level; reporter.pcmLevel(shownLevel); }
+                            }
+                            Thread.sleep(10);
+                        }
+                        offset+=n;
+                    }
+                    queuedSamples+=count;
+                    written++;
+                }
+                inFlight=false;
+                if (frame==null) Thread.sleep(markers.isEmpty()?25:10);
             }
-        }catch(InterruptedException ignored){Thread.currentThread().interrupt();}
-        catch(Throwable ex){Log.e(TAG,"Audio pipeline failed",ex);
-            reporter.report("Błąd głośnika: "+ex.getClass().getSimpleName()+
-                (ex.getMessage()!=null?": "+ex.getMessage():""));
-        }finally{
-            soundConfigured=false;
-            if(track!=null){
-                try{track.pause();track.flush();track.release();}
-                catch(Throwable ex){Log.w(TAG,"Release AudioTrack",ex);}
-            }
-            if(manager!=null){
-                try {
-                    manager.setSpeakerphoneOn(savedSpeaker!=0);
-                    manager.setMode(savedMode);
-                    if(focus)manager.abandonAudioFocus(null);
-                }catch(Throwable ex){Log.w(TAG,"Restore audio route",ex);}
-            }
-            reporter.pcmLevel(0);
         }
+    }
+
+    private final Activity activity;
+    private final Object outputLock=new Object();
+    private volatile Playback current;
+
+    WatchAudio(Activity activity){this.activity=activity;}
+
+    void resetSession(){ stop(); current=null; }
+    synchronized void start(int preferredRate,Thread microphone,int preroll,Reporter reporter){
+        stop();
+        current=new Playback(preferredRate,microphone,preroll,reporter);
+        current.thread.start();
+    }
+    void offer(byte[] opus,String sentence){
+        Playback output=current;
+        if (output==null || output.cancelled) return;
+        output.received++;
+        if (!output.frames.offer(new Frame(opus,sentence))) output.dropped++;
+    }
+    void seal(){Playback out=current;if (out!=null) out.sealed=true;}
+    long packetsReceived(){Playback out=current;return out==null?0:out.received;}
+    long packetsPlayed(){Playback out=current;return out==null?0:out.heard;}
+    long packetsDropped(){Playback out=current;return out==null?0:out.dropped;}
+    String route(){Playback out=current;return out==null?"nie uruchomiony":out.route;}
+    boolean drained(){
+        Playback out=current;
+        return out==null || out.failed || (out.frames.isEmpty() && !out.inFlight && out.heard==out.written);
+    }
+    boolean complete(){
+        Playback out=current;
+        return out!=null && !out.failed && out.heard>0 && out.heard==out.received && out.dropped==0;
+    }
+    synchronized void stop(){
+        Playback out=current;
+        if (out!=null) {
+            out.cancelled=true;
+            out.frames.clear();
+            out.thread.interrupt();
+        }
+    }
+
+    private static AudioTrack openTrack(int preferredRate){
+        for (int rate:new int[]{preferredRate,48000,24000,16000}) {
+            int minimum=AudioTrack.getMinBufferSize(rate,AudioFormat.CHANNEL_OUT_MONO,AudioFormat.ENCODING_PCM_16BIT);
+            if (minimum<=0) continue;
+            try {
+                AudioTrack candidate=new AudioTrack(AudioManager.STREAM_MUSIC,rate,AudioFormat.CHANNEL_OUT_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT,Math.max(minimum,rate/5),AudioTrack.MODE_STREAM);
+                if (candidate.getState()==AudioTrack.STATE_INITIALIZED) return candidate;
+                candidate.release();
+            } catch (IllegalArgumentException error) { Log.w(TAG,"AudioTrack "+rate+" Hz",error); }
+        }
+        return null;
     }
 
     /**
      * Local sine-wave test, independent of Xiaozhi. Used to separate routing
      * failures from network/Opus failures on real Garett hardware.
      */
-    static void testSpeaker(Activity activity,Reporter reporter) {
+    static Thread testSpeaker(Activity activity,Reporter reporter,Runnable finished) {
         Thread t=new Thread(()->{
             android.os.Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO);
             AudioTrack track=null;
@@ -199,7 +281,7 @@ final class WatchAudio {
                     Math.max(min,4096),AudioTrack.MODE_STREAM);
                 track.play();
                 short[] sound=new short[640]; // 40ms
-                for(int block=0;block<45;block++){
+                for(int block=0;block<45&&!Thread.currentThread().isInterrupted();block++){
                     for(int i=0;i<sound.length;i++){
                         double tsec=(block*sound.length+i)/(double)sampleRate;
                         double envelope=Math.min(1.0,Math.min(tsec*12,(1.8-tsec)*12));
@@ -213,8 +295,11 @@ final class WatchAudio {
             finally {
                 if(track!=null){try{track.stop();track.release();}catch(Throwable ignored){}}
                 if(am!=null){try{am.setSpeakerphoneOn(oldSpeaker);am.setMode(oldMode);}catch(Throwable ignored){}}
+                finished.run();
             }
         },"ala-speaker-test");
-        t.setDaemon(true);t.start();
+        t.setDaemon(true);
+        t.start();
+        return t;
     }
 }

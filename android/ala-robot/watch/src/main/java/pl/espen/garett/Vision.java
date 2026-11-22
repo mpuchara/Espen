@@ -8,7 +8,7 @@ import android.graphics.BitmapFactory;
 import android.graphics.SurfaceTexture;
 import android.hardware.Camera;
 import android.os.Handler;
-import android.os.Looper;
+import android.os.HandlerThread;
 import android.os.SystemClock;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -16,176 +16,354 @@ import java.text.Normalizer;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import okhttp3.Call;
+import okhttp3.HttpUrl;
 import okhttp3.MediaType;
 import okhttp3.MultipartBody;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
+import okio.BufferedSource;
+import org.json.JSONArray;
+import org.json.JSONObject;
+import org.json.JSONTokener;
 
-/** Camera bytes never leave RAM except an explicit, authorized HTTPS vision request. */
+/** A photograph is captured and delivered once per explicit, short-lived authorization. */
 @SuppressWarnings("deprecation")
 public final class Vision {
-    public interface Result { void done(String description, String error); }
+    public interface Result { void done(String description,String error); }
+    private interface Photo { void done(byte[] image,String error); }
+    private static final long LEASE_MS=45_000;
+    private static final long MAX_RESPONSE=8192;
     private final Activity activity;
     private final OkHttpClient http;
-    private final Handler main = new Handler(Looper.getMainLooper());
-    private final ExecutorService network = Executors.newSingleThreadExecutor();
-    private volatile boolean enabled = false;
-    private volatile long consentUntil = 0;
-    private volatile long pictureAt = 0;
-    private volatile byte[] jpeg;
-    public Vision(Activity a, OkHttpClient h) { activity=a;http=h; }
-    public void setEnabled(boolean on) { enabled=on; if(!on) cancel(); }
-    public boolean isEnabled() { return enabled; }
-    public void cancel() { jpeg=null;consentUntil=0; }
-    public static boolean isVisionQuestion(String raw) {
-        if(raw==null||raw.length()>512)return false;
+    private final ExecutorService network=Executors.newSingleThreadExecutor();
+    private HandlerThread cameraThread;
+    private Handler cameraHandler;
+    private Camera camera;
+    private SurfaceTexture surface;
+    private int cameraLease;
+    private int lease;
+    private long until;
+    private byte[] staged;
+    private Call upload;
+    private boolean enabled,closed;
+
+    public Vision(Activity activity,OkHttpClient http){
+        this.activity=activity;
+        this.http=http.newBuilder().followRedirects(false).followSslRedirects(false).build();
+    }
+
+    public synchronized boolean isEnabled(){return enabled;}
+    synchronized boolean hasStagedPhoto(){
+        return enabled && staged!=null && SystemClock.elapsedRealtime()<until;
+    }
+    public synchronized void setEnabled(boolean on){
+        enabled=on;
+        if (!on) cancel();
+    }
+
+    public synchronized void cancel(){
+        int revoked=lease++;
+        until=0;
+        staged=null;
+        if (upload!=null) { upload.cancel(); upload=null; }
+        if (cameraHandler!=null) cameraHandler.post(()->releaseCamera(revoked));
+    }
+
+    static boolean isVisionQuestion(String raw){
+        if (raw==null || raw.length()>512) return false;
         String norm=Normalizer.normalize(raw.toLowerCase(Locale.ROOT),Normalizer.Form.NFD)
             .replaceAll("\\p{M}+","").replace('ł','l');
-        if(norm.contains("nie rob zdjec")||norm.contains("nie patrz")||norm.contains("nie wysylaj")) return false;
+        if (norm.contains("nie rob zdjec") || norm.contains("nie patrz") || norm.contains("nie wysylaj"))
+            return false;
         String[] terms={"co widzisz","spojrz","popatrz","zrob zdjecie","co trzymam",
-            "co mam w rece","co to za","jaki to kolor","jaka to flaga","przeczytaj to",
+            "co mam w rece","jaki to kolor","jaka to flaga","przeczytaj to",
             "co jest napisane","co jest na obrazku","co pokazuje","zobacz co",
             "opisz ten obraz","sfotografuj","policz przedmioty"};
-        for(String term:terms) if(norm.contains(term))return true;
+        for (String term:terms) if (norm.contains(term)) return true;
         return false;
     }
-    public void noteUserSpeech(String speech) {
-        // Every user turn invalidates the previous authorization.
-        consentUntil=enabled&&isVisionQuestion(speech)?SystemClock.elapsedRealtime()+45000:0;
+
+    synchronized void noteUserSpeech(String speech){
+        cancel();
+        if (enabled && isVisionQuestion(speech)) until=SystemClock.elapsedRealtime()+LEASE_MS;
     }
-    /** Explicit camera button: stage a short-lived shot; never upload by itself. */
-    public void preview(Result cb) {
-        if(!enabled){cb.done(null,"Włącz Zdjęcia dla AI w ustawieniach");return;}
-        consentUntil=SystemClock.elapsedRealtime()+45000;
-        capture(cb);
-    }
-    public void analyze(String question,String url,String token,Result cb) {
-        if(!enabled||SystemClock.elapsedRealtime()>consentUntil){
-            cb.done(null,"Brak zgody na zdjęcie. Powiedz: Ala, co widzisz?");return;
-        }
-        if(url==null||!url.startsWith("https://")||url.length()>2048){
-            cb.done(null,"Serwer Xiaozhi nie udostępnił bezpiecznego HTTPS Vision");return;
-        }
-        // One-shot authorization even if upload/capture fails.
-        consentUntil=0;
-        byte[] ready=jpeg;
-        if(ready!=null&&SystemClock.elapsedRealtime()-pictureAt<45000) {
-            jpeg=null;upload(ready,question,url,token,cb);
-        } else {
-            capture((s,e)->{
-                if(e!=null){cb.done(null,e);return;}
-                byte[] latest=jpeg;jpeg=null;
-                if(latest==null){cb.done(null,"Nie udało się zrobić zdjęcia");return;}
-                upload(latest,question,url,token,cb);
-            });
-        }
-    }
-    private void capture(Result cb){
-        if(activity.checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED){
-            cb.done(null,"Brak uprawnienia do aparatu");return;
-        }
-        main.post(()->{
-            Camera camera=null;
-            SurfaceTexture surface=null;
-            try{
-                if(Camera.getNumberOfCameras()==0)throw new IOException("Brak aparatu");
-                int id=0;
-                Camera.CameraInfo info=new Camera.CameraInfo();
-                for(int i=0;i<Camera.getNumberOfCameras();i++){
-                    Camera.getCameraInfo(i,info);
-                    if(info.facing==Camera.CameraInfo.CAMERA_FACING_FRONT){id=i;break;}
-                }
-                camera=Camera.open(id);
-                if(camera==null)throw new IOException("Kamera zajęta");
-                Camera.Parameters params=camera.getParameters();
-                params.setJpegQuality(75);
-                camera.setParameters(params);
-                surface=new SurfaceTexture(12);
-                camera.setPreviewTexture(surface);
-                camera.startPreview();
-                final Camera chosenCamera=camera;
-                final SurfaceTexture chosenSurface=surface;
-                // Android 8.1 camera HAL needs a short preview warm-up before capture.
-                main.postDelayed(()->{
-                    try{
-                        chosenCamera.takePicture(null,null,(bytes,c)->{
-                            try{chosenCamera.stopPreview();}catch(Throwable ignored){}
-                            try{chosenCamera.release();}catch(Throwable ignored){}
-                            try{chosenSurface.release();}catch(Throwable ignored){}
-                            if(bytes==null||bytes.length==0){
-                                cb.done(null,"Pusty obraz z aparatu");return;
-                            }
-                            // Do NOT decode a multi-megapixel JPEG on watch's UI thread.
-                            // Bound allocations by subsampling to ~480 px.
-                            network.execute(()->{
-                                Bitmap src=null,smaller=null;
-                                try{
-                                    BitmapFactory.Options opts=new BitmapFactory.Options();
-                                    opts.inJustDecodeBounds=true;
-                                    BitmapFactory.decodeByteArray(bytes,0,bytes.length,opts);
-                                    int max=Math.max(opts.outWidth,opts.outHeight);
-                                    if(max<=0)throw new IOException("Brak rozmiaru JPEG");
-                                    opts.inJustDecodeBounds=false;
-                                    opts.inSampleSize=1;
-                                    while(max/opts.inSampleSize>640)opts.inSampleSize*=2;
-                                    opts.inPreferredConfig=Bitmap.Config.RGB_565;
-                                    src=BitmapFactory.decodeByteArray(bytes,0,bytes.length,opts);
-                                    if(src==null)throw new IOException("JPEG decode");
-                                    int width=src.getWidth(),height=src.getHeight();
-                                    float ratio=Math.min(1f,480f/Math.max(width,height));
-                                    smaller=ratio<1f?Bitmap.createScaledBitmap(src,
-                                        Math.max(1,Math.round(width*ratio)),
-                                        Math.max(1,Math.round(height*ratio)),true):src;
-                                    ByteArrayOutputStream out=new ByteArrayOutputStream();
-                                    if(!smaller.compress(Bitmap.CompressFormat.JPEG,72,out))
-                                        throw new IOException("JPEG encode");
-                                    jpeg=out.toByteArray();pictureAt=SystemClock.elapsedRealtime();
-                                    cb.done("Zdjęcie gotowe. Zapytaj Alę, co widzi.",null);
-                                }catch(Throwable ex){
-                                    cb.done(null,"Zdjęcie: "+ex.getClass().getSimpleName());
-                                }finally{
-                                    if(smaller!=null&&smaller!=src)smaller.recycle();
-                                    if(src!=null)src.recycle();
-                                }
-                            });
-                        });
-                    }catch(Throwable e){
-                        try{chosenCamera.release();}catch(Throwable ignored){}
-                        try{chosenSurface.release();}catch(Throwable ignored){}
-                        cb.done(null,"Błąd aparatu: "+e.getClass().getSimpleName());
-                    }
-                },450);
-            }catch(Throwable e){
-                if(camera!=null)try{camera.release();}catch(Throwable ignored){}
-                if(surface!=null)try{surface.release();}catch(Throwable ignored){}
-                cb.done(null,"Aparat niedostępny: "+e.getClass().getSimpleName());
+
+    public synchronized void preview(Result callback){
+        if (!enabled || closed) { callback.done(null,"Włącz analizę zdjęć w ustawieniach"); return; }
+        cancel();
+        int ticket=lease;
+        until=SystemClock.elapsedRealtime()+LEASE_MS;
+        capture(ticket,(image,error)->{
+            synchronized (Vision.this) {
+                if (!valid(ticket)) return;
+                if (error==null) staged=image;
+                else until=0;
+                callback.done(error==null ? "Zdjęcie gotowe" : null,error);
             }
         });
     }
-    private void upload(byte[] image,String question,String url,String token,Result cb){
+
+    synchronized void analyze(String question,String url,String token,Result callback){
+        if (!enabled || closed || until<=SystemClock.elapsedRealtime()) {
+            callback.done(null,"Brak zgody na zdjęcie. Dotknij aparatu lub zapytaj Alę, co widzi.");
+            return;
+        }
+        long expires=until;
+        until=0;
+        byte[] ready=staged;
+        staged=null;
+        HttpUrl endpoint=secureEndpoint(url);
+        if (endpoint==null) {
+            callback.done(null,"Xiaozhi nie udostępniło bezpiecznego adresu Vision.");
+            return;
+        }
+        int ticket=lease;
+        if (ready!=null) {
+            submitUpload(ticket,expires,ready,question,endpoint,token,callback);
+        } else {
+            capture(ticket,(image,error)->{
+                synchronized (Vision.this) {
+                    if (!valid(ticket)) return;
+                    if (error!=null) callback.done(null,error);
+                    else submitUpload(ticket,expires,image,question,endpoint,token,callback);
+                }
+            });
+        }
+    }
+
+    static HttpUrl secureEndpoint(String url){
+        if (url==null || url.length()>2048 || url.isEmpty()) return null;
+        for (int i=0;i<url.length();i++) if (url.charAt(i)<=32 || url.charAt(i)==127) return null;
+        if (url.equals("http://api.xiaozhi.me/vision/explain")
+            || url.equals("http://api.xiaozhi.me/vision/explain/")) url="https"+url.substring(4);
+        HttpUrl parsed=HttpUrl.parse(url);
+        return parsed!=null && parsed.isHttps() && parsed.username().isEmpty()
+            && parsed.password().isEmpty() && parsed.fragment()==null ? parsed : null;
+    }
+
+    static String description(String raw) throws IOException {
+        String body=raw.trim();
+        if (body.isEmpty()) throw new IOException("Pusta odpowiedź Vision.");
+        char first=body.charAt(0);
+        if (first!='{' && first!='[' && first!='"') {
+            if (first=='<') throw new IOException("Vision zwróciło stronę zamiast opisu.");
+            return body;
+        }
+        try {
+            JSONTokener input=new JSONTokener(body);
+            Object data=input.nextValue();
+            if (input.nextClean()!=0) throw new IOException("Niepoprawna odpowiedź Vision.");
+            if (data instanceof JSONObject) {
+                JSONObject envelope=(JSONObject)data;
+                Object error=envelope.opt("error");
+                if (Boolean.FALSE.equals(envelope.opt("success"))
+                    || (error!=null && error!=JSONObject.NULL && !Boolean.FALSE.equals(error)))
+                    throw new IOException("Usługa Vision odrzuciła zdjęcie.");
+            }
+            String text=findDescription(data,0);
+            if (text!=null) return text;
+        } catch (org.json.JSONException error) {
+            throw new IOException("Niepoprawna odpowiedź Vision.",error);
+        }
+        throw new IOException("Vision nie zwróciło opisu zdjęcia.");
+    }
+
+    private static String findDescription(Object data,int depth){
+        if (depth>=5) return null;
+        if (data instanceof String) {
+            String value=((String)data).trim();
+            return value.isEmpty()?null:value;
+        }
+        if (data instanceof JSONArray) {
+            JSONArray list=(JSONArray)data;
+            for (int i=0;i<list.length();i++) {
+                String value=findDescription(list.opt(i),depth+1);
+                if (value!=null) return value;
+            }
+        }
+        if (data instanceof JSONObject) {
+            JSONObject item=(JSONObject)data;
+            for (String key:new String[]{"description","text","answer","result","data","content"}) {
+                String value=findDescription(item.opt(key),depth+1);
+                if (value!=null) return value;
+            }
+        }
+        return null;
+    }
+
+    static boolean jpegHeader(byte[] bytes){
+        return bytes!=null && bytes.length>=4 && bytes.length<=4_000_000
+            && (bytes[0]&255)==255 && (bytes[1]&255)==216 && (bytes[2]&255)==255;
+    }
+
+    private synchronized boolean valid(int ticket){return !closed && enabled && lease==ticket;}
+
+    private void capture(int ticket,Photo callback){
+        if (activity.checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED) {
+            callback.done(null,"Brak uprawnienia do aparatu");
+            return;
+        }
+        if (cameraHandler==null) {
+            cameraThread=new HandlerThread("ala-camera");
+            cameraThread.start();
+            cameraHandler=new Handler(cameraThread.getLooper());
+        }
+        cameraHandler.post(()->openCamera(ticket,callback));
+    }
+
+    private void openCamera(int ticket,Photo callback){
+        if (!valid(ticket)) return;
+        if (camera!=null) releaseCamera(cameraLease);
+        cameraLease=ticket;
+        try {
+            if (Camera.getNumberOfCameras()==0) throw new IOException("Brak aparatu");
+            int id=0;
+            int preferred=activity.getPackageName().equals("pl.espen.garett")
+                ? Camera.CameraInfo.CAMERA_FACING_FRONT : Camera.CameraInfo.CAMERA_FACING_BACK;
+            Camera.CameraInfo info=new Camera.CameraInfo();
+            for (int i=0;i<Camera.getNumberOfCameras();i++) {
+                Camera.getCameraInfo(i,info);
+                if (info.facing==preferred) { id=i; break; }
+            }
+            camera=Camera.open(id);
+            if (camera==null) throw new IOException("Aparat zajęty");
+            Camera.Parameters params=camera.getParameters();
+            Camera.Size best=null;
+            for (Camera.Size size:params.getSupportedPictureSizes()) {
+                int pixels=size.width*size.height;
+                if (best==null || (pixels<=1280*960
+                    ? pixels>best.width*best.height || best.width*best.height>1280*960
+                    : pixels<best.width*best.height)) best=size;
+            }
+            if (best!=null) params.setPictureSize(best.width,best.height);
+            Camera.getCameraInfo(id,info);
+            params.setRotation(info.orientation);
+            params.setJpegQuality(75);
+            camera.setParameters(params);
+            surface=new SurfaceTexture(12);
+            camera.setPreviewTexture(surface);
+            camera.startPreview();
+            cameraHandler.postDelayed(()->takePhoto(ticket,callback),450);
+            cameraHandler.postDelayed(()->{
+                if (camera!=null && cameraLease==ticket) {
+                    releaseCamera(ticket);
+                    if (valid(ticket)) callback.done(null,"Aparat nie zwrócił zdjęcia");
+                }
+            },3500);
+        } catch (Exception error) {
+            releaseCamera(ticket);
+            if (valid(ticket)) callback.done(null,"Aparat jest niedostępny.");
+        }
+    }
+
+    private void takePhoto(int ticket,Photo callback){
+        if (camera==null || cameraLease!=ticket || !valid(ticket)) return;
+        try {
+            camera.takePicture(null,null,(bytes,source)->{
+                if (source!=camera) return;
+                releaseCamera(ticket);
+                synchronized (Vision.this) {
+                    if (valid(ticket)) network.execute(()->resize(ticket,bytes,callback));
+                }
+            });
+        } catch (RuntimeException error) {
+            releaseCamera(ticket);
+            if (valid(ticket)) callback.done(null,"Błąd wykonania zdjęcia");
+        }
+    }
+
+    private void releaseCamera(int ticket){
+        if (cameraLease!=ticket) return;
+        if (camera!=null) {
+            try { camera.release(); } catch (RuntimeException ignored) {}
+            camera=null;
+        }
+        if (surface!=null) { surface.release(); surface=null; }
+    }
+
+    private void resize(int ticket,byte[] bytes,Photo callback){
+        if (!valid(ticket)) return;
+        Bitmap source=null,small=null;
+        try {
+            if (!jpegHeader(bytes)) throw new IOException("Aparat zwrócił niepoprawny JPEG.");
+            BitmapFactory.Options options=new BitmapFactory.Options();
+            options.inJustDecodeBounds=true;
+            BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);
+            int maximum=Math.max(options.outWidth,options.outHeight);
+            if (maximum<=0) throw new IOException("Nieprawidłowy JPEG");
+            options.inJustDecodeBounds=false;
+            options.inSampleSize=1;
+            while (maximum/options.inSampleSize>640) options.inSampleSize*=2;
+            options.inPreferredConfig=Bitmap.Config.RGB_565;
+            source=BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);
+            if (source==null) throw new IOException("Nie można odczytać JPEG");
+            int width=source.getWidth(),height=source.getHeight();
+            float ratio=Math.min(1f,480f/Math.max(width,height));
+            small=ratio<1f ? Bitmap.createScaledBitmap(source,Math.max(1,Math.round(width*ratio)),
+                Math.max(1,Math.round(height*ratio)),true) : source;
+            ByteArrayOutputStream out=new ByteArrayOutputStream();
+            if (!small.compress(Bitmap.CompressFormat.JPEG,72,out)) throw new IOException("Kodowanie JPEG");
+            if (valid(ticket)) callback.done(out.toByteArray(),null);
+        } catch (Exception error) {
+            if (valid(ticket)) callback.done(null,error instanceof IOException ? error.getMessage()
+                : "Nie można przygotować zdjęcia.");
+        } finally {
+            if (small!=null && small!=source) small.recycle();
+            if (source!=null) source.recycle();
+        }
+    }
+
+    private void submitUpload(int ticket,long expires,byte[] image,String question,HttpUrl endpoint,String token,Result callback){
         network.execute(()->{
-            try{
-                RequestBody body=new MultipartBody.Builder().setType(MultipartBody.FORM)
-                    .addFormDataPart("question",question==null?"Co widzisz?":question.substring(0,Math.min(500,question.length())))
+            Call request=null;
+            try {
+                RequestBody form=new MultipartBody.Builder().setType(MultipartBody.FORM)
+                    .addFormDataPart("question",question==null ? "Co widzisz?" : question.substring(0,Math.min(500,question.length())))
                     .addFormDataPart("file","camera.jpg",RequestBody.create(MediaType.parse("image/jpeg"),image))
                     .build();
-                Request.Builder request=new Request.Builder().url(url).post(body)
-                    .header("Device-Id",XiaozhiClient.id(activity).deviceId)
-                    .header("Client-Id",XiaozhiClient.id(activity).clientId);
-                if(token!=null&&!token.isEmpty())request.header("Authorization","Bearer "+token);
-                try(Response response=http.newCall(request.build()).execute()){
-                    if(!response.isSuccessful())throw new IOException("HTTPS "+response.code());
-                    if(response.body()==null||response.body().contentLength()>8192)
-                        throw new IOException("Niepoprawna odpowiedź Vision");
-                    String description=response.body().string();
-                    if(description.length()>8192||description.isEmpty())
-                        throw new IOException("Pusta lub za długa odpowiedź");
-                    cb.done(description,null);
+                XiaozhiClient.Identity id=XiaozhiClient.id(activity);
+                Request.Builder builder=new Request.Builder().url(endpoint).post(form)
+                    .header("Device-Id",id.deviceId).header("Client-Id",id.clientId);
+                if (token!=null && !token.isEmpty())
+                    builder.header("Authorization",token.startsWith("Bearer ") ? token : "Bearer "+token);
+                synchronized (this) {
+                    if (!valid(ticket)) return;
+                    if (SystemClock.elapsedRealtime()>=expires) {
+                        callback.done(null,"Wygasła zgoda na zdjęcie");
+                        return;
+                    }
+                    upload=request=http.newCall(builder.build());
                 }
-            }catch(Exception e){cb.done(null,"Analiza niedostępna: "+e.getMessage());}
+                try (Response response=request.execute()) {
+                    if (!response.isSuccessful())
+                        throw new IOException("Vision odrzuciło zdjęcie (HTTP "+response.code()+").");
+                    if (response.body()==null) throw new IOException("Pusta odpowiedź Vision.");
+                    BufferedSource source=response.body().source();
+                    if (source.request(MAX_RESPONSE+1)) throw new IOException("Za długa odpowiedź Vision.");
+                    String description=description(source.readUtf8());
+                    if (valid(ticket)) callback.done(description,null);
+                }
+            } catch (java.net.SocketTimeoutException error) {
+                if (valid(ticket)) callback.done(null,"Usługa Vision nie odpowiedziała na czas.");
+            } catch (Exception error) {
+                String message=error instanceof IOException && error.getMessage()!=null
+                    && (error.getMessage().startsWith("Vision ") || error.getMessage().startsWith("Usługa Vision")
+                        || error.getMessage().contains("odpowiedź Vision")) ? error.getMessage()
+                    : "Nie udało się połączyć z usługą Vision.";
+                if (valid(ticket)) callback.done(null,message);
+            } finally {
+                synchronized (this) { if (upload==request) upload=null; }
+            }
         });
     }
-    public void shutdown(){cancel();network.shutdownNow();}
+
+    synchronized void shutdown(){
+        cancel();
+        closed=true;
+        network.shutdownNow();
+        if (cameraThread!=null) cameraThread.quitSafely();
+    }
 }
