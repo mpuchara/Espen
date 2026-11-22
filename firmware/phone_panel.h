@@ -26,6 +26,8 @@ class PhonePanel {
     std::mutex name_lock_;
     std::string robot_name_;
     std::atomic<uint32_t> name_revision_{1};
+    // One coherent HTTP->LVGL snapshot; the mutex never covers rendering.
+    std::mutex emotion_lock_;
     std::atomic<uint32_t> emotion_seq_{0};
     std::atomic<int> emotion_value_{-1};
     std::atomic<bool> emotion_sticky_{false};
@@ -140,6 +142,7 @@ class PhonePanel {
         if (!self.Authorized(req)) return Respond(req, 401, "Niepoprawny kod.");
         std::string body;
         if (!ReadBody(req, body, 32)) return Respond(req, 400, "Niepoprawne polecenie.");
+        std::lock_guard<std::mutex> command_lock(self.emotion_lock_);
         if (body == "reset") {
             self.emotion_value_.store(-1, std::memory_order_relaxed);
             self.emotion_speak_.store(false, std::memory_order_relaxed);
@@ -291,6 +294,7 @@ public:
         ESP_LOGI("AlaPhone", "Phone panel listening on port 80");
     }
     bool PollEmotion(uint32_t& seen, int& mood, bool& sticky, bool& speak) {
+        std::lock_guard<std::mutex> command_lock(emotion_lock_);
         const uint32_t seq = emotion_seq_.load(std::memory_order_acquire);
         if (seq == seen) return false;
         seen = seq;

@@ -240,6 +240,9 @@ class FaceEngine {
     uint32_t last_tick_=0,wake_anim_at_=0,celebrate_at_=0,local_wake_at_=0;
     bool celebrating_=false,local_waking_=false,force_sleep_=false;
     bool wake_anim_=false;
+    // Policy comes from AlaBehaviorEngine, not from another animation pipeline.
+    bool behavior_active_=false, behavior_phone_=false, behavior_hold_awake_=false;
+    Mood behavior_mood_=Mood::Neutral;
     Social social_=Social::None;
     ReplyBeat reply_=ReplyBeat::None;
     uint32_t reply_at_=0;
@@ -263,6 +266,15 @@ public:
     void SleepNow(uint32_t now) {force_sleep_=true;idle_since_=now-kSleepMs;}
     void SetPersona(Persona p) { persona_=p; }
     Persona GetPersona() const {return persona_;}
+    // Set only on the LVGL tick. The face still owns drawing, blinking,
+    // lip-sync, social FX and emotion intro/loop; policy only chooses a mood.
+    void ManagedMood(Mood mood, bool phone, bool hold_awake, uint32_t now) {
+        if(phone && !behavior_phone_) { force_sleep_=false; ResetIdle(now); }
+        behavior_active_=true;
+        behavior_mood_=mood;
+        behavior_phone_=phone;
+        behavior_hold_awake_=hold_awake;
+    }
     void Emotion(Mood m,uint32_t now) {
         // Idle/listening neutral messages from the protocol allow a short
         // emotional afterglow rather than instantly snapping back.
@@ -340,14 +352,14 @@ public:
         bool quiet=phase==Phase::Idle||phase==Phase::Offline||phase==Phase::Startup;
         bool dance=celebrating_&&quiet;
         uint32_t idle=quiet?now-idle_since_:0;
-        bool asleep=quiet && (force_sleep_||idle>=kSleepMs) && !touch_ && !gesture_active_ && social_==Social::None && !dance && !local_waking_;
-        if(loud && quiet && !touch_ && !gesture_active_ && social_==Social::None &&
+        bool asleep=quiet && !behavior_hold_awake_ && (force_sleep_||idle>=kSleepMs) && !touch_ && !gesture_active_ && social_==Social::None && !dance && !local_waking_;
+        if(loud && !behavior_active_ && quiet && !touch_ && !gesture_active_ && social_==Social::None &&
            !dance && !local_waking_ && (!last_startle_||now-last_startle_>=3500)) {
             last_startle_=now;gesture_=Mood::Surprise;gesture_active_=true;gesture_until_=now+1100;
             if(asleep){wake_anim_=true;wake_anim_at_=now;}
             asleep=false;force_sleep_=false;ResetIdle(now);
         }
-        if(phase==Phase::Idle && !gesture_active_ && !asleep && Due(now,next_micro_)) {
+        if(!behavior_active_ && phase==Phase::Idle && !gesture_active_ && !asleep && Due(now,next_micro_)) {
             if(idle>=120000) micro_=Mood::Sleepy;
             else if(persona_==Persona::Playful) micro_=Mood::Wink;
             else if(persona_==Persona::Shy) micro_=Mood::Shy;
@@ -391,7 +403,7 @@ public:
             (cloud_==Mood::Neutral||cloud_==Mood::Happy||cloud_==Mood::Thinking);
         // Respect a specific cloud-selected emotion. Local sentence semantics
         // add variety primarily when Xiaozhi returns neutral/generic happiness.
-        if(reply_active) {
+        if(reply_active && !behavior_phone_) {
             switch(reply_) {
                 case ReplyBeat::Celebrate: mood=Mood::Excited;break;
                 case ReplyBeat::Giggle: mood=Mood::Laugh;break;
@@ -416,6 +428,7 @@ public:
                 default:break;
             }
         }
+        if(behavior_active_) mood=behavior_mood_;
         if(asleep) mood=Mood::Sleepy;
         if(mood!=animated_mood_){animated_mood_=mood;animated_since_=now;}
         Pose p=Expression(mood);
@@ -423,18 +436,18 @@ public:
         AnimateEmotionLoop(mood,now-animated_since_,p);
         // A goodnight wish is a friendly sleepy face, not a command to
         // interrupt ongoing speech or listening.
-        if(social_==Social::Goodnight && phase==Phase::Speaking) {
+        if(!behavior_phone_ && social_==Social::Goodnight && phase==Phase::Speaking) {
             p.eye_h=20;p.accent=Accent::None;
         }
-        if(social_==Social::Comfort) {
+        if(!behavior_phone_ && social_==Social::Comfort) {
             if(now-social_at_<650) {p=Expression(Mood::Sad);p.accent=Accent::None;p.color=0x83ACFF;}
             else {p.eye_h=39;p.smile=19;p.color=0xFFB8D4;}
         }
-        if(social_==Social::Annoyed) {
+        if(!behavior_phone_ && social_==Social::Annoyed) {
             p.tilt=18;p.brow=23;
             if(now-social_at_>1600){p.eye_h=32;p.tilt=9;}
         }
-        if(reply_active) {
+        if(reply_active && !behavior_phone_) {
             // Distinct short micro-animations. Keep PCM-controlled lips untouched.
             const uint32_t age=now-reply_at_;
             switch(reply_) {
@@ -499,9 +512,9 @@ public:
         if(mood==Mood::Thinking) {gx=17;gy=-12;}
         if(mood==Mood::Shy) {gx=-20;gy=7;}
         if(mood==Mood::Confused) {gx=12;gy=-4;}
-        if(social_==Social::Comfort){gx=0;gy=4;}
-        if(social_==Social::Annoyed&&now-social_at_>650)gx=-16;
-        if(reply_active) {
+        if(!behavior_phone_ && social_==Social::Comfort){gx=0;gy=4;}
+        if(!behavior_phone_ && social_==Social::Annoyed&&now-social_at_>650)gx=-16;
+        if(reply_active && !behavior_phone_) {
             switch(reply_) {
                 case ReplyBeat::Celebrate:gx=(now/110)%2?15:-15;gy=-8;break;
                 case ReplyBeat::Giggle:gx=(now/95)%2?9:-9;break;
@@ -526,7 +539,7 @@ public:
                 default:break;
             }
         }
-        if(dance||social_==Social::Celebration) {
+        if(!behavior_phone_ && (dance||social_==Social::Celebration)) {
             uint32_t t=now-(social_==Social::Celebration?social_at_:celebrate_at_);
             int swing=static_cast<int>((t/35)%32);
             gx=(swing<16?swing:32-swing)*2-16;
@@ -565,7 +578,7 @@ public:
         f.eye_right=Approach(f.eye_right,std::max(4,(p.eye_h-p.asym)*blink/100),speed*7);
         f.gaze_x=Approach(f.gaze_x,gx,speed);f.gaze_y=Approach(f.gaze_y,gy,speed);
         int bob=0;
-        if(dance||social_==Social::Celebration) {
+        if(!behavior_phone_ && (dance||social_==Social::Celebration)) {
             int step=static_cast<int>(((now-(social_==Social::Celebration?social_at_:celebrate_at_))/40)%24);
             bob=(step<12?step:24-step)*2-12;
         } else if(mood==Mood::Laugh || mood==Mood::Excited) bob=static_cast<int>((now/45)%12)-6;
@@ -600,12 +613,14 @@ public:
             }
         }
         f.bob=Approach(f.bob,bob,std::max(1,speed));f.mood=mood;f.asleep=asleep;
-        const bool reply_hearts=reply_active&&reply_==ReplyBeat::Warmth;
-        f.hearts=mood==Mood::Love||social_==Social::Affection||
-            (social_==Social::Comfort&&now-social_at_>=650)||reply_hearts;
+        const bool reply_hearts=!behavior_phone_ && reply_active&&reply_==ReplyBeat::Warmth;
+        f.hearts=mood==Mood::Love||(!behavior_phone_ &&
+            (social_==Social::Affection||
+            (social_==Social::Comfort&&now-social_at_>=650)||reply_hearts));
         f.heart_age=f.hearts?(reply_hearts?now-reply_at_:
             mood==Mood::Love?now-animated_since_:now-social_at_)%1950:0;
-        f.effect=affinity_.Effect(now);f.effect_age=affinity_.Age(now);
+        f.effect=behavior_phone_?PetEffect::None:affinity_.Effect(now);
+        f.effect_age=affinity_.Age(now);
         f.tear=FallingTear(mood,now-animated_since_,p.accent==Accent::Tear&&!asleep);
         return f;
     }
