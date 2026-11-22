@@ -1,0 +1,72 @@
+name: Ala Robot — Android phone and Garett Essa
+on:
+  push:
+    paths:
+      - 'android/ala-robot/**'
+      - '.github/workflows/build-ala-native.yml'
+  pull_request:
+    paths:
+      - 'android/ala-robot/**'
+      - '.github/workflows/build-ala-native.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build-apks:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android/ala-robot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+      - name: Install Android SDK
+        run: |
+          sdkmanager_bin="$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | head -n 1)"
+          test -n "$sdkmanager_bin"
+          "$sdkmanager_bin" --install "platforms;android-35" "build-tools;35.0.0"
+      - name: Watch JVM tests and both APKs
+        run: gradle --no-daemon --stacktrace :watch:testDebugUnitTest :watch:assembleDebug :phone:assembleDebug
+      - name: Check APK signatures
+        run: |
+          apksigner_bin="$(find "$ANDROID_HOME/build-tools/35.0.0" -name apksigner -type f | head -n 1)"
+          "$apksigner_bin" verify --verbose watch/build/outputs/apk/debug/watch-debug.apk | tee /tmp/watch-apk-signature.txt
+          grep -q 'Verified using v1 scheme (JAR signing): true' /tmp/watch-apk-signature.txt
+          "$apksigner_bin" verify --verbose phone/build/outputs/apk/debug/phone-debug.apk
+      - name: Upload watch APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ala-Garett-Essa-Android81-APK
+          path: android/ala-robot/watch/build/outputs/apk/debug/watch-debug.apk
+          if-no-files-found: error
+      - name: Upload phone APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ala-Robot-Android-Phone-APK
+          path: android/ala-robot/phone/build/outputs/apk/debug/phone-debug.apk
+          if-no-files-found: error
+      - name: Prepare stable APK filenames
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          cp watch/build/outputs/apk/debug/watch-debug.apk Ala-Garett-Essa-Android81.apk
+          cp phone/build/outputs/apk/debug/phone-debug.apk Ala-Robot-Android.apk
+      - name: Publish two beta APKs
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=ala-robot-native-v0.3.0-beta1
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" Ala-Garett-Essa-Android81.apk Ala-Robot-Android.apk --clobber
+          else
+            gh release create "$tag" Ala-Garett-Essa-Android81.apk Ala-Robot-Android.apk \
+              --target "$GITHUB_SHA" --prerelease \
+              --title "Ala Robot Native 0.3.0 beta: Android + Garett Essa" \
+              --notes "Dwa niezależne APK robota Ala, bazujące na interfejsie 0.2.28 ESP32-P4. Wydanie BETA, podpisane kluczem debug; bez potwierdzonych testów na fizycznym zegarku. Każde urządzenie należy aktywować osobno w tym samym agencie Xiaozhi. Port nie zawiera jeszcze wszystkich lokalnych funkcji firmware ESP32-P4."
+          fi
