@@ -1,4 +1,4 @@
-name: Publish isolated Ala 0.2.26 preview
+name: Publish isolated Ala 0.2.27 preview
 on:
   push:
     branches: [codex/ala-stage15-pages]
@@ -17,14 +17,14 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: github-pages
-          run-id: 44948543655
+          run-id: 44962036042
           repository: mpuchara/Espen
           github-token: ${{ github.token }}
           path: previous
       - uses: actions/download-artifact@v4
         with:
           name: ala-stage15-full-installer
-          run-id: 44961325874
+          run-id: 45008832733
           repository: mpuchara/Espen
           github-token: ${{ github.token }}
           path: candidate
@@ -34,25 +34,25 @@ jobs:
           set -euo pipefail
           mkdir dist
           tar -xf previous/artifact.tar -C dist
-          test ! -e dist/stage15/0.2.26
+          test ! -e dist/stage15/0.2.27
           for path in index.html espen.bin.sha256 manifest-full.json \
             ala-stage{9,10}/{index.html,manifest.json} \
-            stage{11..14}/{index.html,espen.bin.sha256,manifest-full.json} stage15/{index.html,espen.bin.sha256,manifest.json} stage15/{0.2.23,0.2.24,0.2.25}/{index.html,espen.bin.sha256,manifest.json}; do
+            stage{11..14}/{index.html,espen.bin.sha256,manifest-full.json} stage15/{index.html,espen.bin.sha256,manifest.json} stage15/{0.2.23,0.2.24,0.2.25,0.2.26}/{index.html,espen.bin.sha256,manifest.json}; do
             curl --fail --silent --show-error "https://mpuchara.github.io/Espen/$path" -o live-check
             cmp "dist/$path" live-check
           done
           (cd dist && find . -type f -print0 | sort -z | xargs -0 sha256sum) > baseline.sha256
-          cp -a candidate dist/stage15/0.2.26
+          cp -a candidate dist/stage15/0.2.27
           (cd dist && sha256sum --quiet --check ../baseline.sha256)
-          (cd dist/stage15/0.2.26 && sha256sum --check espen.bin.sha256)
+          (cd dist/stage15/0.2.27 && sha256sum --check espen.bin.sha256)
           python3 - <<'PY'
           from pathlib import Path
-          p=Path("dist/stage15/0.2.26/index.html")
+          p=Path("dist/stage15/0.2.27/index.html")
           html=p.read_text(encoding="utf-8")
-          anchor="<h1>Ala 0.2.26</h1>"
+          anchor="<h1>Ala 0.2.27</h1>"
           assert html.count(anchor)==1
-          status=("<p>Magiczna Opowieść zachowuje scenę i indywidualne pomysły dziecka. "
-                  "Twarz pokazuje, gdy Ala przygotowuje fragment lub analizuje zdjęcie. Wersja do testów na robocie.</p>")
+          status=("<p>Bufor audio dla kontynuacji Magicznej Opowieści oraz większe ikony na dolnym pasku. "
+                  "Wersja do testów na robocie.</p>")
           p.write_text(html.replace(anchor,anchor+status,1),encoding="utf-8")
           PY
       - uses: actions/configure-pages@v5
@@ -64,7 +64,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: ala-stage15-preview
-      url: ${{ steps.deploy.outputs.page_url }}stage15/0.2.26/
+      url: ${{ steps.deploy.outputs.page_url }}stage15/0.2.27/
     steps:
       - name: Wait for the uploaded Pages artifact to be listed
         env:
