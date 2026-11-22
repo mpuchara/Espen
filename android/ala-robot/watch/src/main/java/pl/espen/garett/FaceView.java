@@ -18,13 +18,18 @@ import java.util.Random;
 /** Watch-friendly vector face: inspired by Espen's expressive face engine, not LVGL code. */
 public final class FaceView extends View {
     public enum State { IDLE, CONNECTING, LISTENING, THINKING, SPEAKING, ERROR }
-    public interface Actions { void onMicrophone(); void onCamera(); void onSettings(); }
+    public interface Actions {
+        void onMicrophone(); void onCamera(); void onGames(); void onChoice(int index); void onSettings();
+    }
     private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Random rng = new Random();
     private Actions actions;
     private State state = State.IDLE;
     private String emotion = "neutral", subtitle = "", status = "Dotknij mikrofonu";
     private String activationCode = "";
+    private String choiceTitle = "";
+    private String[] choices = null;
+    private int highlightedChoice = -1;
     private int micLevel = 0, speakerLevel = 0;
     private long moodUntil = 0, nextBlink = 0, blinkUntil = 0, nextLook = 0;
     private long heartUntil = 0, downAt = 0, lastTap = 0;
@@ -44,6 +49,13 @@ public final class FaceView extends View {
         invalidate();
     }
     public void setActivationCode(String c) { activationCode = c == null ? "" : c; invalidate(); }
+    public void setChoices(String title, String[] buttons) {
+        choiceTitle=title==null?"":title;
+        choices=buttons==null?null:buttons.clone();
+        highlightedChoice=-1;
+        invalidate();
+    }
+    public void setHighlightedChoice(int index) { highlightedChoice=index; invalidate(); }
     public void setEmotion(String s) {
         emotion = s == null ? "neutral" : s.toLowerCase(Locale.ROOT);
         moodUntil = SystemClock.uptimeMillis() + 3700;
@@ -149,7 +161,22 @@ public final class FaceView extends View {
                 round(c,276+i*13,173-hh/2f,6,hh,3,a);
             }
         }
-        if(activationCode.length()>0){
+        // Menus occupy the lower face area; eyes stay visible during gameplay.
+        // Narrative text-to-speech clears the menu so the complete face can animate.
+        if(choices!=null && choices.length>0){
+            round(c,13,210,334,111,13,0xff102736);
+            text(c,choiceTitle,180,231,14,0xffddfaff,true);
+            for(int i=0;i<Math.min(3,choices.length);i++){
+                boolean active=(highlightedChoice==i);
+                float glow=active?(float)(0.72+0.28*Math.sin(now/165.0)):0f;
+                round(c,22,237+i*27,316,25,9,active?0xff377d84:0xff244452);
+                color(active?0xffe4ffff:0xffc6e4ed);
+                p.setAlpha(active?(int)(200+55*glow):255);
+                String label=choices[i]==null?"":choices[i];
+                if(label.length()>32)label=label.substring(0,31)+"…";
+                text(c,label,180,255+i*27,13,active?0xffefffff:0xffc6e4ed,false);
+            }
+        }else if(activationCode.length()>0){
             round(c,18,278,324,51,13,0xff173041);
             text(c,"KOD XIAOZHI: "+activationCode,180,310,19,0xffd8efff,true);
         } else {
@@ -157,17 +184,30 @@ public final class FaceView extends View {
             if(visible.length()>40) visible=visible.substring(0,39)+"…";
             text(c,visible,180,302,13,0xffbed3dd,false);
         }
-        // Bottom touch targets: settings, mic, camera; icons remain visible on tiny screens.
-        round(c,26,327,65,52,18,0xff172a38);
-        text(c,"⚙",58,362,30,0xffc1e7fb,false);
-        int micColor=(state==State.LISTENING||state==State.CONNECTING)?0xff58e9ce:0xff233f4f;
-        round(c,121,321,118,62,25,micColor);
-        color(state==State.LISTENING||state==State.CONNECTING?0xff00353a:0xffb5efff);
-        c.drawRoundRect(new RectF(172,335,188,357),8,8,p);
-        line(c,164,350,164,361,p.getColor(),3);line(c,196,350,196,361,p.getColor(),3);line(c,164,361,196,361,p.getColor(),3);line(c,180,361,180,368,p.getColor(),3);
-        round(c,267,327,67,52,18,0xff172a38);
+        // Three main actions from ESP32-P4 0.2.28: Games, Camera, Microphone.
+        round(c,17,326,101,57,18,0xff173043);
+        round(c,130,326,100,57,18,0xff173043);
+        int micColor=(state==State.LISTENING||state==State.CONNECTING)?0xff58e9ce:0xff173043;
+        round(c,242,326,101,57,18,micColor);
+        // Gamepad, without relying on installed emoji fonts.
+        round(c,44,341,49,25,11,0xff8be6f3);
+        line(c,54,353,67,353,0xff153743,3);line(c,60,347,60,359,0xff153743,3);
+        color(0xff153743);c.drawCircle(78,349,3,p);c.drawCircle(83,357,3,p);
+        // Camera glyph.
         color(0xffb5efff);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(3);
-        c.drawRoundRect(new RectF(283,342,318,364),4,4,p);c.drawCircle(301,353,7,p);
+        c.drawRoundRect(new RectF(153,343,207,366),5,5,p);
+        c.drawCircle(180,354,8,p);
+        line(c,161,341,175,341,0xffb5efff,3);
+        // Microphone glyph and optional active state.
+        color(state==State.LISTENING||state==State.CONNECTING?0xff00353a:0xffb5efff);
+        int micInk=p.getColor();
+        c.drawRoundRect(new RectF(285,339,299,359),7,7,p);
+        line(c,278,352,278,362,micInk,3);
+        line(c,306,352,306,362,micInk,3);
+        line(c,278,362,306,362,micInk,3);
+        line(c,292,362,292,371,micInk,3);
+        // Settings remain accessible by long press and top-right gear.
+        text(c,"⚙",325,36,20,0xff8ba7b8,false);
         text(c,"",180,393,8,0xff718b9c,false);
         real.restore();
         if(getWindowVisibility()==VISIBLE && isAttachedToWindow()) postInvalidateDelayed(state==State.IDLE?180:90);
@@ -192,8 +232,13 @@ public final class FaceView extends View {
             case MotionEvent.ACTION_UP:
                 touching=false;isActive=false;
                 if(now-downAt>=1500 && movement<20){if(actions!=null)actions.onSettings();return true;}
-                if(y>314&&movement<35){
-                    if(actions!=null){if(x<105)actions.onSettings();else if(x>251)actions.onCamera();else actions.onMicrophone();}
+                if(y>322&&movement<35){
+                    if(actions!=null){if(x<123)actions.onGames();else if(x<237)actions.onCamera();else actions.onMicrophone();}
+                }else if(x>293&&y<63&&movement<25){
+                    if(actions!=null)actions.onSettings();
+                }else if(choices!=null&&y>=236&&y<320&&movement<35){
+                    int selected=(int)((y-237)/27f);
+                    if(selected>=0&&selected<choices.length&&actions!=null)actions.onChoice(selected);
                 }else if(movement<25){
                     if(now-lastTap<420){emotion="surprised";moodUntil=now+1600;}
                     else{emotion="winking";moodUntil=now+950;}
