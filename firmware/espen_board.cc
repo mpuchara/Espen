@@ -550,6 +550,7 @@ struct MagicStoryWire {
     bool capturing=false, voice_armed=false, interrupted=false;
     bool finished=false, failed=false;
     std::atomic<bool> context_pending{false};
+    std::atomic<bool> contextual_audio{false};
     std::string speech, choice, context;
 } magic_wire;
 }
@@ -575,6 +576,7 @@ void EspenMagicStoryResetWire() {
     magic_wire.choice.clear();
     magic_wire.context.clear();
     magic_wire.context_pending.store(false);
+    magic_wire.contextual_audio.store(false);
 }
 void EspenMagicStoryInvalidate() {
     magic_wire.suppress_stale.store(true);
@@ -598,11 +600,15 @@ void EspenMagicStoryBeginOutput(const std::string& context) {
     std::lock_guard<std::mutex> lock(magic_wire.mutex);
     magic_wire.context=context;
     magic_wire.context_pending.store(!context.empty());
+    magic_wire.contextual_audio.store(!context.empty());
     magic_wire.capturing=true;
     magic_wire.response_allowed.store(true);
     magic_wire.text_turn.store(true);
 }
 bool EspenMagicStoryContextPending() { return magic_wire.context_pending.load(); }
+bool EspenMagicStoryBufferedOutput() {
+    return magic_wire.active.load() && magic_wire.contextual_audio.load();
+}
 std::string EspenMagicStoryReadContext() {
     std::lock_guard<std::mutex> lock(magic_wire.mutex);
     if (!magic_wire.active.load() || !magic_wire.capturing ||
@@ -798,7 +804,7 @@ class EspenDisplay : public LcdDisplay {
     bool story_intro_pending_=false;
     int story_pulse_=-1;
     bool story_voice_ready_=false;
-    lv_obj_t* dock_mic_label_=nullptr;
+    lv_obj_t* dock_mic_button_=nullptr;
     lv_obj_t* game_panel_=nullptr;
     bool magic_face_layout_ = false; // transparent story HUD, never covers the animated face
     lv_obj_t* game_title_ = nullptr;
@@ -1063,12 +1069,95 @@ class EspenDisplay : public LcdDisplay {
         lv_obj_set_size(button, width, 50);
         lv_obj_set_style_radius(button, 12, 0);
         lv_obj_set_style_bg_color(button, lv_color_hex(0x176C92), 0);
-        auto* text = lv_label_create(button);
-        lv_label_set_text(text, label);
-        lv_obj_set_style_text_color(text, lv_color_white(), 0);
-        lv_obj_center(text);
+        if(label) {
+            auto* text = lv_label_create(button);
+            lv_label_set_text(text, label);
+            lv_obj_set_style_text_color(text, lv_color_white(), 0);
+            lv_obj_center(text);
+        }
         lv_obj_add_event_cb(button, cb, LV_EVENT_CLICKED, data);
         return button;
+    }
+
+    enum class DockIcon { Play, Camera, Mic };
+
+    static void DrawDockIcon(lv_event_t* event, DockIcon icon) {
+        auto* layer=lv_event_get_layer(event);
+        lv_area_t bounds;
+        lv_obj_get_coords(lv_event_get_target_obj(event),&bounds);
+        const int x=(bounds.x1+bounds.x2)/2;
+        const int y=(bounds.y1+bounds.y2)/2;
+        const auto white=lv_color_white();
+
+        const auto rect=[&](int left,int top,int right,int bottom,int radius,int border) {
+            lv_draw_rect_dsc_t shape;
+            lv_draw_rect_dsc_init(&shape);
+            shape.radius=radius;
+            shape.bg_color=white;
+            shape.bg_opa=border?LV_OPA_TRANSP:LV_OPA_COVER;
+            shape.border_color=white;
+            shape.border_width=border;
+            shape.border_opa=LV_OPA_COVER;
+            const lv_area_t area{x+left,y+top,x+right,y+bottom};
+            lv_draw_rect(layer,&shape,&area);
+        };
+        const auto line=[&](int x1,int y1,int x2,int y2,int width,lv_color_t color) {
+            lv_draw_line_dsc_t shape;
+            lv_draw_line_dsc_init(&shape);
+            shape.p1={x+x1,y+y1};
+            shape.p2={x+x2,y+y2};
+            shape.width=width;
+            shape.color=color;
+            shape.round_start=shape.round_end=1;
+            lv_draw_line(layer,&shape);
+        };
+        const auto arc=[&](int dy,int radius,int from,int to,int width) {
+            lv_draw_arc_dsc_t shape;
+            lv_draw_arc_dsc_init(&shape);
+            shape.center={x,y+dy};
+            shape.radius=radius;
+            shape.start_angle=from;
+            shape.end_angle=to;
+            shape.width=width;
+            shape.color=white;
+            shape.rounded=1;
+            lv_draw_arc(layer,&shape);
+        };
+
+        if(icon==DockIcon::Play) {
+            lv_draw_triangle_dsc_t arrow;
+            lv_draw_triangle_dsc_init(&arrow);
+            arrow.p[0]={x-12,y-16};
+            arrow.p[1]={x-12,y+16};
+            arrow.p[2]={x+16,y};
+            arrow.color=white;
+            lv_draw_triangle(layer,&arrow);
+            return;
+        }
+        if(icon==DockIcon::Camera) {
+            rect(-20,-10,20,15,5,3);
+            rect(-9,-15,6,-9,2,0);
+            rect(-8,-6,8,10,LV_RADIUS_CIRCLE,3);
+            rect(12,-5,15,-2,LV_RADIUS_CIRCLE,0);
+            return;
+        }
+
+        rect(-6,-17,6,4,LV_RADIUS_CIRCLE,0);
+        arc(-2,11,0,180,3);
+        line(0,9,0,16,3,white);
+        line(-6,17,6,17,3,white);
+        using Mode=Application::EspenMicMode;
+        const auto mode=Application::GetInstance().EspenGetMicMode();
+        if(mode==Mode::Off) {
+            auto* button=lv_event_get_target_obj(event);
+            line(-16,-16,16,16,7,lv_obj_get_style_bg_color(button,LV_PART_MAIN));
+            line(-16,-16,16,16,3,white);
+            return;
+        }
+        for(int radius:{18,24}) {
+            arc(-5,radius,336,384,2);
+            if(mode==Mode::Conversation)arc(-5,radius,156,204,2);
+        }
     }
 
     // Fixed bottom dock: independent of chat scrolling and face animations.
@@ -1098,7 +1187,7 @@ class EspenDisplay : public LcdDisplay {
         lv_label_set_long_mode(dock_vision_label_,LV_LABEL_LONG_WRAP);
         lv_obj_align(dock_vision_label_,LV_ALIGN_BOTTOM_MID,0,-86);
         Hide(dock_vision_label_,true);
-        auto* play=MakeButton(bottom_dock_,LV_SYMBOL_PLAY "  Gry",[](lv_event_t* e){
+        auto* play=MakeButton(bottom_dock_,nullptr,[](lv_event_t* e){
             auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
             ++self->button_vision_epoch_;
             {
@@ -1114,7 +1203,7 @@ class EspenDisplay : public LcdDisplay {
             if(self->camera_panel_){self->StopCameraPreview();self->Hide(self->camera_panel_,true);}
             self->OpenPlayGames();
         },this,142);
-        auto* camera=MakeButton(bottom_dock_,LV_SYMBOL_IMAGE "  Aparat",[](lv_event_t* e){
+        auto* camera=MakeButton(bottom_dock_,nullptr,[](lv_event_t* e){
             auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
             self->CancelMagicStory();
             if(self->game_panel_)self->Hide(self->game_panel_,true);
@@ -1126,7 +1215,7 @@ class EspenDisplay : public LcdDisplay {
             }
             self->StartTapVision(true);
         },this,142);
-        auto* mic=MakeButton(bottom_dock_,LV_SYMBOL_AUDIO "  Mikrofon",[](lv_event_t* e){
+        auto* mic=MakeButton(bottom_dock_,nullptr,[](lv_event_t* e){
             auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
             self->CloseMagicStory();
             ++self->button_vision_epoch_;
@@ -1152,8 +1241,10 @@ class EspenDisplay : public LcdDisplay {
             self->auto_speech_=mode==Mode::Conversation;
             self->RefreshDockMic();
         },this,142);
-        dock_mic_label_=lv_obj_get_child(mic,0);
-        RefreshDockMic();
+        dock_mic_button_=mic;
+        lv_obj_add_event_cb(play,[](lv_event_t* e){DrawDockIcon(e,DockIcon::Play);},LV_EVENT_DRAW_MAIN,nullptr);
+        lv_obj_add_event_cb(camera,[](lv_event_t* e){DrawDockIcon(e,DockIcon::Camera);},LV_EVENT_DRAW_MAIN,nullptr);
+        lv_obj_add_event_cb(mic,[](lv_event_t* e){DrawDockIcon(e,DockIcon::Mic);},LV_EVENT_DRAW_MAIN,nullptr);
         for(auto* button:{play,camera,mic}) {
             lv_obj_set_height(button,55);
             lv_obj_set_style_radius(button,LV_RADIUS_CIRCLE,0);
@@ -1163,7 +1254,6 @@ class EspenDisplay : public LcdDisplay {
             lv_obj_set_style_shadow_width(button,8,0);
             lv_obj_set_style_shadow_opa(button,LV_OPA_30,0);
             lv_obj_set_style_bg_color(button,lv_color_hex(0x224D70),0);
-            lv_obj_set_style_text_font(lv_obj_get_child(button,0),LV_FONT_DEFAULT,0);
         }
         lv_obj_set_style_bg_color(play,lv_color_hex(0x246F86),0);
         lv_obj_set_style_bg_color(mic,lv_color_hex(0x405A95),0);
@@ -1171,12 +1261,7 @@ class EspenDisplay : public LcdDisplay {
         lv_obj_set_style_pad_bottom(content_,88,0);
     }
     void RefreshDockMic() {
-        if(!dock_mic_label_)return;
-        static constexpr const char* labels[]={
-            LV_SYMBOL_AUDIO " Rozmowa", LV_SYMBOL_BELL " Hasło", LV_SYMBOL_MUTE " Wyłączony"
-        };
-        const auto mode=static_cast<size_t>(Application::GetInstance().EspenGetMicMode());
-        lv_label_set_text(dock_mic_label_,labels[mode]);
+        if(dock_mic_button_)lv_obj_invalidate(dock_mic_button_);
     }
 
     void PulseStoryTheme(int index, uint32_t now) {
@@ -3653,7 +3738,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.2.26 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.2.27 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();

@@ -19,4 +19,8 @@ assert "EspenMagicStoryBargeIn();" in bridge
 assert "magic_story_.CompleteTurn(event.speech)" in board
 assert "!EspenMagicStoryActive() && protocol_ && protocol_->IsAudioChannelOpened()" in bridge
 assert "magic_story_.Pause();" in board
+assert "audio_service_.SetEspenStoryBuffer(story_buffer)" in bridge
+assert "espen_story_buffer_ ? kEspenStoryDecodeCapacity : MAX_DECODE_PACKETS_IN_QUEUE" in bridge
+assert "espen_story_primed_ || espen_tts_finished_" in bridge
+assert "if (story_buffer && GetDeviceState()==kDeviceStateSpeaking) return;" in bridge
 print("Story playback and microphone routing contracts OK")

@@ -13,8 +13,8 @@ assert '#include <esp_' not in f and 'McpServer' not in f and 'HomeAssistant' no
 assert 'AlaPlayGames' in f and 'PlayMode::Story' in f
 assert 'StorySetting::Lake' in f and 'StorySetting::Car' in f
 assert 'Nad jeziorem' in f and 'Z mamą w samochodzie' in f
-assert 'BuildBottomDock()' in b and 'LV_SYMBOL_PLAY' in b
-assert 'LV_SYMBOL_IMAGE' in b and 'LV_SYMBOL_AUDIO' in b
+assert 'BuildBottomDock()' in b and 'DrawDockIcon(e,DockIcon::Play)' in b
+assert 'DrawDockIcon(e,DockIcon::Camera)' in b and 'DrawDockIcon(e,DockIcon::Mic)' in b
 assert 'lv_obj_set_style_pad_bottom(content_,88,0)' in b
 assert 'game_repeat_' in b and 'OpenStoryThemes()' in b and 'PumpMagicStory()' in b
 phone=(root/"scripts/prepare_phone.py").read_text()

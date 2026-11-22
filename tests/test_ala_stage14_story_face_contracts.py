@@ -8,8 +8,8 @@ board=(root/"firmware/espen_board.cc").read_text(encoding="utf-8")
 engine=(root/"firmware/ala_magic_story.h").read_text(encoding="utf-8")
 build=(root/"scripts/build.sh").read_text(encoding="utf-8")
 manifest=(root/"web/manifest-full.json").read_text(encoding="utf-8")
-assert '"version": "0.2.26"' in manifest
-assert '"Espen 0.2.26 boot:' in board
+assert '"version": "0.2.27"' in manifest
+assert '"Espen 0.2.27 boot:' in board
 assert "tests/test_ala_stage14_story_face_contracts.py" in build
 
 # Regression cause: the opaque, fullscreen LVGL game panel hid the face AND
@@ -50,5 +50,5 @@ assert "games_.Start(mode," in board
 assert "magic_story_.ChooseSuggestion()" in board
 assert "magic_story_.CompleteTurn(event.speech)" in board
 assert "Pomysł dziecka:" in engine
-assert "LV_SYMBOL_IMAGE" in board and "LV_SYMBOL_AUDIO" in board
+assert "DockIcon::Camera" in board and "DockIcon::Mic" in board
 print("Ala Stage 14: visible animated face + transparent Magic Story HUD contracts OK")

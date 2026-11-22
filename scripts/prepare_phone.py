@@ -398,6 +398,7 @@ if 'EspenVisualSentence(text->valuestring);' in app.read_text(encoding="utf-8"):
 extern bool EspenMagicStoryTextTurn();
 extern bool EspenMagicStorySuppressStale();
 extern bool EspenMagicStoryContextPending();
+extern bool EspenMagicStoryBufferedOutput();
 extern void EspenMagicStoryBargeIn();
 extern void EspenMagicStoryChannelClosed();
 extern void EspenRevokeButtonCamera();
@@ -460,7 +461,10 @@ extern bool EspenButtonCameraPreparing();
     # callback sees Speaking before the asynchronous state-changed handler.
     replace(app, '                    aborted_ = false;\n                    SetDeviceState(kDeviceStateSpeaking);',
         '                    if (EspenMagicStorySuppressStale()) return;\n'
+        '                    const bool story_buffer=EspenMagicStoryBufferedOutput();\n'
+        '                    if (story_buffer && GetDeviceState()==kDeviceStateSpeaking) return;\n'
         '                    audio_service_.ResetDecoder();\n'
+        '                    audio_service_.SetEspenStoryBuffer(story_buffer);\n'
         '                    aborted_ = false;\n'
         '                    SetDeviceState(kDeviceStateSpeaking);')
     replace(app,
@@ -489,6 +493,79 @@ extern bool EspenButtonCameraPreparing();
         '        EspenRevokeButtonCamera();\n'
         '        espen_xiaozhi_channel_open_.store(false, std::memory_order_release);')
     audio = up / "main/audio/audio_service.cc"
+    audio_header = audio.with_suffix(".h")
+    replace(audio_header, '    void SetEspenTtsFinished(bool finished);',
+        '    void SetEspenTtsFinished(bool finished);\n'
+        '    void SetEspenStoryBuffer(bool enabled);')
+    replace(audio_header, '        AUDIO_TESTING_MAX_DURATION_MS / OPUS_FRAME_DURATION_MS;',
+        '        AUDIO_TESTING_MAX_DURATION_MS / OPUS_FRAME_DURATION_MS;\n'
+        '    // Narration can arrive in bursts even on an ordered transport.\n'
+        '    static constexpr size_t kEspenStoryDecodeCapacity = 96;\n'
+        '    static constexpr size_t kEspenStoryPreroll = 6;\n'
+        '    static constexpr size_t kDecodeCapacity =\n'
+        '        kEspenStoryDecodeCapacity > kAudioTestingPacketCapacity\n'
+        '            ? kEspenStoryDecodeCapacity : kAudioTestingPacketCapacity;\n'
+        '    bool espen_story_buffer_ = false;\n'
+        '    bool espen_story_primed_ = false;\n'
+        '    unsigned espen_story_overflow_ = 0;')
+    replace(audio_header, '    FixedQueue<std::unique_ptr<AudioStreamPacket>, kAudioTestingPacketCapacity> audio_decode_queue_;',
+        '    FixedQueue<std::unique_ptr<AudioStreamPacket>, kDecodeCapacity> audio_decode_queue_;')
+    replace(audio_header, '    FixedQueue<std::unique_ptr<AudioStreamPacket>, kAudioTestingPacketCapacity>\n',
+        '    FixedQueue<std::unique_ptr<AudioStreamPacket>, kDecodeCapacity>\n')
+    replace(audio, '    if (audio_decode_queue_.size() >= MAX_DECODE_PACKETS_IN_QUEUE) {',
+        '    const size_t limit = espen_story_buffer_ ? kEspenStoryDecodeCapacity : MAX_DECODE_PACKETS_IN_QUEUE;\n'
+        '    if (audio_decode_queue_.size() >= limit) {')
+    replace(audio, 'audio_queue_cv_.wait(lock, [this, generation]() {\n'
+                   '                return service_stopped_.load() || generation != playback_generation_ ||\n'
+                   '                       audio_decode_queue_.size() < MAX_DECODE_PACKETS_IN_QUEUE;\n'
+                   '            });\n'
+                   '        } else {\n'
+                   '            return false;',
+        'audio_queue_cv_.wait(lock, [this, generation, limit]() {\n'
+        '                return service_stopped_.load() || generation != playback_generation_ ||\n'
+        '                       audio_decode_queue_.size() < limit;\n'
+        '            });\n'
+        '        } else {\n'
+        '            if (espen_story_buffer_ && (++espen_story_overflow_ % 16 == 1))\n'
+        '                ESP_LOGW(TAG, "Ala story audio: decode queue full, dropped=%u", espen_story_overflow_);\n'
+        '            return false;')
+    replace(audio, 'lock, [this]() { return !audio_playback_queue_.empty() || service_stopped_.load(); });',
+        'lock, [this]() {\n'
+        '                if (service_stopped_.load()) return true;\n'
+        '                if (audio_playback_queue_.empty()) return false;\n'
+        '                return !espen_story_buffer_ || espen_story_primed_ || espen_tts_finished_ ||\n'
+        '                    audio_playback_queue_.size() + audio_decode_queue_.size() + decode_in_flight_\n'
+        '                        >= kEspenStoryPreroll;\n'
+        '            });')
+    replace(audio, '        auto task = std::move(audio_playback_queue_.front());',
+        '        if (espen_story_buffer_ && !espen_story_primed_) {\n'
+        '            espen_story_primed_ = true;\n'
+        '            ESP_LOGI(TAG, "Ala story audio: start/restart speaker, buffered=%u",\n'
+        '                     static_cast<unsigned>(audio_playback_queue_.size() + audio_decode_queue_.size()));\n'
+        '        }\n'
+        '        auto task = std::move(audio_playback_queue_.front());')
+    replace(audio, '        output_in_flight_ = false;\n        notify_drained = MarkPlaybackDrainedLocked();',
+        '        output_in_flight_ = false;\n'
+        '        if (espen_story_buffer_ && espen_story_primed_ && !espen_tts_finished_ && IsPlaybackDrainedLocked()) {\n'
+        '            espen_story_primed_ = false;\n'
+        '            ESP_LOGD(TAG, "Ala story audio: waiting for more packets");\n'
+        '        }\n'
+        '        notify_drained = MarkPlaybackDrainedLocked();')
+    replace(audio, 'void AudioService::SetEspenTtsFinished(bool finished) {',
+        'void AudioService::SetEspenStoryBuffer(bool enabled) {\n'
+        '    std::lock_guard<std::mutex> lock(audio_queue_mutex_);\n'
+        '    espen_story_buffer_ = enabled;\n'
+        '    espen_story_primed_ = false;\n'
+        '    espen_story_overflow_ = 0;\n'
+        '}\n\n'
+        'void AudioService::SetEspenTtsFinished(bool finished) {')
+    replace(audio, '        if (finished) notify_drained = MarkPlaybackDrainedLocked();',
+        '        if (finished) notify_drained = MarkPlaybackDrainedLocked();\n'
+        '        audio_queue_cv_.notify_all();')
+    replace(audio, '        espen_tts_finished_ = false;',
+        '        espen_tts_finished_ = false;\n'
+        '        espen_story_buffer_ = false;\n'
+        '        espen_story_primed_ = false;')
     replace(audio, '            EspenPlaybackReference(task.pcm.data(), task.pcm.size());\n'
         '        codec_->OutputData(task.pcm);',
         '            EspenPlaybackReference(task.pcm.data(), task.pcm.size());\n'

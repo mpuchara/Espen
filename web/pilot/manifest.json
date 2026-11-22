@@ -1,6 +1,6 @@
 {
   "name": "Ala Pilot – kod i IP (ESP32-P4 GUITION, aktualizacja bez kasowania)",
-  "version": "0.2.26",
+  "version": "0.2.27",
   "new_install_prompt_erase": false,
   "builds": [
     {

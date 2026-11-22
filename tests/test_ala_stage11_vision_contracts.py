@@ -14,16 +14,20 @@ manifest = (root / "web/manifest-full.json").read_text(encoding="utf-8")
 
 # All three buttons remain in the persistent bottom dock, not the robot face.
 assert "BuildBottomDock()" in board
-assert 'LV_SYMBOL_PLAY "  Gry"' in board
-assert 'LV_SYMBOL_IMAGE "  Aparat"' in board
-assert 'LV_SYMBOL_AUDIO "  Mikrofon"' in board
+dock = board.split("void BuildBottomDock()", 1)[1].split("void RefreshDockMic()", 1)[0]
+assert dock.count("MakeButton(bottom_dock_,nullptr,") == 3
+assert dock.count("},this,142);") == 3 and "lv_obj_set_height(button,55)" in dock
+assert "DrawDockIcon(e,DockIcon::Play)" in dock
+assert "DrawDockIcon(e,DockIcon::Camera)" in dock
+assert "DrawDockIcon(e,DockIcon::Mic)" in dock
+assert "if(mode==Mode::Off)" in board and "if(mode==Mode::Conversation)arc" in board
 assert 'auto* play=MakeButton(face_,"GRY"' not in board
 assert "self->OpenPlayGames();" in board
 assert "app.EspenSetMicMode(mode);" in board
 
 # Forward the spoken question to the regular Xiaozhi turn. The camera
 # tool captures one authorized photo and the same turn can narrate it.
-camera_button = board.split('LV_SYMBOL_IMAGE "  Aparat"', 1)[1].split("},this,142);", 1)[0]
+camera_button = dock.split("auto* camera=MakeButton", 1)[1].split("},this,142);", 1)[0]
 assert "self->OpenCameraPanel();" not in camera_button
 assert "self->StartTapVision(true);" in camera_button
 assert "EspenRequestCameraDescription(description);" in board
@@ -45,8 +49,8 @@ assert "bool GrantOneTap();" in api
 assert (root / "firmware/button_prompts/camera.ogg").read_bytes().startswith(b"OggS")
 
 # New distinct version, full merged image, no accidental Pages publishing.
-assert any(f'"version": "{v}"' in manifest for v in ("0.2.18", "0.2.19", "0.2.20", "0.2.26"))
-assert any(f'"Espen {v} boot:' in board for v in ("0.2.18", "0.2.19", "0.2.20", "0.2.26"))
+assert any(f'"version": "{v}"' in manifest for v in ("0.2.18", "0.2.19", "0.2.20", "0.2.27"))
+assert any(f'"Espen {v} boot:' in board for v in ("0.2.18", "0.2.19", "0.2.20", "0.2.27"))
 assert 'test_ala_stage11_vision_contracts.py' in build
 pages = (root / ".github/workflows/build-pages.yml").read_text()
 assert "feature/ala-stage11-tap-vision" in pages

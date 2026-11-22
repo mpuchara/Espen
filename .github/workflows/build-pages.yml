@@ -121,7 +121,7 @@ jobs:
             dist/espen-assets.bin
             dist/espen-update.sha256
           if-no-files-found: error
-      - name: Verify full Ala 0.2.26 preview installer
+      - name: Verify full Ala 0.2.27 preview installer
         if: github.head_ref == 'codex/ala-stage15'
         shell: bash
         run: |
@@ -138,7 +138,7 @@ jobs:
           app = Path("dist/espen-app.bin").read_bytes()
           assets = Path("dist/espen-assets.bin").read_bytes()
           manifest = json.loads((folder / "manifest.json").read_text())
-          assert manifest["version"] == "0.2.26"
+          assert manifest["version"] == "0.2.27"
           assert manifest["builds"] == [{
               "chipFamily": "ESP32-P4", "parts": [{"path": "espen.bin", "offset": 0}]
           }]
@@ -159,7 +159,7 @@ jobs:
           }
           assert "manifest.json" in (folder / "index.html").read_text()
           PY
-      - name: Upload Ala 0.2.26 full preview installer
+      - name: Upload Ala 0.2.27 full preview installer
         if: github.head_ref == 'codex/ala-stage15'
         uses: actions/upload-artifact@v4
         with:
