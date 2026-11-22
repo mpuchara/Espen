@@ -8,18 +8,18 @@ python3 - <<'PYVERSION'
 import json
 from pathlib import Path
 for file in ("web/manifest.json", "web/manifest-full.json"):
-    assert json.loads(Path(file).read_text())["version"] == "0.2.21", file
-assert "0.2.21 EXPERIMENTAL" in Path("web/index.html").read_text()
-assert "Espen 0.2.21 boot:" in Path("firmware/espen_board.cc").read_text()
+    assert json.loads(Path(file).read_text())["version"] == "0.2.28", file
+assert "0.2.28 EXPERIMENTAL" in Path("web/index.html").read_text()
+assert "Espen 0.2.28 boot:" in Path("firmware/espen_board.cc").read_text()
 root_installer=Path("web/index.html").read_text()
 assert 'manifest="manifest-full.json"' in root_installer, "Main installer must provide full image"
 assert 'manifest="manifest.json"' not in root_installer, "Main installer must not offer partial update"
 assert 'id="full-installer"' in root_installer, "Main installer must expose full flash control"
 full_manifest=json.loads(Path("web/manifest-full.json").read_text())
 assert full_manifest["builds"][0]["parts"]==[{"path":"espen.bin","offset":0}], "Full flash layout must start at 0x0"
-assert json.loads(Path("web/pilot/manifest.json").read_text())["version"] == "0.2.21"
-assert json.loads(Path("web/pilot/manifest-recovery.json").read_text())["version"] == "0.2.21"
-assert "0.2.21" in Path("web/pilot/index.html").read_text()
+assert json.loads(Path("web/pilot/manifest.json").read_text())["version"] == "0.2.28"
+assert json.loads(Path("web/pilot/manifest-recovery.json").read_text())["version"] == "0.2.28"
+assert "0.2.28" in Path("web/pilot/index.html").read_text()
 PYVERSION
 # Source-level integration guards for the LVGL/MCP bridge (plus host vision gate tests).
 python3 tests/test_photo_chat_integration.py
@@ -35,6 +35,8 @@ python3 tests/test_ala_stage13_voice_first_contracts.py
 python3 tests/test_ala_stage14_story_face_contracts.py
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_magic_story.cc -o /tmp/ala-stage13-one-voice-story-test
 /tmp/ala-stage13-one-voice-story-test
+c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_udp_audio_order.cc -o /tmp/ala-udp-audio-order-test
+/tmp/ala-udp-audio-order-test
 python3 tests/test_ala_stage11_vision_contracts.py
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ala_play_games.cc -o /tmp/ala-play-games-test
 /tmp/ala-play-games-test
@@ -131,7 +133,12 @@ python3 scripts/prepare.py upstream
 python3 scripts/prepare_phone.py upstream
 # Real Xiaozhi STT/TTS callbacks must contain the Stage 12 capture hooks.
 # The host phone-panel fixture intentionally has no transport callback.
-for hook in   'EspenMagicStorySentence(text->valuestring)'   'EspenMagicStoryOutputDone()'   'EspenMagicStoryConsumeVoice(text->valuestring)'   'EspenMagicStorySuppressStale()'; do
+for hook in \
+  'EspenMagicStorySentence(text->valuestring)' \
+  'EspenMagicStoryOutputDone()' \
+  'EspenMagicStoryConsumeVoice(text->valuestring,show_story_choice)' \
+  'EspenMagicStorySuppressStale()' \
+  'EspenMagicStoryContextPending()'; do
   grep -Fq "$hook" upstream/main/application.cc || { echo "Missing Stage 12 cloud hook: $hook"; exit 1; }
 done
 # Verify both hardware-unmute and 75% defaults in the generated source.

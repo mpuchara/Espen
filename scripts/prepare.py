@@ -1024,6 +1024,10 @@ replace("main/audio/engines/afe_audio_engine.cc",
         '        if (afe_iface_) afe_data_ = afe_iface_->create_from_config(afe_config);\n'
         '    }\n'
         '    afe_config_free(afe_config);\n\n    if (afe_iface_ == nullptr || afe_data_ == nullptr) {')
+# Drain the Opus queues before UI and background work can starve encoding.
+replace("main/audio/audio_service.cc",
+        '"opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_',
+        '"opus_codec", 2048 * 12, this, 5, &opus_codec_task_handle_')
 # Improve encoder quality without changing the protocol frame duration.
 replace("main/audio/audio_service.h",
         '.complexity = 0,',

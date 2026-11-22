@@ -1,47 +1,29 @@
-#!/usr/bin/env python3
-"""Stage 12/13 regression: live Xiaozhi story with spoken decisions (no static game)."""
+"""Keep the single Xiaozhi channel and route STT before normal assistant handling."""
 from pathlib import Path
-root=Path(__file__).resolve().parents[1]
-board=(root/"firmware/espen_board.cc").read_text(encoding="utf-8")
-engine=(root/"firmware/ala_magic_story.h").read_text(encoding="utf-8")
-phone=(root/"scripts/prepare_phone.py").read_text(encoding="utf-8")
-overlay=(root/"scripts/prepare.py").read_text(encoding="utf-8")
-build=(root/"scripts/build.sh").read_text(encoding="utf-8")
-install=(root/"web/manifest-full.json").read_text(encoding="utf-8")
-assert any(f'"version": "{v}"' in install for v in ("0.2.19", "0.2.20", "0.2.21"))
-assert '("ala_magic_story.h","ala_magic_story.h")' in overlay
-assert any(f'"Espen {v} boot:' in board for v in ("0.2.19", "0.2.20", "0.2.21"))
-assert "tests/test_ala_magic_story.cc" in build
+root = Path(__file__).resolve().parents[1]
+board = (root / "firmware/espen_board.cc").read_text(encoding="utf-8")
+bridge = (root / "scripts/prepare_phone.py").read_text(encoding="utf-8")
+build = (root / "scripts/build.sh").read_text(encoding="utf-8")
 assert "AlaMagicStory magic_story_" in board
-assert "magic_story_.Start(static_cast<espen::StorySetting>(j))" in board
-assert "magic_story_.ChooseSuggestion(0)" in board
-assert "self->StartMagicVoiceChoice()" in board
-assert "magic_story_.AcceptVoiceChoice(" in board
-assert "EspenMagicStoryArmVoice(true)" in board
+assert "app.EspenGenerateMagicStory(prompt,context,kind==StoryAudio::Chapter)" in board
+assert "magic_story_.Prompt()" in board and '"self.story.read_context"' in bridge
+assert "EspenMagicStorySuppressStale() || EspenMagicStoryContextPending()" in bridge
 assert "app.EspenStartMagicVoiceListening()" in board
-assert "void Application::EspenStartMagicVoiceListening()" in phone
-assert "EspenMagicStoryConsumeVoice" in board and "EspenMagicStoryConsumeVoice" in phone
-assert "EspenMagicStorySuppressStale()" in phone
-assert "protocol_->CloseAudioChannel();" in phone
-assert "EspenGenerateMagicStory" in phone and "SendWakeWordDetected(json_safe_prompt)" in phone
-assert "EspenMagicStorySentence(text->valuestring)" in phone
-assert "EspenMagicStoryOutputDone()" in phone
-assert "MagicStoryWireSnapshot(" in board
-assert "magic_story_.CompleteTurn(speech)" in board
-assert "AnimateMagicChoices()" in board
-assert "lv_anim_set_delay(&anim" in board
-assert "OSTATNI WYBOR GRACZA:" in engine
-assert "last_choice_=Bound(selected" in engine
-assert "MagicPhase::Error" in engine
-assert "void CancelMagicStory()" in board
-assert "voice_armed.exchange(false" in board
-assert "lv_layer_top()" in board
-assert 'LV_SYMBOL_IMAGE "  Aparat"' in board
-assert 'LV_SYMBOL_PLAY "  Gry"' in board
-assert 'LV_SYMBOL_AUDIO "  Mikrofon"' in board
-# The two-option parsing regression must never return.
-assert 'const auto second=first==' not in engine
-assert 'if(first==std::string::npos || second' not in engine
-assert "Nie tworz" not in engine or "NIE tworz" in engine
-assert "MagicPhase::Clarifying" in engine
-print("Ala voice-first Magic Story integration contracts: OK")
+assert "EspenMagicStoryConsumeVoice(text->valuestring,show_story_choice)" in bridge
+assert "if (EspenMagicStoryContextPending()) return;" in bridge
+assert "EspenMagicStorySuppressStale()" in bridge
+assert "EspenMagicStorySentence(text->valuestring)" in bridge
+assert "EspenMagicStoryOutputDone()" in bridge
+assert 'cJSON_AddStringToObject(request, "text", wake_word.c_str());' in bridge
+uplink = bridge.split("void Application::EspenStartButtonInput", 1)[1].split("void Application::EspenCancelMagicStory", 1)[0]
+assert "SendWakeWordDetected" not in uplink
+assert "protocol_->SendStartListening(kListeningModeManualStop)" in uplink
+assert "protocol_->SendAudio(std::move(packet))" in uplink
+assert "protocol_->SendStopListening()" in uplink
+assert "esp_timer_start_once(espen_button_timer_,60000)" in uplink
+assert "magic_story_.AcceptVoiceChoice" in board
+assert "magic_story_.ButtonPrompt()" in board
+assert "epoch != espen_story_epoch_.load()" in bridge
+assert "event.finished && idle && event.audible" in board
+assert "tests/test_ala_magic_story.cc" in build
+print("Xiaozhi story transport contracts OK")

@@ -94,11 +94,11 @@ public:
                                voiced_ms_ < 3500 ? 1600 : 2150;
         return std::min<uint32_t>(2600, basic + (noise_rms_ > 850 ? 250 : 0));
     }
-    bool EndOfSpeech(uint64_t now) const {
+    bool EndOfSpeech(uint64_t now, uint32_t minimum_pause_ms = 0) const {
         return active_ && !waiting_ && heard_ &&
                voiced_ms_ >= kMinimumVoicedMs &&
                now >= pause_at_ &&
-               now - pause_at_ >= EndpointMs();
+               now - pause_at_ >= std::max(EndpointMs(), minimum_pause_ms);
     }
     bool Expired(uint64_t now) const {
         if (!active_) return false;
