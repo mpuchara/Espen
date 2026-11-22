@@ -251,7 +251,7 @@ final class WatchAudio {
      * Local sine-wave test, independent of Xiaozhi. Used to separate routing
      * failures from network/Opus failures on real Garett hardware.
      */
-    static void testSpeaker(Activity activity,Reporter reporter) {
+    static Thread testSpeaker(Activity activity,Reporter reporter,Runnable finished) {
         Thread t=new Thread(()->{
             android.os.Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO);
             AudioTrack track=null;
@@ -275,7 +275,7 @@ final class WatchAudio {
                     Math.max(min,4096),AudioTrack.MODE_STREAM);
                 track.play();
                 short[] sound=new short[640]; // 40ms
-                for(int block=0;block<45;block++){
+                for(int block=0;block<45&&!Thread.currentThread().isInterrupted();block++){
                     for(int i=0;i<sound.length;i++){
                         double tsec=(block*sound.length+i)/(double)sampleRate;
                         double envelope=Math.min(1.0,Math.min(tsec*12,(1.8-tsec)*12));
@@ -289,8 +289,11 @@ final class WatchAudio {
             finally {
                 if(track!=null){try{track.stop();track.release();}catch(Throwable ignored){}}
                 if(am!=null){try{am.setSpeakerphoneOn(oldSpeaker);am.setMode(oldMode);}catch(Throwable ignored){}}
+                finished.run();
             }
         },"ala-speaker-test");
-        t.setDaemon(true);t.start();
+        t.setDaemon(true);
+        t.start();
+        return t;
     }
 }

@@ -162,6 +162,7 @@ public final class WatchActivity extends Activity implements FaceView.Actions, X
         Button speakerTest=new Button(this);
         speakerTest.setText("🔊 Test głośnika (660 Hz)");
         speakerTest.setOnClickListener(v->{
+            stopLocalSpeech();
             xiaozhi.testSpeaker();
             Toast.makeText(this,"Odtwarzam 660 Hz. Sprawdź głośność multimediów.",Toast.LENGTH_LONG).show();
         });

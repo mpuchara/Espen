@@ -62,6 +62,8 @@ public final class XiaozhiClient {
     private final WatchAudio audio;
     private final ScheduledExecutorService worker=Executors.newSingleThreadScheduledExecutor();
     private final AtomicBoolean otaBusy=new AtomicBoolean();
+    private final AtomicBoolean diagnosticAudioBusy=new AtomicBoolean();
+    private volatile Thread diagnosticSpeaker;
     private final OkHttpClient http;
     private volatile WebSocket socket;
     private volatile boolean recording, closed, sessionStarting, sessionReady, talking, audioActive;
@@ -132,19 +134,23 @@ public final class XiaozhiClient {
     }
     public boolean isVisionEnabled(){return vision.isEnabled();}
     public void testSpeaker(){
-        if(socket!=null||sessionStarting){events.status("Zakończ rozmowę przed testem dźwięku");return;}
-        WatchAudio.testSpeaker(activity,new WatchAudio.Reporter(){
-            @Override public void report(String message){events.status(message);}
-            @Override public void pcmLevel(int value){events.level(value,false);}
-        });
+        if (!available() || !diagnosticAudioBusy.compareAndSet(false,true)) {
+            events.status("Zakończ rozmowę przed testem dźwięku");
+            return;
+        }
+        diagnosticSpeaker=WatchAudio.testSpeaker(activity,new WatchAudio.Reporter(){
+            @Override public void report(String message){if (foreground) events.status(message);}
+            @Override public void pcmLevel(int value){}
+        },()->diagnosticAudioBusy.set(false));
     }
     public void testMicrophone(){
-        if(socket!=null||recording||sessionStarting){
+        if(!available()){
             events.status("Najpierw zakończ rozmowę z Xiaozhi");return;
         }
         if(activity.checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){
             events.status("Nadaj Ali uprawnienie do mikrofonu");return;
         }
+        if (!diagnosticAudioBusy.compareAndSet(false,true)) return;
         new Thread(()->{
             AudioRecord input=null;
             String stage="microphone.newRecord";
@@ -160,7 +166,11 @@ public final class XiaozhiClient {
                 if(input.getState()!=AudioRecord.STATE_INITIALIZED)
                     throw new IOException("AudioRecord nie jest gotowy");
                 stage="microphone.start";
-                input.startRecording();
+                synchronized (this) {
+                    if (!foreground || closed) return;
+                    input.startRecording();
+                    activeRecord=input;
+                }
                 if(input.getRecordingState()!=AudioRecord.RECORDSTATE_RECORDING)
                     throw new IOException("AudioRecord nie nagrywa");
                 stage="microphone.read";
@@ -169,6 +179,7 @@ public final class XiaozhiClient {
                 for(int pass=0;pass<16;pass++){
                     int offset=0;
                     while(offset<samples){
+                        if (!foreground || closed) return;
                         int n=input.read(pcm,offset,samples-offset);
                         if(n<=0)throw new IOException("AudioRecord.read="+n);
                         offset+=n;
@@ -186,18 +197,25 @@ public final class XiaozhiClient {
                 if(encoded<=0)throw new IOException("Opus.encode="+encoded);
                 result="Mikrofon OK: "+reads+" ramek, RMS max "+maxRms+
                     ", Opus "+encoded+" bajtów.";
-            }catch(Throwable error){
+            }catch(Exception error){
+                if (!foreground || closed) return;
                 CrashNotes.record(activity,"MIC TEST / "+stage,error);
                 result="Test nieudany na etapie "+stage+" ("+
                     error.getClass().getSimpleName()+"). Kopiuj diagnostykę.";
             }finally{
-                if(input!=null){try{input.stop();}catch(Throwable ignored){}
-                    try{input.release();}catch(Throwable ignored){}}
+                synchronized (this) {
+                    if (activeRecord==input) activeRecord=null;
+                    if (input!=null) {
+                        try { input.stop(); } catch (RuntimeException ignored) {}
+                        input.release();
+                    }
+                    diagnosticAudioBusy.set(false);
+                }
             }
             final String feedback=result;
             events.status(feedback);
             activity.runOnUiThread(()->{
-                if(!activity.isFinishing()){
+                if (foreground && !closed && !activity.isFinishing()) {
                     new android.app.AlertDialog.Builder(activity)
                         .setTitle("Test mikrofonu Android 8.1")
                         .setMessage(feedback)
@@ -235,7 +253,7 @@ public final class XiaozhiClient {
     }
 
     private boolean available(){
-        return foreground && !closed && !sessionStarting && socket==null;
+        return foreground && !closed && !sessionStarting && socket==null && !diagnosticAudioBusy.get();
     }
 
     /** Sends the same recorded Polish commands as the P4 without opening the microphone. */
@@ -607,7 +625,7 @@ public final class XiaozhiClient {
                 int length=encoder.encode(pcm,0,samples,opus,0,opus.length);
                 micStage="websocket.send";
                 WebSocket s=socket;
-                if (s==owner && length>0) {
+                if (recording && !cancelled && foreground && s==owner && length>0) {
                     if (s.queueSize()>250_000 || !s.send(WsAudio.encode(
                             java.util.Arrays.copyOf(opus,length),wsVersion,now)))
                         throw new IOException("Przerwano wysyłanie nagrania");
@@ -711,6 +729,7 @@ public final class XiaozhiClient {
         boolean active=busy() && !cancelled;
         cancelled=true;
         endMic();
+        if (diagnosticSpeaker!=null) diagnosticSpeaker.interrupt();
         audio.stop();
         vision.cancel();
         if (active) dispatch(()->{
@@ -867,6 +886,7 @@ public final class XiaozhiClient {
         foreground=false;
         cancelled=true;
         endMic();
+        if (diagnosticSpeaker!=null) diagnosticSpeaker.interrupt();
         WebSocket previous=socket;
         socket=null;
         if (previous!=null) previous.cancel();
