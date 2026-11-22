@@ -1,0 +1,37 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'pl.espen.garett'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'pl.espen.garett'
+        minSdk 26
+        targetSdk 27 // Vendor Android 8.1, older package installer
+        versionCode 5
+        versionName '0.3.0-beta1'
+    }
+    signingConfigs {
+        debug {
+            enableV1Signing = true
+            enableV2Signing = false
+            enableV3Signing = false
+            enableV4Signing = false
+        }
+    }
+    buildTypes {
+        debug {
+            minifyEnabled true
+            shrinkResources true
+            signingConfig signingConfigs.debug
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+dependencies {
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation 'io.github.jaredmdobson:concentus:1.0.2'
+    testImplementation 'junit:junit:4.13.2'
+}
