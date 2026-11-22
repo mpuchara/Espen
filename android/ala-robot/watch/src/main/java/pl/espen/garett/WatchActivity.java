@@ -272,7 +272,7 @@ public final class WatchActivity extends Activity implements FaceView.Actions, X
     }
 
     private void showStatus(String message,boolean error){
-        face.setStatus(message);
+        face.setStatus(message,error);
         if (phone!=null) phone.status(message,error);
     }
 

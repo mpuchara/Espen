@@ -41,7 +41,7 @@ public final class FaceView extends View {
     private int touchCount;
     private float downX,downY,movement,lookX,lookY;
     private boolean touching,foreground=true,game,story;
-    private boolean micEnabled,choicesEnabled,dockEnabled;
+    private boolean micEnabled,choicesEnabled,dockEnabled,statusError;
     private long shutterAt=-1000,storyAt;
     private int pressedDock=-1,pressedChoice=-1;
     private NarrationCue.Scene scene;
@@ -115,7 +115,11 @@ public final class FaceView extends View {
     }
     void userSpeech(String text){behavior.speech(text,SystemClock.uptimeMillis());invalidate();}
     void reaction(AlaBehavior.Mood mood){behavior.react(mood,SystemClock.uptimeMillis());invalidate();}
-    public void setStatus(String s) { status = s == null ? "" : s; invalidate(); }
+    void setStatus(String message,boolean error){
+        status=message==null?"":message;
+        statusError=error;
+        invalidate();
+    }
     public void setSubtitle(String s) {
         subtitle = s == null ? "" : s;
         if (subtitle.length() > 90) subtitle = subtitle.substring(0, 90) + "…";
@@ -293,13 +297,13 @@ public final class FaceView extends View {
                 if(label.length()>32)label=label.substring(0,31)+"…";
                 text(c,label,180,243+i*32,13,active?0xffefffff:choicesEnabled?0xffc6e4ed:0xff8094a0,false);
             }
-        }else if(activationCode.length()>0){
+        }else if(activationCode.length()>0 && !statusError && state!=AlaBehavior.Phase.ERROR){
             round(c,18,278,324,51,13,0xff173041);
             text(c,"KOD XIAOZHI: "+activationCode,180,310,19,0xffd8efff,true);
         } else {
             String visible=state==AlaBehavior.Phase.SPEAKING && subtitle.length()>0?subtitle:status;
             if(visible.length()>40) visible=visible.substring(0,39)+"…";
-            text(c,visible,180,302,13,0xffbed3dd,false);
+            text(c,visible,180,302,13,statusError || state==AlaBehavior.Phase.ERROR?0xffffa18e:0xffbed3dd,false);
         }
         c.save();
 
