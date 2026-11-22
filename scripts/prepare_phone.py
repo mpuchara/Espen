@@ -501,7 +501,7 @@ extern bool EspenButtonCameraPreparing();
         '        AUDIO_TESTING_MAX_DURATION_MS / OPUS_FRAME_DURATION_MS;\n'
         '    // Narration can arrive in bursts even on an ordered transport.\n'
         '    static constexpr size_t kEspenStoryDecodeCapacity = 96;\n'
-        '    static constexpr size_t kEspenStoryPreroll = 6;\n'
+        '    static constexpr size_t kEspenStoryPreroll = 12;\n'
         '    static constexpr size_t kDecodeCapacity =\n'
         '        kEspenStoryDecodeCapacity > kAudioTestingPacketCapacity\n'
         '            ? kEspenStoryDecodeCapacity : kAudioTestingPacketCapacity;\n'
