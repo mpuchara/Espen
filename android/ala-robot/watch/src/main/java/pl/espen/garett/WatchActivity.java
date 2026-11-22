@@ -178,6 +178,7 @@ public final class WatchActivity extends Activity implements FaceView.Actions, X
     private void ui(Runnable r){if(!isFinishing())main.post(()->{if(!isFinishing())r.run();});}
     @Override public void state(FaceView.State s){ui(()->{
         face.setState(s);
+        if(s==FaceView.State.ERROR && games!=null)games.onNarrationFailed();
         if(s==FaceView.State.LISTENING||s==FaceView.State.CONNECTING||s==FaceView.State.SPEAKING||s==FaceView.State.THINKING)
             getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);

@@ -10,7 +10,7 @@ on:
       - '.github/workflows/build-ala-native.yml'
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 jobs:
   build-apks:
     runs-on: ubuntu-latest
@@ -51,3 +51,22 @@ jobs:
           name: Ala-Robot-Android-Phone-APK
           path: android/ala-robot/phone/build/outputs/apk/debug/phone-debug.apk
           if-no-files-found: error
+      - name: Prepare stable APK filenames
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          cp watch/build/outputs/apk/debug/watch-debug.apk Ala-Garett-Essa-Android81.apk
+          cp phone/build/outputs/apk/debug/phone-debug.apk Ala-Robot-Android.apk
+      - name: Publish two beta APKs
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=ala-robot-native-v0.3.0-beta1
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" Ala-Garett-Essa-Android81.apk Ala-Robot-Android.apk --clobber
+          else
+            gh release create "$tag" Ala-Garett-Essa-Android81.apk Ala-Robot-Android.apk \
+              --target "$GITHUB_SHA" --prerelease \
+              --title "Ala Robot Native 0.3.0 beta: Android + Garett Essa" \
+              --notes "Dwa niezależne APK robota Ala, bazujące na interfejsie 0.2.28 ESP32-P4. Wydanie BETA, podpisane kluczem debug; bez potwierdzonych testów na fizycznym zegarku. Każde urządzenie należy aktywować osobno w tym samym agencie Xiaozhi. Port nie zawiera jeszcze wszystkich lokalnych funkcji firmware ESP32-P4."
+          fi

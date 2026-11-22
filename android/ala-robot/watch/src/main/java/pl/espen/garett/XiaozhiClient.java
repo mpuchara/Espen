@@ -219,7 +219,12 @@ public final class XiaozhiClient {
         worker.execute(()->{
             try{
                 if(wsUrl==null)readOta();
-                if(wsUrl==null||closed){pendingPrompt=null;sessionStarting=false;return;}
+                if(wsUrl==null||closed){
+                    pendingPrompt=null;sessionStarting=false;
+                    if(!closed){events.state(FaceView.State.ERROR);
+                        events.status("Dokończ aktywację Xiaozhi, potem ponów opowieść.");}
+                    return;
+                }
                 openSocket();
             }catch(Exception e){
                 pendingPrompt=null;sessionStarting=false;

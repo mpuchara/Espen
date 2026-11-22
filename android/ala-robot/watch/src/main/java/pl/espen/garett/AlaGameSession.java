@@ -13,7 +13,7 @@ public final class AlaGameSession {
         void stopSpeech();
         void status(String message);
     }
-    private enum Phase { OFF, MENU, THEMES, QUIZ, ANIMALS, END, STORY_SPEAKING, STORY_CHOICE, STORY_IDEA }
+    private enum Phase { OFF, MENU, THEMES, QUIZ, ANIMALS, END, STORY_SPEAKING, STORY_CHOICE, STORY_IDEA, STORY_ERROR }
     private static final String[] MENU={"Quiz Mistrza","Zgadnij zwierzę","Magiczna opowieść"};
     private static final String[] THEMES={"Magiczny las","Nad jeziorem","Z mamą w samochodzie"};
     private static final String[] STORY_DECISIONS={"Podoba mi się","Mam inny pomysł","Koniec opowieści"};
@@ -98,6 +98,11 @@ public final class AlaGameSession {
                     ui.status("Do zobaczenia w następnej przygodzie!");
                 }
                 break;
+            case STORY_ERROR:
+                if(index==0)continueStory("Ponów poprzedni fragment historii, bez zmiany bohaterów.");
+                else if(index==1)open();
+                else close();
+                break;
             case STORY_IDEA:
                 if(index==0)ui.listenForIdea();
                 else if(index==1){phase=Phase.STORY_CHOICE;ui.options("Co dalej?",STORY_DECISIONS);}
@@ -125,6 +130,12 @@ public final class AlaGameSession {
         phase=Phase.STORY_CHOICE;
         ui.options("Co dalej?",STORY_DECISIONS);
         // The closing spoken question already explains the options; no overlapping local TTS.
+    }
+    public void onNarrationFailed(){
+        if(phase==Phase.STORY_SPEAKING){
+            phase=Phase.STORY_ERROR;
+            ui.options("Nie udało się opowiedzieć",new String[]{"Spróbuj ponownie","Wróć do gier","Zamknij"});
+        }
     }
     public void onVoiceIdea(String spoken){
         if(phase!=Phase.STORY_IDEA)return;
