@@ -5,6 +5,14 @@
 using namespace espen;
 int main() {
     assert(ClassifyReplyBeat("Brawo, udało się!") == ReplyBeat::Celebrate);
+    assert(ClassifyReplyBeat("Cześć, jak się masz?") == ReplyBeat::Agree);
+    assert(ClassifyReplyBeat("Bardzo cię lubię!") == ReplyBeat::Warmth);
+    assert(ClassifyReplyBeat("To ciekawe pytanie.") == ReplyBeat::Puzzle);
+    assert(ClassifyReplyBeat("Cieszę się, że jesteś!") == ReplyBeat::Celebrate);
+    assert(DefaultReplyCue(1) == EmotionalCue::Count);
+    assert(DefaultReplyCue(2) == EmotionalCue::Count);
+    assert(DefaultReplyCue(3) == EmotionalCue::Answer);
+    assert(DefaultReplyCue(6) == EmotionalCue::Curious);
     assert(ClassifyReplyBeat("Ha ha, żartuję!") == ReplyBeat::Giggle);
     assert(ClassifyReplyBeat("Wow! Nie do wiary!") == ReplyBeat::Astonished);
     assert(ClassifyReplyBeat("Ups, moja pomyłka.") == ReplyBeat::Oops);

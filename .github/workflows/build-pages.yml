@@ -25,7 +25,7 @@ jobs:
           bash scripts/build.sh
       # Publish exactly the SAME firmware as the main installer, never the
       # older Ala Pilot test release. Verify the complete bootloader+app image.
-      - name: Stage Ala Pilot installer from current 0.2.17 build
+      - name: Stage Ala Pilot installer from current 0.2.18 build
         shell: bash
         run: |
           set -euo pipefail
@@ -45,7 +45,7 @@ jobs:
           assert image[0x20000] == 0xE9, "missing application at 0x20000"
           assert image[0x20000:0x20000+len(app)] == app, "unexpected application content"
           assert image[:0x800000] != b'\\xff'*0x800000, "empty flash image"
-          print("Ala Pilot 0.2.17 verified: bootloader, app, assets, checksums")
+          print("Ala Pilot 0.2.18 verified: bootloader, app, assets, checksums")
           PILOT_VALIDATION
       # Deliberately publish the audited PR #47 as a SEPARATE EXPERIMENTAL installer.
       # Do NOT replace the stable root 0.2.17 image or merge experimental firmware into main.

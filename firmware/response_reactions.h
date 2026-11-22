@@ -85,10 +85,26 @@ inline ReplyBeat ClassifyReplyBeat(std::string_view text) {
     if (has("bip bop") || has("beep boop") ||
         has("tryb robota") || has("robotyczny glos"))
         return ReplyBeat::Robot;
+    // Frequent, safe conversational phrases — so the expressive pack is
+    // actually heard in ordinary replies, not only in scripted demos.
+    if (has("czesc") || has("hej") || has("witaj") ||
+        has("dzien dobry") || has("milo cie poznac")) return ReplyBeat::Agree;
+    if (has("ciesze sie") || has("super sprawa") ||
+        has("ale wspaniale")) return ReplyBeat::Celebrate;
+    if (has("kocham cie") || has("bardzo cie lubie") ||
+        has("wysylam serduszko")) return ReplyBeat::Warmth;
+    if (has("to ciekawe") || has("ciekawe pytanie")) return ReplyBeat::Puzzle;
     if (has("masz racje") || has("dokladnie tak") ||
         has("zgadza sie") || has("pelna zgoda"))
         return ReplyBeat::Agree;
     return ReplyBeat::None;
+}
+
+// Understated variation for replies without a characteristic phrase or
+// Xiaozhi emotion. Only one out of three turns gets a generic cue.
+inline EmotionalCue DefaultReplyCue(uint32_t turn_sequence) {
+    if (turn_sequence == 0 || turn_sequence % 3 != 0) return EmotionalCue::Count;
+    return (turn_sequence % 2 == 0) ? EmotionalCue::Curious : EmotionalCue::Answer;
 }
 
 inline EmotionalCue ReplyCue(ReplyBeat beat) {

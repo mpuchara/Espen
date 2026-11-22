@@ -83,6 +83,7 @@ VisualEntry visual_entries[32]{};
 uint32_t visual_next=0;
 std::atomic<uint32_t> visual_packet_tag{0},visual_played_tag{0},visual_played_ms{0};
 std::atomic<espen::ReplyBeat> pending_reply_beat{espen::ReplyBeat::None};
+std::atomic<uint32_t> espen_fx_turn_seq{0};
 }
 void EspenVisualQuestion(const char* text){
     std::lock_guard<std::mutex> l(visual_mutex);
@@ -91,6 +92,7 @@ void EspenVisualQuestion(const char* text){
 void EspenVisualBegin(){
     std::lock_guard<std::mutex> l(visual_mutex);
     visual_context.Begin();visual_packet_tag.store(0,std::memory_order_release);
+    espen_fx_turn_seq.fetch_add(1,std::memory_order_relaxed);
     pending_reply_beat.store(espen::ReplyBeat::None,std::memory_order_release);
     espen_fx_response_attempted.store(false,std::memory_order_release);
     espen_response_ready.store(false,std::memory_order_release);
@@ -241,12 +243,12 @@ static void EspenSaveSpeakerVolume(int volume){
 static std::mutex espen_fx_mutex;
 static espen::EmotionalCueLimiter espen_fx_limiter;
 static std::atomic<bool> espen_fx_enabled{true};
-static std::atomic<int> espen_fx_gain{45};
+static std::atomic<int> espen_fx_gain{70};
 static void EspenLoadFxSettings() {
     static const bool once = [](){
         Settings cfg("espen_audio", false);
         espen_fx_enabled.store(cfg.GetBool("fx_enabled", true), std::memory_order_relaxed);
-        espen_fx_gain.store(std::clamp(static_cast<int>(cfg.GetInt("fx_gain", 45)), 0, 100), std::memory_order_relaxed);
+        espen_fx_gain.store(std::clamp(static_cast<int>(cfg.GetInt("fx_gain", 70)), 0, 100), std::memory_order_relaxed);
         return true;
     }();
     (void)once;
@@ -260,7 +262,8 @@ static void EspenSaveFxSettings(bool enabled, int gain) {
     cfg.SetBool("fx_enabled", enabled);
     cfg.SetInt("fx_gain", gain);
 }
-static bool EspenPlayEmotionalCue(espen::EmotionalCue cue, bool new_turn=false) {
+static bool EspenPlayEmotionalCue(espen::EmotionalCue cue, bool new_turn=false,
+                                  bool defer_when_busy=false) {
     if (!espen_speaker_pa.load(std::memory_order_acquire) ||
         speaker_test_running.load(std::memory_order_acquire) ||
         diag.busy.load(std::memory_order_acquire)) return false;
@@ -272,7 +275,7 @@ static bool EspenPlayEmotionalCue(espen::EmotionalCue cue, bool new_turn=false) 
     if (!espen_fx_limiter.CanPlay(cue, now)) return false;
     const int gain = espen_fx_gain.load(std::memory_order_acquire);
     if (!Application::GetInstance().GetAudioService().QueueEspenEmotionalCue(
-            static_cast<int>(cue), gain)) return false;
+            static_cast<int>(cue), gain, defer_when_busy)) return false;
     espen_fx_limiter.Played(cue, now);
     ESP_LOGI(TAG, "Emotional cue queued: id=%d gain=%d", static_cast<int>(cue), gain);
     return true;
@@ -304,23 +307,48 @@ static espen::EmotionalCue EspenCueForMood(espen::Mood mood) {
         default: return EmotionalCue::Count;
     }
 }
-// Send at most one short response cue before TTS becomes busy. We wait for
-// the first sentence whenever possible, rather than consuming the limiter on
-// generic cloud happiness before the more specific spoken phrase arrives.
+// Let a response-specific cue wait for a natural gap/end of TTS if PCM is
+// already flowing. Do not lose it just because decoding started first.
 static void EspenTryResponseCue(espen::ReplyBeat beat) {
-    if(!espen_response_ready.load(std::memory_order_acquire))return;
-    const auto cue=beat!=espen::ReplyBeat::None?espen::ReplyCue(beat):
+    if(!espen_response_ready.load(std::memory_order_acquire) ||
+       espen_fx_response_attempted.load(std::memory_order_acquire))return;
+    auto cue=beat!=espen::ReplyBeat::None?espen::ReplyCue(beat):
         EspenCueForMood(espen_fx_last_mood.load(std::memory_order_acquire));
-    // No emotion specified? Leave the single cue slot free for a later
-    // meaningful sentence rather than permanently consuming it.
-    if(cue==espen::EmotionalCue::Count||
-       espen_fx_response_attempted.exchange(true,std::memory_order_acq_rel))return;
-    EspenPlayEmotionalCue(cue);
+    if(cue==espen::EmotionalCue::Count &&
+       visual_packet_tag.load(std::memory_order_acquire))
+        cue=espen::DefaultReplyCue(espen_fx_turn_seq.load(std::memory_order_relaxed));
+    if(cue==espen::EmotionalCue::Count)return;
+    // Only consume the slot after successful immediate or deferred enqueue.
+    // The audio service discards deferred cues if playback is cancelled.
+    if(EspenPlayEmotionalCue(cue,false,true))
+        espen_fx_response_attempted.store(true,std::memory_order_release);
 }
 void EspenResponseCue() {
+    // The user's social reaction and Ala's response each get at most one
+    // characteristic sound; neither suppresses the other.
+    {
+        std::lock_guard<std::mutex> l(espen_fx_mutex);
+        espen_fx_limiter.NewTurn(true);
+    }
     espen_response_ready.store(true,std::memory_order_release);
     if(visual_packet_tag.load(std::memory_order_acquire))
         EspenTryResponseCue(pending_reply_beat.load(std::memory_order_acquire));
+}
+static espen::EmotionalCue EspenCueForSocial(espen::Social r) {
+    using espen::EmotionalCue;
+    using espen::Social;
+    switch(r) {
+        case Social::Affection: return EmotionalCue::Heart;
+        case Social::Praise: return EmotionalCue::Joy;
+        case Social::Thanks: return EmotionalCue::Agree;
+        case Social::Greeting: return EmotionalCue::Wake;
+        case Social::Celebration: return EmotionalCue::Success;
+        case Social::Goodnight: return EmotionalCue::Yawn;
+        case Social::Comfort: return EmotionalCue::Hug;
+        case Social::Apology: return EmotionalCue::Heart;
+        case Social::Annoyed: return EmotionalCue::Oops;
+        default: return EmotionalCue::Count;
+    }
 }
 static std::string EspenSpeakerStatus(){
     if(!espen_speaker_pa.load(std::memory_order_acquire))return "Włącz SPK i uruchom ponownie.";
@@ -599,7 +627,7 @@ class EspenDisplay : public LcdDisplay {
     lv_obj_t* fx_mode_label_=nullptr;
     lv_obj_t* fx_gain_label_=nullptr;
     bool fx_on_=true;
-    int fx_gain_=45;
+    int fx_gain_=70;
     bool speaker_pa_requested_=false;
     int speaker_volume_=espen::kSpeakerVolumeDefault;
     int speaker_last_nonzero_=espen::kSpeakerVolumeDefault;
@@ -1021,7 +1049,7 @@ class EspenDisplay : public LcdDisplay {
             fx_mode_label_=lv_obj_get_child(fx,0);
             auto* gain=MakeButton(speaker_panel_,"Głośność odgłosów",[](lv_event_t* e){
                 auto* self=static_cast<EspenDisplay*>(lv_event_get_user_data(e));
-                self->fx_gain_=self->fx_gain_==25?45:self->fx_gain_==45?65:25;
+                self->fx_gain_=self->fx_gain_<70?70:self->fx_gain_<90?90:40;
                 EspenSaveFxSettings(self->fx_on_,self->fx_gain_);
                 self->RefreshFxControls();
             },this,420);
@@ -1065,7 +1093,7 @@ class EspenDisplay : public LcdDisplay {
         {Settings cfg("espen_audio",false);
             speaker_pa_requested_=cfg.GetBool("speaker_pa",true);
             fx_on_=cfg.GetBool("fx_enabled",true);
-            fx_gain_=std::clamp(static_cast<int>(cfg.GetInt("fx_gain",45)),0,100);}
+            fx_gain_=std::clamp(static_cast<int>(cfg.GetInt("fx_gain",70)),0,100);}
         {Settings cfg("audio",false);speaker_volume_=espen::SpeakerVolume(cfg.GetInt("output_volume",espen::kSpeakerVolumeDefault));}
         if(speaker_volume_>0)speaker_last_nonzero_=speaker_volume_;
         RefreshSpeakerControls();
@@ -1438,7 +1466,7 @@ class EspenDisplay : public LcdDisplay {
     bool standby_swipe_active_=false;
     lv_point_t standby_swipe_start_{};
     uint32_t standby_swipe_ms_=0;
-    uint32_t touch_started_=0,last_tap_=0,last_pet_=0;
+    uint32_t touch_started_=0,last_tap_=0,last_pet_=0,last_touch_fx_=0;
     int tap_count_=0;
     espen::PetMotion pet_motion_;
     espen::Motion pet_kind_=espen::Motion::None;
@@ -1580,6 +1608,11 @@ class EspenDisplay : public LcdDisplay {
             else self->UpdateHold(target,p,now,indev);
         },LV_EVENT_ALL,this);
     }
+    void PlayTouchCue(espen::EmotionalCue cue,uint32_t now) {
+        if(last_touch_fx_ && now-last_touch_fx_<1100)return;
+        last_touch_fx_=now;
+        Application::GetInstance().Schedule([cue](){EspenPlayEmotionalCue(cue,true);});
+    }
     void FaceTouch(lv_event_t* e) {
         auto code=lv_event_get_code(e);
         uint32_t now=lv_tick_get();
@@ -1589,8 +1622,14 @@ class EspenDisplay : public LcdDisplay {
         if(code==LV_EVENT_PRESS_LOST || code==LV_EVENT_RELEASED) {
             CancelHold(face_);
             if(touch_active_&&!touch_long_&&code==LV_EVENT_RELEASED) {
-                if(pet_kind_==espen::Motion::Tickle)engine_.React(espen::Gesture::Tickle,now);
-                else if(pet_kind_==espen::Motion::Stroke)engine_.React(espen::Gesture::Stroke,now);
+                if(pet_kind_==espen::Motion::Tickle){
+                    engine_.React(espen::Gesture::Tickle,now);
+                    PlayTouchCue(espen::EmotionalCue::Giggle,now);
+                }
+                else if(pet_kind_==espen::Motion::Stroke){
+                    engine_.React(espen::Gesture::Stroke,now);
+                    PlayTouchCue(espen::EmotionalCue::Heart,now);
+                }
                 else if(now-touch_started_<450) {
                     tap_count_=(last_tap_&&now-last_tap_<380)?tap_count_+1:1;
                     last_tap_=now;
@@ -1598,10 +1637,20 @@ class EspenDisplay : public LcdDisplay {
                     int x=touch_prev_.x-a.x1,y=touch_prev_.y-a.y1;
                     if(visual_mix_)x=192+(x-(192-66*visual_mix_/100))*100/(100-30*visual_mix_/100);
                     x-=listening_layout_.shift;
-                    if(tap_count_>=3){engine_.React(espen::Gesture::TripleTap,now);tap_count_=0;last_tap_=0;}
-                    else if(tap_count_==2)engine_.React(espen::Gesture::DoubleTap,now);
-                    else engine_.React(x>=155&&x<=230&&y>=125&&y<=185?
-                        espen::Gesture::Boop:espen::Gesture::Tap,now);
+                    if(tap_count_>=3){
+                        engine_.React(espen::Gesture::TripleTap,now);
+                        PlayTouchCue(espen::EmotionalCue::Giggle,now);
+                        tap_count_=0;last_tap_=0;
+                    }
+                    else if(tap_count_==2){
+                        engine_.React(espen::Gesture::DoubleTap,now);
+                        PlayTouchCue(espen::EmotionalCue::Surprise,now);
+                    }
+                    else {
+                        const bool boop=x>=155&&x<=230&&y>=125&&y<=185;
+                        engine_.React(boop?espen::Gesture::Boop:espen::Gesture::Tap,now);
+                        if(boop)PlayTouchCue(espen::EmotionalCue::Shy,now);
+                    }
                 }
             }
             touch_active_=false;engine_.Touch(false,0,0,now);return;
@@ -2114,6 +2163,9 @@ class EspenDisplay : public LcdDisplay {
             if(reaction!=espen::Social::None) {
                 heart_x_=192;heart_y_=190;
                 engine_.SocialReact(reaction,last_stt_);
+                const auto sound=EspenCueForSocial(reaction);
+                if(sound!=espen::EmotionalCue::Count)
+                    Application::GetInstance().Schedule([sound](){EspenPlayEmotionalCue(sound);});
                 ESP_LOGI(TAG,"Local social reaction=%d",static_cast<int>(reaction));
             }
         }
@@ -2423,7 +2475,7 @@ class EspenBoard : public WifiBoard {
     }
 public:
     EspenBoard() {
-        ESP_LOGI(TAG, "Espen 0.2.17 boot: reset reason=%d", esp_reset_reason());
+        ESP_LOGI(TAG, "Espen 0.2.18 boot: reset reason=%d", esp_reset_reason());
         // Bring up the panel before peripherals so a later touch/codec fault
         // cannot hide the initial diagnostic pattern.
         InitPanel();
